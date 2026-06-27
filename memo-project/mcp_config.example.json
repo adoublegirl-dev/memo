@@ -1,0 +1,47 @@
+# Memo MCP Server — 客户端配置示例
+#
+# Claude Desktop 配置 (claude_desktop_config.json):
+# {
+#   "mcpServers": {
+#     "memo": {
+#       "command": "python",
+#       "args": ["E:/memo/scripts/run_mcp.py"],
+#       "env": {
+#         "OPENAI_API_KEY": "sk-your-key-here",
+#         "MEMO_DB_PATH": "E:/memo/memo/data/memo.db"
+#       }
+#     }
+#   }
+# }
+#
+# Claude Code 配置 (~/.claude/claude_code_config.json):
+# {
+#   "mcpServers": {
+#     "memo": {
+#       "command": "python",
+#       "args": ["E:/memo/scripts/run_mcp.py"]
+#     }
+#   }
+# }
+#
+# Cursor 配置 (.cursor/mcp.json):
+# {
+#   "mcpServers": {
+#     "memo": {
+#       "command": "python",
+#       "args": ["E:/memo/scripts/run_mcp.py"]
+#     }
+#   }
+# }
+
+{
+  "mcpServers": {
+    "memo": {
+      "command": "python",
+      "args": ["E:/memo/scripts/run_mcp.py"],
+      "env": {
+        "MEMO_DB_PATH": "E:/memo/memo/data/memo.db"
+      }
+    }
+  }
+}

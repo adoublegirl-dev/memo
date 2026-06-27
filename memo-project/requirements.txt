@@ -1,0 +1,6 @@
+openai>=1.0
+numpy>=1.26
+jieba>=0.42
+sentence-transformers>=2.7
+python-dotenv>=1.0
+pydantic>=2.0
