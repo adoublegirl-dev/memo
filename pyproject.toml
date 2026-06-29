@@ -1,0 +1,38 @@
+[project]
+name = "memo"
+version = "0.1.0"
+description = "活的、会进化的 Agent 记忆系统 —— 赫布学习 + 扩散激活 + 网状记忆图谱"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "托马斯尔康 & Hanako"}
+]
+
+dependencies = [
+    "openai>=1.0",
+    "numpy>=1.26",
+    "jieba>=0.42",
+    "sentence-transformers>=2.7",
+    "python-dotenv>=1.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+mcp = ["mcp>=1.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
