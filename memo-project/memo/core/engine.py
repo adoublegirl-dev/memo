@@ -190,16 +190,19 @@ class Engine:
         session_id: str,
         conversation: str,
         auto_extract: bool = True,
+        context_rounds: int = 3,
     ) -> dict[str, Any]:
         """从一段对话中自动提取并写入记忆。
 
-        完整管道：对话 → LLM 提取（或 jieba 降级）→ 特征词创建/激活
+        完整管道：对话 → 上下文回顾 → LLM 提取（或 jieba 降级）→ 特征词创建/激活
                 → 关系建立 → 冲突检测 → 向量编码 → 写入
 
         Args:
             session_id: 会话 ID
             conversation: 对话文本（可用 "User: ...\\nAssistant: ..." 格式）
             auto_extract: 是否自动调用 LLM 提取（False 则仅做 jieba 提取）
+            context_rounds: 回顾同会话中最近 N 轮的对话原文，
+                           LLM 会判断其中是否有补充信息需纳入当前记忆
 
         Returns:
             {
@@ -208,9 +211,24 @@ class Engine:
                 "feature_tags": [str, ...],
                 "conflicts_found": [str, ...],
                 "extraction_method": "llm" | "jieba",
+                "context_rounds_used": int,
             }
         """
         self._ensure_init()
+
+        # Step 0: 回顾同会话上下文
+        context_texts: list[str] = []
+        if context_rounds > 0:
+            recent_memories = memory_store.get_session_memories(session_id)
+            if recent_memories:
+                # 取最近 N 轮的 raw_text
+                for mem in recent_memories[-context_rounds:]:
+                    if mem.raw_text and mem.raw_text.strip():
+                        context_texts.append(mem.raw_text)
+                if context_texts:
+                    logger.debug(
+                        f"上下文回顾: 同会话最近 {len(context_texts)} 轮对话原文"
+                    )
 
         # Step 1: 提取
         from memo.extraction.extractor import (
@@ -223,7 +241,11 @@ class Engine:
         existing_tag_names = [t.name for t in hot_tags]
 
         if auto_extract:
-            extracted = extract_from_conversation(conversation, existing_tag_names)
+            extracted = extract_from_conversation(
+                conversation,
+                existing_tag_names,
+                context_texts=context_texts if context_texts else None,
+            )
             extraction_method = "llm" if llm_client.available else "jieba"
         else:
             extracted = extract_from_conversation.__wrapped__ if hasattr(
@@ -332,6 +354,7 @@ class Engine:
             "feature_tags": tag_names,
             "conflicts_found": conflicts,
             "extraction_method": extraction_method,
+            "context_rounds_used": len(context_texts),
         }
 
     # ── 记忆检索（核心） ──

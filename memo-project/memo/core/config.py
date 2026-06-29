@@ -9,8 +9,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# 项目根目录 (memo-project/)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
 # 自动加载 .env
-_env_file = Path(__file__).resolve().parent.parent / ".env"
+_env_file = _PROJECT_ROOT / ".env"
 if _env_file.exists():
     load_dotenv(_env_file)
 
@@ -23,7 +26,7 @@ class MemoConfig:
     db_path: str = field(
         default_factory=lambda: os.getenv(
             "MEMO_DB_PATH",
-            str(Path(__file__).resolve().parent.parent / "data" / "memo.db"),
+            str(_PROJECT_ROOT / "data" / "memo.db"),
         )
     )
 
