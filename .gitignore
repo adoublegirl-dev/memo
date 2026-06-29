@@ -1,0 +1,11 @@
+# memo
+__pycache__/
+*.pyc
+.env
+data/memo.db
+data/memo.db-wal
+data/memo.db-shm
+*.log
+dist/
+*.egg-info/
+docs/*.docx
