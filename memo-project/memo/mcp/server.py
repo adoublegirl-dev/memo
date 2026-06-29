@@ -104,6 +104,11 @@ async def list_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "description": "如果此记忆更新/推翻旧事实，列出旧事实的关键词"
                     },
+                    "context_rounds": {
+                        "type": "integer",
+                        "default": 3,
+                        "description": "回顾同会话中最近 N 轮的对话原文，LLM 会参考其中是否有补充信息需纳入当前记忆（设为 0 关闭）"
+                    },
                 }
             }
         ),
@@ -236,6 +241,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     session_id=session_id,
                     conversation=conversation,
                     auto_extract=True,
+                    context_rounds=arguments.get("context_rounds", 3),
                 )
                 return [TextContent(
                     type="text",
@@ -244,6 +250,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                          f"   标题: {result['title'][:60]}\n"
                          f"   特征词: {', '.join(result['feature_tags'])}\n"
                          f"   提取方式: {result['extraction_method']}\n"
+                         f"   上下文参考: {result.get('context_rounds_used', 0)} 轮\n"
                          f"   冲突: {len(result['conflicts_found'])} 条"
                 )]
             else:
