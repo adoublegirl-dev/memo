@@ -100,8 +100,13 @@ def main():
                 skipped_count += 1
                 continue
 
-            # 为每个会话创建独立 session
-            session = engine.start_session(title=filepath.stem[:50])
+            # 提取原始会话 ID（文件名中的 UUID 部分）
+            # 格式: 2026-05-15T12-43-49-201Z_019e2baa-1c51-7021-b54c-fc8e898ad903.jsonl
+            original_session_id = filepath.stem.split("_")[-1] if "_" in filepath.stem else filepath.stem
+            session_title = f"[HanaAgent] {original_session_id[:8]}..."
+
+            # 创建 Memo 会话，标题包含原始会话 ID
+            session = engine.start_session(title=session_title)
 
             for j, turn in enumerate(turns):
                 # 跳过太长的单轮（可能是代码块或日志）
