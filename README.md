@@ -27,20 +27,20 @@ from memo import engine
 engine.init()
 
 # 开始会话
-session = engine.start_session(title="排位赛开发")
+session = engine.start_session(title="合同审查")
 
 # 写入记忆（自动提取特征词、建立关系）
 engine.remember(
     session_id=session.id,
-    raw_text="今天实现了 ELO 匹配算法，初始分设为 1200...",
-    feature_tags=["ELO算法", "排位赛", "匹配系统"],
+    raw_text="审查了甲方的采购合同，发现第12条违约责任条款对乙方不利，建议修改为对等责任...",
+    feature_tags=["合同审查", "违约责任", "采购合同"],
     tag_relations=[
-        {"from": "ELO算法", "to": "排位赛", "type": "CAUSAL"},
+        {"from": "违约责任", "to": "合同审查", "type": "CAUSAL"},
     ],
 )
 
 # 检索记忆（三通道：向量+全文+图扩散）
-results = engine.recall("排位赛的匹配是怎么做的？")
+results = engine.recall("之前那个采购合同的违约责任条款怎么说的？")
 for r in results:
     print(f"[{r['score']:.4f}] {r['title']}")
 
@@ -85,7 +85,7 @@ memo/
 │   ├── retrieval/      # 检索层（三通道+融合）
 │   ├── extraction/     # LLM 提取器
 │   ├── lifecycle/      # 生命周期（遗忘/固化/快照）
-│   ├── mcp/            # MCP Server（待实现）
+│   ├── mcp/            # MCP Server（8 个工具）
 │   └── utils/          # 嵌入、LLM、日志
 ├── docs/               # 文档
 ├── scripts/            # 运维脚本
