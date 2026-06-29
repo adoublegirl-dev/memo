@@ -1,4 +1,12 @@
-"""嵌入模型包装 —— 本地 BGE-small，首次运行自动下载。"""
+"""嵌入模型包装 —— 本地 BGE-small，首次运行自动下载。
+
+设置 HF_HUB_OFFLINE=1 和 TRANSFORMERS_OFFLINE=1 避免网络超时。
+模型已缓存时零网络请求。
+"""
+
+import os
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 import numpy as np
 from sentence_transformers import SentenceTransformer

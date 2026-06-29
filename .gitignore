@@ -2,9 +2,7 @@
 __pycache__/
 *.pyc
 .env
-data/memo.db
-data/memo.db-wal
-data/memo.db-shm
+memo/data/
 *.log
 dist/
 *.egg-info/
