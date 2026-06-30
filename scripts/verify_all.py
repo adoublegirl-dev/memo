@@ -1,5 +1,5 @@
 """Memo 完整性验证 —— 一键检查所有子系统状态。"""
-import sys; import os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sys; import os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from memo.core.engine import engine
 from memo.store.graph_store import graph_store

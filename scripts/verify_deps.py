@@ -1,6 +1,6 @@
 """验证全部依赖。"""
 import sys
-import os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from memo.store.database import db
 db.init()
