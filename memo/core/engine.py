@@ -103,7 +103,7 @@ class Engine:
         if not title:
             title = self._auto_title(raw_text)
 
-        # 写入记忆单元
+        # 写入记忆单元（手动模式 signal_level=L2）
         memory_id = memory_store.add_memory(
             session_id=session_id,
             title=title,
@@ -112,6 +112,7 @@ class Engine:
             raw_text=raw_text,
             memory_type=memory_type,
             confidence=confidence,
+            signal_level=2,  # 显式手动
         )
 
         # 编码向量
@@ -125,7 +126,7 @@ class Engine:
                 emb = embedding_model.encode(tag_name)
                 tag = graph_store.get_or_create_tag(name=tag_name, embedding=emb)
                 tag_ids.append(tag.id)
-                graph_store.activate_tag(tag.id)
+                graph_store.activate_tag(tag.id, increment=0.02)  # L2 显式记忆额外加成
                 graph_store.create_mention(
                     tag_id=tag.id,
                     memory_unit_id=memory_id,
@@ -135,7 +136,7 @@ class Engine:
 
         # 建立特征词间关系（赫布权重更新）
         if tag_relations:
-            self._process_tag_relations(tag_relations)
+            self._process_tag_relations(tag_relations, session_id=session_id)
 
         # 同一条记忆中出现的特征词默认建立 CO_OCCUR 关系
         for i in range(len(tag_ids)):
@@ -150,12 +151,13 @@ class Engine:
                     target_id=b,
                     relation_type=RelationType.CO_OCCUR,
                     semantic_similarity=sim,
+                    session_id=session_id,
                 )
 
         logger.info(f"记忆已写入: {title[:30]} ({memory_id[:8]})")
         return memory_id
 
-    def _process_tag_relations(self, relations: list[dict[str, str]]) -> None:
+    def _process_tag_relations(self, relations: list[dict[str, str]], session_id: str = "") -> None:
         """处理手动指定的特征词关系。"""
         for rel in relations:
             source_tag = graph_store.get_or_create_tag(name=rel["from"])
@@ -171,7 +173,8 @@ class Engine:
                 target_id=target_tag.id,
                 relation_type=rel_type,
                 semantic_similarity=sim,
-            )
+                                session_id=session_id,
+                )
 
     def _auto_title(self, raw_text: str) -> str:
         """自动生成标题：取第一句话或前 50 个字符。"""
@@ -191,28 +194,50 @@ class Engine:
         conversation: str,
         auto_extract: bool = True,
         context_rounds: int = 3,
+        skip_gating: bool = False,
     ) -> dict[str, Any]:
         """从一段对话中自动提取并写入记忆。
 
-        完整管道：对话 → LLM 提取（或 jieba 降级）→ 特征词创建/激活
-                → 关系建立 → 冲突检测 → 向量编码 → 写入
+        完整管道：对话 → [MVG 门控] → 上下文回顾 → LLM 提取（或 jieba 降级）
+                → 特征词创建/激活 → 关系建立 → 冲突检测 → 向量编码 → 写入
 
         Args:
             session_id: 会话 ID
             conversation: 对话文本（可用 "User: ...\\nAssistant: ..." 格式）
             auto_extract: 是否自动调用 LLM 提取（False 则仅做 jieba 提取）
             context_rounds: 回顾同会话最近 N 轮对话原文，供 LLM 判断关联（默认 3）
+            skip_gating: 是否跳过 MVG 门控（手动调用时设为 True，避免额外开销）
 
         Returns:
             {
-                "memory_id": str,
+                "memory_id": str | None,  # 被门控跳过时为 None
                 "title": str,
                 "feature_tags": [str, ...],
                 "conflicts_found": [str, ...],
                 "extraction_method": "llm" | "jieba",
+                "gating_result": dict | None,
             }
         """
         self._ensure_init()
+
+        # Step 0: MVG 记忆价值门控
+        gating_result = None
+        if not skip_gating:
+            from memo.extraction.gating import evaluate_importance
+            gating_result = evaluate_importance(conversation)
+            if gating_result["verdict"] == "skip":
+                logger.info(
+                    f"MVG 跳过: {gating_result['reason']} "
+                    f"(score={gating_result['total_score']})"
+                )
+                return {
+                    "memory_id": None,
+                    "title": "",
+                    "feature_tags": [],
+                    "conflicts_found": [],
+                    "extraction_method": "skipped",
+                    "gating_result": gating_result,
+                }
 
         # Step 0: 回顾上下文（同会话最近的记忆原文）
         context_texts: list[str] = []
@@ -246,7 +271,12 @@ class Engine:
                 extracted = _jieba_extract(conversation)
             extraction_method = "jieba"
 
-        # Step 2: 写入记忆单元
+        # Step 2: 写入记忆单元（灰色地带降低置信度，MVG 高分提升 signal_level）
+        mem_confidence = 0.5 if (gating_result and gating_result["verdict"] == "gray") else 0.85
+        mem_signal = 0  # L0 普通自动
+        if gating_result:
+            if gating_result["total_score"] >= 4.0:
+                mem_signal = 1  # L1 高价值自动
         memory_id = memory_store.add_memory(
             session_id=session_id,
             title=extracted["title"],
@@ -254,7 +284,8 @@ class Engine:
             summary_detail=extracted["summary_detail"],
             raw_text=conversation,
             memory_type=MemoryType(extracted.get("memory_type", "FACT")),
-            confidence=0.85,
+            confidence=mem_confidence,
+            signal_level=mem_signal,
         )
 
         # Step 3: 向量编码
@@ -299,6 +330,7 @@ class Engine:
                     source_id=a, target_id=b,
                     relation_type=rel_type,
                     semantic_similarity=sim,
+                                    session_id=session_id,
                 )
 
         # 同记忆内所有特征词建立 CO_OCCUR 关系
@@ -314,13 +346,25 @@ class Engine:
                     source_id=a, target_id=b,
                     relation_type=RelationType.CO_OCCUR,
                     semantic_similarity=sim,
+                                    session_id=session_id,
                 )
 
-        # Step 6: 冲突检测
+        # Step 6: CAS 变更检测（替代旧的 is_update_of 机制）
         conflicts: list[str] = []
+        from memo.extraction.change_detector import detect_change, apply_changes
+
+        changes = detect_change(
+            new_memory_id=memory_id,
+            new_title=extracted["title"],
+            new_summary=extracted["summary"],
+        )
+        if changes["superseded"] or changes["refined"]:
+            apply_result = apply_changes(memory_id, changes)
+            conflicts = changes["superseded"]
+
+        # 兼容旧 is_update_of 机制：如果 LLM 提取阶段就识别了显式推翻
         is_update = extracted.get("is_update_of")
-        if is_update:
-            # 用 LLM 检测旧记忆
+        if is_update and not conflicts:
             similar = self.recall(" ".join(is_update), top_k=5)
             existing = [
                 {"id": m["id"], "title": m["title"], "summary": m["summary"]}
@@ -331,7 +375,7 @@ class Engine:
             )
             for old_id in conflicts:
                 memory_store.supersede_memory(old_id, memory_id)
-                logger.info(f"冲突解决: 旧记忆 {old_id[:8]} 被 {memory_id[:8]} 替代")
+                logger.info(f"冲突解决（is_update_of）: 旧记忆 {old_id[:8]} 被 {memory_id[:8]} 替代")
 
         logger.info(
             f"对话记忆已写入: {extracted['title'][:30]} ({memory_id[:8]}), "
@@ -344,6 +388,8 @@ class Engine:
             "feature_tags": tag_names,
             "conflicts_found": conflicts,
             "extraction_method": extraction_method,
+            "context_rounds_used": len(context_texts),
+            "gating_result": gating_result,
         }
 
     # ── 记忆检索（核心） ──
@@ -374,7 +420,7 @@ class Engine:
         # 通道②
         bm25_results = self._channel_bm25(query, top_k=20)
         # 通道③
-        graph_results = self._channel_graph(query, top_k=20)
+        graph_results = self._channel_graph(query, top_k=20, current_session_id=current_session_id)
 
         # RRF 融合
         fused = self._rrf_fuse(vec_results, bm25_results, graph_results, top_k=top_k)
@@ -384,6 +430,9 @@ class Engine:
         for mem_id, score in fused:
             mem = memory_store.get_memory(mem_id)
             if mem and not mem.is_superseded:
+                # ESA 信号加权
+                signal_multiplier = {0: 0.7, 1: 1.0, 2: 1.5}
+                adjusted_score = score * signal_multiplier.get(mem.signal_level, 1.0)
                 # 获取关联特征词
                 tags = graph_store.get_memory_tags(mem_id)
                 enriched.append({
@@ -392,9 +441,11 @@ class Engine:
                     "summary": mem.summary,
                     "summary_detail": mem.summary_detail,
                     "raw_text": mem.raw_text,
-                    "score": round(score, 4),
+                    "score": round(adjusted_score, 4),
+                    "raw_score": round(score, 4),
                     "memory_type": mem.memory_type if isinstance(mem.memory_type, str) else mem.memory_type.value,
                     "confidence": mem.confidence,
+                    "signal_level": mem.signal_level,
                     "feature_tags": [t.name for t in tags],
                     "session_id": mem.session_id,
                     "from_current_session": (
@@ -437,11 +488,11 @@ class Engine:
             logger.debug(f"BM25 检索异常（可能是 FTS5 语法问题）: {e}")
             return {}
 
-    def _channel_graph(self, query: str, top_k: int = 20) -> dict[str, float]:
+    def _channel_graph(self, query: str, top_k: int = 20, current_session_id: str | None = None) -> dict[str, float]:
         """通道③：图扩散激活检索。"""
         from memo.retrieval.graph_search import graph_search
 
-        return graph_search.spreading_activation(query, top_k=top_k)
+        return graph_search.spreading_activation(query, top_k=top_k, current_session_id=current_session_id)
 
     def _rrf_fuse(
         self,
@@ -471,7 +522,13 @@ class Engine:
         # 2. 固化检查
         report["consolidation"] = self._run_consolidation_check()
 
-        # 3. 快照检查
+        # 3. CAS L2 变更扫描
+        from memo.extraction.change_detector import scan_conflicts_batch
+        report["change_scan"] = scan_conflicts_batch(
+            min_similarity=config.change_similarity_threshold,
+        )
+
+        # 4. 快照检查
         report["snapshot"] = self._run_snapshot_check()
 
         logger.info(f"生命周期完成: {report}")

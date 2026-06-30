@@ -30,6 +30,8 @@ class RelationType(str, Enum):
     CAUSAL = "CAUSAL"
     TEMPORAL = "TEMPORAL"
     CONTRADICT = "CONTRADICT"
+    REFINES = "REFINES"        # 细化关系（补充但不推翻旧记忆）
+    SUPERSEDES = "SUPERSEDES"  # 推翻关系（新记忆替代旧记忆）
 
 
 class MemoryType(str, Enum):
@@ -94,6 +96,7 @@ class FeatureRelation:
     last_co_activated_at: str = ""
     first_observed_at: str = ""
     contexts: list[str] = field(default_factory=list)
+    last_session_id: str = ""  # SCB: 最近一次共现所在的会话 ID
 
 
 @dataclass
@@ -111,6 +114,7 @@ class MemoryUnit:
     superseded_by: str = ""
     confidence: float = 0.8
     memory_type: MemoryType = MemoryType.FACT
+    signal_level: int = 0  # 0=L0普通自动, 1=L1高价值自动, 2=L2显式手动
     embedding: Any = None
     created_at: str = ""
     feature_tags: list[str] = field(default_factory=list)
@@ -149,4 +153,6 @@ RELATION_TYPE_FACTOR: dict[RelationType, float] = {
     RelationType.CAUSAL: 2.0,
     RelationType.TEMPORAL: 1.2,
     RelationType.CONTRADICT: -1.0,  # 矛盾关系负向激活
+    RelationType.REFINES: 0.6,       # 细化关系，弱关联
+    RelationType.SUPERSEDES: 0.0,    # 仅用于追溯链，不参与扩散激活
 }

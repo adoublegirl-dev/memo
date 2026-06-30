@@ -25,6 +25,7 @@ class GraphSearch:
         top_k: int = 20,
         max_hops: int | None = None,
         decay_rate: float | None = None,
+        current_session_id: str | None = None,
     ) -> dict[str, float]:
         """执行扩散激活检索。
 
@@ -102,15 +103,23 @@ class GraphSearch:
             f"图扩散激活: {len(seed_tags)} 个种子 → {len(activation_map)} 个激活节点"
         )
 
-        # Step 3: 着陆 —— 从特征词到记忆单元
+        # Step 3: 着陆 —— 从特征词到记忆单元（SCB 同会话加成）
         memory_scores: dict[str, float] = defaultdict(float)
+        session_spread_boost = getattr(config, "session_spread_boost", 1.2)
 
         for tag_id, activation in activation_map.items():
             mentions = graph_store.get_tag_mentions(tag_id)
             for mention in mentions:
-                memory_scores[mention.memory_unit_id] += (
-                    activation * mention.relevance_score
-                )
+                score = activation * mention.relevance_score
+                # SCB: 与当前查询来自同一 session 的记忆获得额外加成
+                if current_session_id:
+                    mem = graph_store.db.fetchone(
+                        "SELECT session_id FROM memory_units WHERE id = ?",
+                        (mention.memory_unit_id,),
+                    )
+                    if mem and mem["session_id"] == current_session_id:
+                        score *= session_spread_boost
+                memory_scores[mention.memory_unit_id] += score
 
         # Step 4: 按分数排序
         sorted_scores = sorted(
