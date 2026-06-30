@@ -453,6 +453,14 @@ def _get_graph_data():
 # ── HTTP Server ──
 class MemoHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        try:
+            self._do_GET()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._json({"error": str(e)}, 500)
+
+    def _do_GET(self):
         path = urlparse(self.path).path
 
         if path == "/":
@@ -521,8 +529,8 @@ class MemoHandler(BaseHTTPRequestHandler):
 
 def main():
     port = 9120
-    server = HTTPServer(("127.0.0.1", port), MemoHandler)
-    print(f"\n  Memo 看板已启动 → http://localhost:{port}\n  按 Ctrl+C 停止\n")
+    server = HTTPServer(("0.0.0.0", port), MemoHandler)
+    import sys; sys.stdout.write(f"\n  Memo 看板已启动 → http://localhost:{port}\n  按 Ctrl+C 停止\n"); sys.stdout.flush()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
