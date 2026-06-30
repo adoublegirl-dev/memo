@@ -3,7 +3,7 @@
 不需要真实的 MCP 客户端，直接测试内部逻辑。
 """
 import sys
-sys.path.insert(0, "E:/memo")
+import os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import asyncio
 import json

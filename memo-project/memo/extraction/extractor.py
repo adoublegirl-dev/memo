@@ -83,19 +83,9 @@ def extract_from_conversation(
     Args:
         conversation: 当前对话片段（含 user/assistant 标记）
         existing_tags: 已有的特征词列表（用于上下文）
-        context_texts: 同会话中之前的对话原文列表，LLM 会参考这些上下文
-                       来判断是否需要补充信息到当前记忆的摘要中
+        context_texts: 同会话中之前的对话原文列表，LLM 会参考这些上下文来判断是否需要补充
 
-    Returns:
-        {
-            "title": str,
-            "feature_tags": [{"name": str, "category": str}, ...],
-            "summary": str,
-            "summary_detail": str,
-            "memory_type": str,
-            "relations": [{"from": str, "to": str, "type": str}, ...],
-            "is_update_of": [str, ...] | None,
-        }
+    Returns: ...
     """
     if not llm_client.available:
         logger.info("LLM 不可用，使用 jieba 关键词降级提取")
@@ -106,7 +96,7 @@ def extract_from_conversation(
     if context_texts and len(context_texts) > 0:
         context_items = []
         for i, ctx in enumerate(context_texts):
-            ctx_trimmed = ctx.strip()[:800]  # 每条上下文最多 800 字符
+            ctx_trimmed = ctx.strip()[:800]
             if ctx_trimmed:
                 context_items.append(f"[前情 {i+1}] {ctx_trimmed}")
         if context_items:
