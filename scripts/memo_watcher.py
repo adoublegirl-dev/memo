@@ -18,8 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memo.core.engine import engine
 from memo.utils.logger import logger

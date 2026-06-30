@@ -59,10 +59,10 @@ class MemoConfig:
     spreading_max_hops: int = 3
 
     # ── 遗忘 ──
-    retrieval_strength_decay: float = 0.02  # 每天
+    retrieval_strength_decay: float = 0.02
     dormant_threshold_days: int = 90
     dormant_threshold_weight: float = 0.05
-    dormant_access_window: int = 30  # 近 N 天访问次数
+    dormant_access_window: int = 30
 
     # ── 生命周期 ──
     consolidation_trigger_count: int = 10

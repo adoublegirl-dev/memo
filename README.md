@@ -27,20 +27,20 @@ from memo import engine
 engine.init()
 
 # 开始会话
-session = engine.start_session(title="排位赛开发")
+session = engine.start_session(title="合同审查")
 
 # 写入记忆（自动提取特征词、建立关系）
 engine.remember(
     session_id=session.id,
-    raw_text="今天实现了 ELO 匹配算法，初始分设为 1200...",
-    feature_tags=["ELO算法", "排位赛", "匹配系统"],
+    raw_text="审查了甲方的采购合同，发现第12条违约责任条款对乙方不利，建议修改为对等责任...",
+    feature_tags=["合同审查", "违约责任", "采购合同"],
     tag_relations=[
-        {"from": "ELO算法", "to": "排位赛", "type": "CAUSAL"},
+        {"from": "违约责任", "to": "合同审查", "type": "CAUSAL"},
     ],
 )
 
 # 检索记忆（三通道：向量+全文+图扩散）
-results = engine.recall("排位赛的匹配是怎么做的？")
+results = engine.recall("之前那个采购合同的违约责任条款怎么说的？")
 for r in results:
     print(f"[{r['score']:.4f}] {r['title']}")
 
@@ -85,7 +85,7 @@ memo/
 │   ├── retrieval/      # 检索层（三通道+融合）
 │   ├── extraction/     # LLM 提取器
 │   ├── lifecycle/      # 生命周期（遗忘/固化/快照）
-│   ├── mcp/            # MCP Server（待实现）
+│   ├── mcp/            # MCP Server（8 个工具）
 │   └── utils/          # 嵌入、LLM、日志
 ├── docs/               # 文档
 ├── scripts/            # 运维脚本
@@ -103,6 +103,22 @@ Phase 0-4 完成。
 - ✅ Phase 3: 赫布学习 + 遗忘 + 生命周期
 - ✅ Phase 4: MCP Server（8 个核心工具）
 - ⬜ Phase 5: 优化与打磨
+
+## 当前过滤逻辑
+
+| 过滤项 | 策略 | 状态 |
+|--------|------|:---:|
+| 非对话消息 | 跳过 toolCall / toolResult / thinking | ✅ |
+| 过短消息 | 跳过 < 30 字符（如"嗯""好的"） | ✅ |
+| 超长消息 | 截断到 5000 字符 | ⚠️ |
+| 内容重要性 | 无判断（如"看板地址 localhost:9120"也会写入） | ❌ |
+
+## 待优化
+
+1. **自动同步记忆的过滤方法优化**：写入前用 LLM 预判"这条对话有无长期记忆价值"，不重要的直接跳过，只记有价值内容
+2. **同会话内对话权重会话加成**：同一会话内的记忆之间需要有会话级权重加成，与跨会话关联关系的权重设计需区分，这是重要课题
+3. **手动记忆的会话权重设计**：用户显式要求记住的内容（memo_remember 手动模式）与自动提取的记忆应有不同的权重策略
+4. **看板关联展示优化**：在 Web 看板中对记忆块增加可视化关联效果，直观展示特征词图谱中记忆之间的赫布边连接和扩散激活路径
 
 ## 许可
 
