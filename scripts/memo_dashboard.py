@@ -133,8 +133,8 @@ h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); text-transform: 
   <div id="graphDetail" style="margin-top:8px;font-size:13px;color:var(--muted);">点击节点查看关联记忆</div>
 </div>
 
-<h3>📝 记忆列表 <span style="font-size:12px;color:var(--muted);margin-left:8px;">点击查看详情</span></h3>
-<div id="memListSection">
+<h3>📝 记忆列表</h3>
+<div id="memListSection" style="display:none;">
 <div class="search-bar">
   <input id="searchInput" placeholder="搜索记忆..." oninput="loadMemories()">
   <select id="typeFilter" onchange="loadMemories()">
@@ -288,7 +288,7 @@ function renderGraph() {
 
   const link = g.append('g').selectAll('line').data(edges).join('line')
     .attr('class','graph-link')
-    .attr('stroke','var(--border)')
+    .attr('stroke','#8b949e')
     .attr('stroke-width', d=>Math.max(0.5, d.weight*5))
     .attr('stroke-opacity', d=>Math.max(0.1, d.weight));
 

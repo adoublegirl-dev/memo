@@ -1,12 +1,13 @@
 @echo off
+chcp 65001 >nul
 echo Stopping Memo services...
 
-REM 杀掉 9120 端口上的进程
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":9120.*LISTENING"') do (
+REM Kill processes on port 9120
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":9120 " ^| findstr "LISTENING"') do (
     taskkill /f /pid %%a 2>nul
 )
 
-REM 清理残留的 python 进程
+REM Clean up remaining python processes
 taskkill /f /im pythonw.exe 2>nul
 taskkill /f /im python.exe 2>nul
 
