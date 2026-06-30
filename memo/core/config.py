@@ -80,6 +80,33 @@ class MemoConfig:
         default_factory=lambda: os.getenv("MEMO_LOG_LEVEL", "INFO")
     )
 
+    # ── MVG 记忆价值门控 ──
+    gating_enabled: bool = field(
+        default_factory=lambda: os.getenv("MEMO_GATING_ENABLED", "true").lower() == "true"
+    )
+    gating_threshold: float = field(
+        default_factory=lambda: float(os.getenv("MEMO_GATING_THRESHOLD", "3.0"))
+    )
+    gating_model: str = field(
+        default_factory=lambda: os.getenv("MEMO_GATING_MODEL", "gpt-4o-mini")
+    )
+
+    # ── CAS 变更感知 ──
+    change_detection_enabled: bool = field(
+        default_factory=lambda: os.getenv("MEMO_CHANGE_DETECTION_ENABLED", "true").lower() == "true"
+    )
+    change_similarity_threshold: float = field(
+        default_factory=lambda: float(os.getenv("MEMO_CHANGE_SIMILARITY_THRESHOLD", "0.75"))
+    )
+
+    # ── SCB 会话凝聚力加成 ──
+    session_boost_alpha: float = field(
+        default_factory=lambda: float(os.getenv("MEMO_SESSION_BOOST_ALPHA", "0.5"))
+    )
+    session_spread_boost: float = field(
+        default_factory=lambda: float(os.getenv("MEMO_SESSION_SPREAD_BOOST", "1.2"))
+    )
+
     def ensure_dirs(self) -> None:
         """确保数据目录存在。"""
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)

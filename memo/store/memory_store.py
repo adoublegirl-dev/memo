@@ -49,6 +49,7 @@ class MemoryStore:
         confidence: float = 0.8,
         valid_from: str = "",
         valid_until: str = "",
+        signal_level: int = 0,
     ) -> str:
         """添加记忆单元，返回 ID。"""
         memory_id = new_id()
@@ -56,8 +57,8 @@ class MemoryStore:
         db.execute(
             """INSERT INTO memory_units
                (id, session_id, title, summary, summary_detail, raw_text,
-                memory_type, confidence, valid_from, valid_until, recorded_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                memory_type, confidence, valid_from, valid_until, recorded_at, signal_level)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 memory_id,
                 session_id,
@@ -70,6 +71,7 @@ class MemoryStore:
                 valid_from or now,
                 valid_until or None,
                 now,
+                signal_level,
             ),
         )
         # 更新会话的记忆计数
@@ -124,6 +126,7 @@ class MemoryStore:
             superseded_by=row["superseded_by"] or "",
             confidence=row["confidence"],
             memory_type=row["memory_type"],
+            signal_level=row["signal_level"] if "signal_level" in row.keys() else 0,
             embedding=emb,
             created_at=row["created_at"] or "",
         )

@@ -61,6 +61,7 @@ class MemoClient:
         self,
         content: str,
         auto_extract: bool = True,
+        importance_check: bool = True,
         **kwargs,
     ) -> dict[str, Any]:
         """写入记忆。
@@ -68,6 +69,7 @@ class MemoClient:
         Args:
             content: 对话文本
             auto_extract: 是否自动提取特征词/摘要
+            importance_check: 是否启用 MVG 门控（自动模式默认启用，手动「记住」时关闭）
 
         Returns:
             写入结果
@@ -77,6 +79,7 @@ class MemoClient:
                 session_id=self.session_id,
                 conversation=content,
                 auto_extract=True,
+                skip_gating=not importance_check,
             )
         else:
             memory_id = self._engine.remember(
