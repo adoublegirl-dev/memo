@@ -77,6 +77,11 @@ def read_session(filepath: Path) -> list[dict]:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="导入 HanaAgent 历史会话到 Memo")
+    parser.add_argument("--skip-cas", action="store_true", help="跳过 CAS 变更检测（导入后统一跑 run_lifecycle 更高效）")
+    args = parser.parse_args()
+
     engine.init()
 
     files = sorted(SESSIONS_DIR.glob("*.jsonl"), key=lambda f: f.stat().st_size, reverse=True)
@@ -120,6 +125,7 @@ def main():
                         context_rounds=2,  # 回顾前 2 轮
                         auto_extract=True,
                         skip_gating=False,  # 默认开启门控，过滤无价值内容
+                        skip_cas=args.skip_cas,
                     )
                     written_count += 1
                     logger.info(
