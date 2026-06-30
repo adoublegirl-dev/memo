@@ -43,13 +43,14 @@ class LLMClient:
         temperature: float = 0.3,
         max_tokens: int = 1024,
         response_format: dict[str, Any] | None = None,
+        model: str | None = None,
     ) -> str:
         """同步调用 LLM，返回文本。"""
         if not self.available:
             raise RuntimeError("LLM 不可用：未配置 OPENAI_API_KEY")
 
         kwargs: dict[str, Any] = dict(
-            model=config.extraction_model,
+            model=model or config.extraction_model,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -65,6 +66,7 @@ class LLMClient:
         messages: list[dict[str, str]],
         temperature: float = 0.2,
         max_tokens: int = 2048,
+        model: str | None = None,
     ) -> dict[str, Any]:
         """调用 LLM 并解析 JSON 返回。"""
         raw = self.chat(
@@ -72,6 +74,7 @@ class LLMClient:
             temperature=temperature,
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
+            model=model,
         )
         try:
             return json.loads(raw)
