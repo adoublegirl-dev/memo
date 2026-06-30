@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-import os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from memo.core.engine import engine
 from memo.utils.logger import logger
 
@@ -119,6 +119,7 @@ def main():
                         conversation=turn,
                         context_rounds=2,  # 回顾前 2 轮
                         auto_extract=True,
+                        skip_gating=False,  # 默认开启门控，过滤无价值内容
                     )
                     written_count += 1
                     logger.info(

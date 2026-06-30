@@ -105,6 +105,7 @@ def evaluate_importance(conversation: str) -> dict[str, Any]:
             ],
             temperature=0.1,
             max_tokens=256,
+            model=config.gating_model,
         )
         scores = _normalize_scores(result)
         total = _compute_total(scores)
