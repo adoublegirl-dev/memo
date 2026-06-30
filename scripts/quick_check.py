@@ -1,7 +1,6 @@
 """快速自检 —— 不依赖 LLM 和嵌入模型。"""
 import sys
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memo.store.database import db
 
