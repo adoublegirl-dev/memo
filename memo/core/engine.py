@@ -195,6 +195,7 @@ class Engine:
         auto_extract: bool = True,
         context_rounds: int = 3,
         skip_gating: bool = False,
+        skip_cas: bool = False,
     ) -> dict[str, Any]:
         """从一段对话中自动提取并写入记忆。
 
@@ -349,18 +350,19 @@ class Engine:
                                     session_id=session_id,
                 )
 
-        # Step 6: CAS 变更检测（替代旧的 is_update_of 机制）
+        # Step 6: CAS 变更检测（导入批量可跳过，后续统一扫描更高效）
         conflicts: list[str] = []
-        from memo.extraction.change_detector import detect_change, apply_changes
+        if not skip_cas:
+            from memo.extraction.change_detector import detect_change, apply_changes
 
-        changes = detect_change(
-            new_memory_id=memory_id,
-            new_title=extracted["title"],
-            new_summary=extracted["summary"],
-        )
-        if changes["superseded"] or changes["refined"]:
-            apply_result = apply_changes(memory_id, changes)
-            conflicts = changes["superseded"]
+            changes = detect_change(
+                new_memory_id=memory_id,
+                new_title=extracted["title"],
+                new_summary=extracted["summary"],
+            )
+            if changes["superseded"] or changes["refined"]:
+                apply_result = apply_changes(memory_id, changes)
+                conflicts = changes["superseded"]
 
         # 兼容旧 is_update_of 机制：如果 LLM 提取阶段就识别了显式推翻
         is_update = extracted.get("is_update_of")
