@@ -25,10 +25,10 @@ PAGE = """<!DOCTYPE html>
 <title>Memo 记忆看板</title>
 <style>
 :root {
-  --bg: #0d1117; --card: #161b22; --border: #30363d;
-  --text: #c9d1d9; --muted: #8b949e; --accent: #58a6ff;
-  --green: #3fb950; --orange: #d2991d; --red: #f85149;
-  --purple: #a371f7; --cyan: #39d2c0;
+  --bg: #ffffff; --card: #f6f8fa; --border: #d0d7de;
+  --text: #1f2328; --muted: #656d76; --accent: #0969da;
+  --green: #1a7f37; --orange: #9a6700; --red: #cf222e;
+  --purple: #8250df; --cyan: #1b7c83;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   background: var(--bg); color: var(--text);
 }
@@ -77,7 +77,7 @@ h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); text-transform: 
 
 /* 详情弹窗 */
 .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-  background: rgba(0,0,0,0.6); z-index: 100; justify-content: center; align-items: center; }
+  background: rgba(0,0,0,0.3); z-index: 100; justify-content: center; align-items: center; }
 .modal.show { display: flex; }
 .modal-content { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
   max-width: 700px; width: 90%; max-height: 80vh; overflow-y: auto; padding: 24px; }
