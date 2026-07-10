@@ -9,7 +9,7 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "E:/memo")
+import os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from memo.core.engine import engine
 from memo.utils.logger import logger
 
@@ -77,6 +77,40 @@ def read_session(filepath: Path) -> list[dict]:
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="导入 HanaAgent 历史会话到 Memo")
+    parser.add_argument("--skip-cas", action="store_true", help="跳过 CAS 变更检测")
+    parser.add_argument("--restart", action="store_true", help="强制从头开始（忽略进度文件）")
+    args = parser.parse_args()
+
+    # ── 进度管理：自动检测断点 ──
+    progress_file = Path("data/import_progress.json")
+    progress = {"completed_sessions": [], "last_session_file": "", "last_turn_index": -1, "total_written": 0}
+
+    if args.restart and progress_file.exists():
+        progress_file.unlink()
+        logger.info("已重置进度文件，从头开始")
+    elif progress_file.exists():
+        progress = json.loads(progress_file.read_text(encoding="utf-8"))
+        if progress.get("total_written", 0) > 0:
+            logger.info(
+                f"检测到上次进度: {progress['total_written']} 条已写入, "
+                f"{len(progress.get('completed_sessions', []))} 个会话已完成。自动续传。"
+                f"（用 --restart 可强制重跑）"
+            )
+            args.resume = True  # 自动续传
+        else:
+            args.resume = False
+    else:
+        args.resume = False
+
+    def save_progress(filepath: Path, turn_idx: int):
+        progress["last_session_file"] = filepath.name
+        progress["last_turn_index"] = turn_idx
+        tmp = progress_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(progress, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(progress_file)  # 原子操作
+
     engine.init()
 
     files = sorted(SESSIONS_DIR.glob("*.jsonl"), key=lambda f: f.stat().st_size, reverse=True)
@@ -88,6 +122,13 @@ def main():
 
     for i, filepath in enumerate(files):
         size_mb = filepath.stat().st_size / (1024 * 1024)
+
+        # 跳过已完成的会话
+        if args.resume and filepath.name in progress.get("completed_sessions", []):
+            logger.info(f"[{i+1}/{len(files)}] {filepath.name} ({size_mb:.1f} MB) — 已完成，跳过")
+            skipped_count += 1
+            continue
+
         logger.info(f"[{i+1}/{len(files)}] {filepath.name} ({size_mb:.1f} MB)")
 
         try:
@@ -109,6 +150,11 @@ def main():
             session = engine.start_session(title=session_title)
 
             for j, turn in enumerate(turns):
+                # 续传：跳过已完成的轮次
+                if args.resume and filepath.name == progress.get("last_session_file", ""):
+                    if j <= progress.get("last_turn_index", -1):
+                        continue
+
                 # 跳过太长的单轮（可能是代码块或日志）
                 if len(turn) > 5000:
                     turn = turn[:5000]
@@ -119,8 +165,12 @@ def main():
                         conversation=turn,
                         context_rounds=2,  # 回顾前 2 轮
                         auto_extract=True,
+                        skip_gating=False,  # 默认开启门控，过滤无价值内容
+                        skip_cas=args.skip_cas,
                     )
                     written_count += 1
+                    progress["total_written"] = written_count
+                    save_progress(filepath, j)
                     logger.info(
                         f"  [{j+1}/{len(turns)}] {result['title'][:40]} "
                         f"({len(result['feature_tags'])} tags)"
@@ -131,11 +181,20 @@ def main():
 
             engine.end_session(session.id)
 
+            # 标记会话完成
+            if filepath.name not in progress.get("completed_sessions", []):
+                progress.setdefault("completed_sessions", []).append(filepath.name)
+            progress["last_turn_index"] = -1  # 重置轮次索引
+            save_progress(filepath, -1)
+
         except Exception as e:
             logger.error(f"  处理失败: {e}")
             skipped_count += 1
 
     logger.info(f"完成: {total_turns} 轮对话, 写入 {written_count} 条, 跳过 {skipped_count}")
+    # 完成：删除进度文件
+    if progress_file.exists():
+        progress_file.unlink()
     print(f"\n{'='*50}")
     print(f"导入完成: {written_count} 条记忆")
     print(f"{'='*50}")

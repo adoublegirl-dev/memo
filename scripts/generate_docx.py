@@ -1,5 +1,5 @@
 """生成 Memo 项目完整说明文档 (DOCX)。"""
-import sys; sys.path.insert(0, "E:/memo")
+import sys; import os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from docx import Document
 from docx.shared import Inches, Pt, Cm, RGBColor

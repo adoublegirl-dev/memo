@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, "E:/memo")
+import os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from memo.core.engine import engine
 from memo.utils.logger import logger
@@ -164,11 +164,18 @@ def main():
                             session_id=auto_session_id,
                             conversation=conversation,
                             auto_extract=True,
+                            skip_gating=False,  # watcher 启用门控
                         )
-                        logger.info(
-                            f"✅ 自动同步: {result['title'][:40]} "
-                            f"({len(result['feature_tags'])} 特征词)"
-                        )
+                        if result.get("memory_id") is None:
+                            # 被门控跳过
+                            logger.debug(
+                                f"⏭️ MVG 跳过: {result.get('gating_result', {}).get('reason', '')}"
+                            )
+                        else:
+                            logger.info(
+                                f"✅ 自动同步: {result['title'][:40]} "
+                                f"({len(result['feature_tags'])} 特征词)"
+                            )
                     except Exception as e:
                         logger.warning(f"同步失败: {e}")
 
