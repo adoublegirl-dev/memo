@@ -76,8 +76,39 @@ def check_and_snapshot() -> dict:
     _last_snapshot_at = now
     _last_snapshot_count = current_count
 
+    # ── 自动备份数据库（保留最近 3 个） ──
+    _backup_database()
+
     return {
         "triggered": True,
         "snapshot_id": snapshot_id,
         "total_memories": current_count,
     }
+
+
+def _backup_database() -> None:
+    """自动备份数据库，保留最近 3 个备份。"""
+    import shutil
+    from datetime import datetime
+    from pathlib import Path
+
+    db_path = Path(config.db_path)
+    backup_dir = db_path.parent / "backups"
+    backup_dir.mkdir(exist_ok=True)
+
+    # 生成备份文件名
+    today = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_path = backup_dir / f"memo_backup_{today}.db"
+
+    try:
+        shutil.copy2(str(db_path), str(backup_path))
+        logger.info(f"数据库已备份: {backup_path.name}")
+    except Exception as e:
+        logger.warning(f"备份失败: {e}")
+        return
+
+    # 清理旧备份：保留最近 3 个
+    backups = sorted(backup_dir.glob("memo_backup_*.db"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for old in backups[3:]:
+        old.unlink()
+        logger.debug(f"删除旧备份: {old.name}")

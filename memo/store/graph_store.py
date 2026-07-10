@@ -93,19 +93,19 @@ class GraphStore:
         )
         return [self._row_to_tag(r) for r in rows]
 
-    def activate_tag(self, tag_id: str) -> None:
+    def activate_tag(self, tag_id: str, increment: float = 0.01) -> None:
         """激活特征词：增加存储强度 + 重置检索强度 + 更新激活时间。"""
         now = datetime.now().isoformat()
         self.db.execute(
             """UPDATE feature_tags
-               SET storage_strength = MIN(storage_strength + 0.01, 1.0),
+               SET storage_strength = MIN(storage_strength + ?, 1.0),
                    retrieval_strength = MIN(retrieval_strength + (1.0 - retrieval_strength) * 0.1, 1.0),
                    total_activations = total_activations + 1,
                    last_activated_at = ?,
                    cooldown_days = 0.0,
                    is_dormant = 0
                WHERE id = ?""",
-            (now, tag_id),
+            (increment, now, tag_id),
         )
         self.db.commit()
 
@@ -135,8 +135,15 @@ class GraphStore:
         relation_type: RelationType = RelationType.CO_OCCUR,
         semantic_similarity: float = 0.0,
         context: str | None = None,
+        session_id: str = "",
     ) -> FeatureRelation:
-        """创建或更新特征关系（赫布权重更新）。"""
+        """创建或更新特征关系（赫布权重更新 + SCB 会话加成）。
+
+        Args:
+            session_id: 当前会话 ID，用于 SCB 会话凝聚力加成。
+                       同会话内多次共现获得额外权重。
+        """
+        from memo.core.config import config as cfg
         now = datetime.now().isoformat()
 
         existing = self.db.fetchone(
@@ -150,7 +157,16 @@ class GraphStore:
             old_weight = existing["hebbian_weight"]
             count = existing["co_activation_count"] + 1
             boost = min(count / 10, 2.0)  # 共现加成，上限 2x
-            new_weight = old_weight + 0.05 * (1.0 - old_weight) * max(semantic_similarity, 0.1) * boost
+
+            # SCB 会话加成：同一 session 内多次共现额外加权
+            session_boost = 1.0
+            if session_id and (existing["last_session_id"] if "last_session_id" in existing.keys() else "") == session_id:
+                # 同会话内已共现过，根据配置计算加成
+                session_alpha = getattr(cfg, "session_boost_alpha", 0.5)
+                session_co_count = min(count / 5, 1.0)
+                session_boost = 1.0 + session_alpha * session_co_count
+
+            new_weight = old_weight + 0.05 * (1.0 - old_weight) * max(semantic_similarity, 0.1) * boost * session_boost
             new_weight = min(new_weight, 1.0)
 
             # 更新上下文（追加，最多 3 条）
@@ -161,9 +177,9 @@ class GraphStore:
             self.db.execute(
                 """UPDATE feature_relations
                    SET hebbian_weight = ?, co_activation_count = ?,
-                       last_co_activated_at = ?, contexts = ?
+                       last_co_activated_at = ?, contexts = ?, last_session_id = ?
                    WHERE id = ?""",
-                (new_weight, count, now, json_encode(contexts), existing["id"]),
+                (new_weight, count, now, json_encode(contexts), session_id or "", existing["id"]),
             )
             self.db.commit()
             return FeatureRelation(
@@ -176,6 +192,7 @@ class GraphStore:
                 last_co_activated_at=now,
                 first_observed_at=existing["first_observed_at"],
                 contexts=contexts,
+                last_session_id=session_id or "",
             )
         else:
             # 新建
@@ -185,9 +202,10 @@ class GraphStore:
             self.db.execute(
                 """INSERT INTO feature_relations
                    (id, source_tag_id, target_tag_id, relation_type, hebbian_weight,
-                    co_activation_count, last_co_activated_at, first_observed_at, contexts)
-                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)""",
-                (rel_id, source_id, target_id, relation_type.value, initial_weight, now, now, json_encode(contexts)),
+                    co_activation_count, last_co_activated_at, first_observed_at, contexts, last_session_id)
+                   VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)""",
+                (rel_id, source_id, target_id, relation_type.value, initial_weight,
+                 now, now, json_encode(contexts), session_id or ""),
             )
             self.db.commit()
             return FeatureRelation(
@@ -200,6 +218,7 @@ class GraphStore:
                 last_co_activated_at=now,
                 first_observed_at=now,
                 contexts=contexts,
+                last_session_id=session_id or "",
             )
 
     def get_neighbors(

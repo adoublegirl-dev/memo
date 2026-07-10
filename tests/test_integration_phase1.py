@@ -5,7 +5,7 @@
 """
 
 import sys
-sys.path.insert(0, "E:/memo")
+import os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from memo import engine
 from memo.utils.logger import logger

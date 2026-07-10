@@ -2,8 +2,12 @@
 __pycache__/
 *.pyc
 .env
+data/
 memo/data/
 *.log
 dist/
 *.egg-info/
 docs/*.docx
+
+# legacy
+memo-project/

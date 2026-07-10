@@ -1,225 +1,262 @@
-# Memo 部署指南
+# Memo 部署指南（V0.3.0）
 
-> 让任何 MCP 兼容的 AI Agent 拥有活的、会进化的记忆系统。15 分钟完成部署。
+> 让任何 MCP 兼容的 AI Agent 拥有活的、会进化的记忆系统。赫布学习 + 扩散激活 + 网状记忆图谱。
 
 ---
 
 ## 支持平台
 
-| Agent | 配置方式 | 自动同步 |
-|-------|---------|:---:|
-| **HanaAgent** | MCP 配置 + pinned memory 指令 | ✅ 每 10 分钟 + 主动调用 |
-| **Claude Desktop** | `claude_desktop_config.json` | ⚠️ 需手动触发 |
-| **Claude Code (CLI)** | `claude mcp add` | ⚠️ 需手动触发 |
-| **Cursor** | `.cursor/mcp.json` | ⚠️ 需手动触发 |
-| **VS Code Copilot** | MCP 配置 | ⚠️ 需手动触发 |
-| **WorkBuddy / Qoder** | MCP 配置 + Agent 指令 | 取决于平台 |
-| **任意 MCP Agent** | MCP 标准配置 | 取决于平台 |
+| Agent | 配置方式 |
+|-------|---------|
+| **HanaAgent** | MCP 配置 + Agent 提示词 |
+| **Claude Desktop** | `claude_desktop_config.json` |
+| **Claude Code (CLI)** | `claude mcp add` |
+| **Cursor** | `.cursor/mcp.json` |
+| **任意 MCP Agent** | MCP 标准配置 |
 
 ---
 
-## 第一步：安装 Memo
+## 第一步：Clone + 安装
 
 ```powershell
-# 1. 克隆项目
-git clone https://github.com/lilimozi/memo.git E:\memo
-cd E:\memo
+git clone https://github.com/adoublegirl-dev/memo.git D:\memo
+cd D:\memo
 
-# 2. 安装依赖（首次运行会自动下载嵌入模型，约 120MB）
 pip install -r requirements.txt
-
-# 3. 验证安装
-python scripts/quick_check.py
-# 看到 "Phase 0 基础设施验证通过！" 即成功
+pip install "mcp>=1.0"
 ```
+
+> pip 慢加镜像：`pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple`
 
 ---
 
-## 第二步：配置 Agent
+## 第二步：配置环境
 
-### A. HanaAgent（完整功能）
-
-**2A.1 添加 MCP 连接器**
-
-在 HanaAgent 设置中，添加 MCP 连接器：
-
-```json
-{
-  "name": "memo",
-  "transport": "stdio",
-  "command": "python",
-  "args": ["E:/memo/scripts/run_mcp.py"]
-}
+```powershell
+copy .env.example .env
+notepad .env
 ```
 
-**2A.2 注入记忆操作指令**
+填入（DeepSeek 示例）：
 
-在 HanaAgent 中输入：
-
-> 请记住以下规则并严格遵守：每次回复结束前判断本轮是否有值得记住的信息，若有则调用 memo_remember 写入。用户提问前先调 memo_recall 搜索相关记忆。用户说"之前""上次""还记得吗"时必须检索。
-
-**2A.3 创建自动同步定时任务**
-
-在 HanaAgent 中输入：
-
-> 帮我创建一个定时任务，每 10 分钟运行一次：调用 memo_recall 了解已有记忆，如果有新的重要对话内容尚未在 Memo 中，调用 memo_remember 写入。只同步有信息量的内容，跳过闲聊。
-
-### B. Claude Desktop
-
-编辑 `%APPDATA%\Claude\claude_desktop_config.json`：
-
-```json
-{
-  "mcpServers": {
-    "memo": {
-      "command": "python",
-      "args": ["E:/memo/scripts/run_mcp.py"]
-    }
-  }
-}
+```env
+OPENAI_API_KEY=sk-your-key
+OPENAI_BASE_URL=https://api.deepseek.com/v1
+MEMO_EXTRACTION_MODEL=deepseek-v4-flash
+MEMO_GATING_MODEL=deepseek-v4-flash
+MEMO_DB_PATH=data/memo.db
+MEMO_LOG_LEVEL=INFO
 ```
 
-重启 Claude Desktop 后可用。需要主动告诉 Claude："请使用 memo_remember 记住重要信息，提问前用 memo_recall 检索。"
+> 无 API Key 也能跑（jieba 降级提取），只是摘要质量稍低。
 
-### C. Claude Code（终端版）
+---
 
-```bash
-claude mcp add memo -- python E:/memo/scripts/run_mcp.py
+## 第三步：初始化 + 自检
+
+```powershell
+$env:HF_ENDPOINT='https://hf-mirror.com'
+python scripts/init_db.py
 ```
 
-对话时告诉 Claude："请用 memo_remember 记住重要内容，提问前先 memo_recall。"
+看到「自检通过！Memo 系统就绪。」即成功。
 
-### D. Cursor
+---
 
-在项目根目录创建 `.cursor/mcp.json`：
+## 第四步：配置 Agent 接入
+
+### HanaAgent MCP 配置
 
 ```json
 {
   "mcpServers": {
     "memo": {
       "command": "python",
-      "args": ["E:/memo/scripts/run_mcp.py"]
+      "args": ["D:\\memo\\scripts\\run_mcp.py"],
+      "env": { "HF_ENDPOINT": "https://hf-mirror.com" }
     }
   }
 }
 ```
 
----
+### 注入 Agent 提示词
 
-## 第三步：验证
-
-### 3.1 MCP 工具可用性
-
-在 Agent 对话中输入：
-
-> 帮我查看 Memo 记忆系统的统计信息
-
-如果返回了会话数、记忆数、特征词数，说明通了。
-
-### 3.2 跨会话记忆
+复制 `AGENT_PROMPT.md`（或见下文快速版本）到助手的 System Prompt 中：
 
 ```
-第一轮：「我叫张三，喜欢用 Rust 写后端，偏好简洁的错误处理。」
+## Memo 记忆系统
 
-第二轮（新会话）：「帮我推荐一个适合我的后端技术方案。」
-```
+写入记忆时，执行 Python 脚本：
+import sys, os; sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+from memo.integration import MemoClient
+c = MemoClient()
+r = c.remember("用户要记的内容")
+print(r["title"] + " | " + str(r["feature_tags"]))
 
-Agent 应该记住"Rust"和"简洁的错误处理"。
+检索记忆：
+c.recall("查询关键词", top_k=5)
 
-### 3.3 关系图谱效果
-
-经过多轮对话后，问：
-
-> 我之前聊过的内容之间有什么关联？
-
-Agent 通过 `memo_recall` 的三通道检索（特别是图扩散激活），能自动发现跨会话的网状关联。
-
----
-
-## 进阶配置
-
-### 启用 LLM 提取（可选，强烈建议）
-
-编辑 `E:\memo\.env`（从 `.env.example` 复制）：
-
-```env
-OPENAI_API_KEY=sk-your-real-key
-```
-
-效果：特征词提取从 jieba 关键词升级为 LLM 语义提取，质量显著提升。
-
-### 切换嵌入模型
-
-```env
-MEMO_EMBEDDING_MODEL=BAAI/bge-base-zh-v1.5  # 更大，768 维，更准
-```
-
-### 自定义数据库路径
-
-```env
-MEMO_DB_PATH=D:/my_memories/memo.db
+每次写入后告知用户标题+特征词即可。不要用 pin_memory。
 ```
 
 ---
 
-## 日常使用
+## 第五步：启动服务
 
-| 操作 | 命令 / 对话 |
-|------|-----------|
-| 写入记忆 | 「记住：XXX」或 Agent 自动 |
-| 检索记忆 | 「之前 XXX 是什么来着？」 |
-| 查看统计 | 「Memo 现在存了多少记忆？」 |
-| 查看热词 | 「我现在在关注哪些话题？」 |
-| 维护清理 | 「给 Memo 做一次维护」 |
+双击 `start_all.bat`，自动启动：
+- **看板** → `http://localhost:9120`（特征词图谱 + 记忆列表）
+- **自动同步守护进程** → 后台监控 Agent 对话，实时写入
+
+停止：双击 `stop_all.bat`
+
+---
+
+## 第六步：导入历史会话（可选）
+
+如果想把 HanaAgent 过往的聊天记录一次性入库，使用导入脚本。
+
+### 6.1 导入前准备
+
+```powershell
+# 确保服务已停止
+double-click stop_all.bat
+
+# （可选）清空现有测试数据
+python scripts/_mark_legacy.py
+python scripts/_clean_legacy.py
+```
+
+### 6.2 执行导入
+
+```powershell
+$env:HF_ENDPOINT='https://hf-mirror.com'
+python scripts/import_sessions.py --skip-cas
+```
+
+- `--skip-cas`：跳过逐条变更检测，速度快 3-4 倍
+- 脚本自动扫描 `~/.hanako/agents/hanako/sessions/` 下所有历史会话
+- 每轮对话：MVG 门控预判价值 → LLM 提取特征词/摘要 → 写入
+- 门控自动过滤闲聊（"嗯好的"、"知道了"等），只保留有价值内容
+- 中断后用 `--resume` 续传（V0.4.0），当前版本需重头跑
+
+### 6.3 导入后处理
+
+导入时跳过了 CAS 变更检测，需要导入后统一做一次批量扫描：
+
+```powershell
+python -c "from memo.core.engine import engine; engine.init(); r=engine.run_lifecycle(); print(r)"
+```
+
+这会执行：遗忘衰减 → consolidation → **CAS 批量变更扫描**（一次性对比全部记忆，发现推翻/细化关系）→ 快照。
+
+> 批量扫描比逐条对比高效得多——导入 77 轮只需几十秒，而逐条需要数百次额外 LLM 调用。
+
+### 6.4 验证导入结果
+
+```powershell
+# 启动看板
+double-click start_all.bat
+# 浏览器打开 http://localhost:9120
+# 切换到「图谱视图」查看特征词关联网络
+```
+
+---
+
+## 日常操作速查
+
+| 操作 | 命令 |
+|------|------|
+| 一键启动 | 双击 `start_all.bat` |
+| 一键停止 | 双击 `stop_all.bat` |
+| 查看看板 | `http://localhost:9120` |
+| 导入历史会话 | `python scripts/import_sessions.py --skip-cas` |
+| 导入后批量 CAS 扫描 | `python -c "from memo.core.engine import engine; engine.init(); engine.run_lifecycle()"` |
+| 标记现有数据 | `python scripts/_mark_legacy.py` |
+| 清理标记数据 | `python scripts/_clean_legacy.py` |
+| 更新代码 | `git pull` |
+
+---
+
+## V0.3.0 核心能力
+
+### 四项优化
+
+| 优化 | 说明 |
+|------|------|
+| **MVG** 记忆价值门控 | 写入前 LLM 4 维评分预判，总分 < 3.0 跳过（过滤闲聊） |
+| **CAS** 变更感知 | 写入后自动检测是否推翻旧事实，标记旧记忆失效 |
+| **ESA** 显式信号放大 | 手动「记住」L2 级（检索 ×1.5 + 遗忘豁免），自动 L0/L1 |
+| **SCB** 会话凝聚力加成 | 同会话内特征词关联边权重加成 1.5x |
+
+### 其他亮点
+
+- **D3.js 力导向图**：看板「图谱视图」可视化特征词节点 + 赫布关系边，点击节点高亮邻居 + 关联记忆
+- **LLM 重试**：API 失败/空响应/JSON 解析失败自动指数退避重试（3 次）
+- **导入断点续传**（V0.4.0 计划）
+- **测试数据标记**：`_mark_legacy.py` + `_clean_legacy.py` 安全清理
+
+---
+
+## 配置项速查
+
+| 环境变量 | 默认值 | 说明 |
+|------|------|------|
+| `OPENAI_API_KEY` | — | LLM API Key |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API 地址 |
+| `MEMO_EXTRACTION_MODEL` | `gpt-4o-mini` | 提取用模型 |
+| `MEMO_GATING_MODEL` | `gpt-4o-mini` | 门控用模型 |
+| `MEMO_DB_PATH` | `data/memo.db` | 数据库路径 |
+| `MEMO_GATING_ENABLED` | `true` | 启用门控 |
+| `MEMO_GATING_THRESHOLD` | `3.0` | 门控写入阈值 |
+| `MEMO_CHANGE_DETECTION_ENABLED` | `true` | 启用 CAS |
+| `MEMO_SESSION_BOOST_ALPHA` | `0.5` | 会话加成系数 |
+| `MEMO_SESSION_SPREAD_BOOST` | `1.2` | 扩散加成系数 |
+
+---
+
+## 项目结构
+
+```
+memo/
+├── memo/               # 核心 Python 包
+│   ├── core/           # 引擎 + 配置
+│   ├── store/          # 数据库/图/向量
+│   ├── models/         # 数据模型
+│   ├── extraction/     # LLM 提取器 + 门控 + 变更检测
+│   ├── retrieval/      # 三通道检索 + 融合
+│   ├── lifecycle/      # 遗忘/固化/快照
+│   ├── mcp/            # MCP Server（8 工具）
+│   ├── integration/    # MemoClient 直接调用
+│   └── utils/          # LLM/嵌入/日志
+├── scripts/            # 运维脚本
+├── docs/               # 文档
+├── data/               # 数据库文件
+├── start_all.bat       # 一键启动
+├── stop_all.bat        # 一键停止
+└── .env.example        # 配置模板
+```
 
 ---
 
 ## 常见问题
 
-### Q: Agent 不主动调用 Memo 怎么办？
+### Q: 数据库被锁了怎么办？
 
-在对话中明确说「请用 memo_remember 把刚才讨论的内容记下来」。Agent 的学习能力会逐渐形成习惯。
+双击 `stop_all.bat` 停服，然后用 SQLite 工具检查数据库完整性。⚠️ **切勿直接删除 memo.db 文件——这会丢失所有数据。** 如需重建，先备份：`copy data\memo.db data\memo.db.backup`，再运行 `python scripts/init_db.py` 重建空库。
 
-### Q: 数据库太大了怎么办？
+### Q: LLM 调用失败？
 
-Memo 的 Bjork 双强度遗忘机制会自动衰减不活跃的记忆。也可以手动触发：`memo_maintain`。
+已内置 3 次指数退避重试。仍失败会自动降级到 jieba 提取，不丢数据。导入大数量时加 `--skip-cas` 跳过变更检测，导入后统一跑 `run_lifecycle()`。
 
-### Q: 能多个 Agent 共用同一个 Memo 吗？
+### Q: 怎么清理测试数据？
 
-可以。把 `MEMO_DB_PATH` 指向同一个数据库文件即可。特征词图谱会在所有 Agent 间共享。
-
-### Q: 没有 OpenAI API Key 能用吗？
-
-能。Memo 零 API 依赖运行，jieba 关键词提取 + 本地 BGE-small 嵌入模型完成所有功能。API Key 只是让提取质量更好。
+先跑 `python scripts/_mark_legacy.py` 标记现有数据，等正式数据入库后跑 `python scripts/_clean_legacy.py` 清标记数据。
 
 ### Q: 数据安全吗？
 
-全部数据存储在本地 SQLite 文件。LLM 提取时只传当前对话片段，不传全量历史。数据库文件可以直接复制备份。
+全部存储在本地 SQLite 文件。LLM 提取只传当前对话片段，不传全量历史。
 
 ---
 
-## 架构预览
-
-```
-用户 → Agent（HanaAgent / Claude / Cursor / ...）
-         │
-         ├── MCP 协议 ──▶ Memo MCP Server
-         │                   ├── memo_remember   (写入)
-         │                   ├── memo_recall     (检索)
-         │                   ├── memo_stats      (统计)
-         │                   └── ... (8 个工具)
-         │
-         └── 自动同步（定时任务，每 10 分钟）
-```
-
----
-
-## 项目地址
-
-- GitHub: https://github.com/lilimozi/memo
-- 架构文档: `docs/architecture.md`
-- 测试指南: `docs/testing-guide.md`
-
----
-
-> 有问题提 Issue，欢迎 PR。
+> GitHub: https://github.com/adoublegirl-dev/memo
