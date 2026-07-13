@@ -104,6 +104,29 @@ h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); text-transform: 
 .graph-link.dimmed { opacity: 0.05; }
 .graph-node-label { font-size: 10px; fill: var(--text); pointer-events: none; user-select: none; }
 #graphContainer.fullscreen { display: none; }
+
+/* 人格画像 */
+.persona-layout { display: grid; grid-template-columns: 180px 1fr; gap: 16px; min-height: 400px; }
+.dim-nav { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 0; }
+.dim-nav-item { padding: 8px 16px; cursor: pointer; font-size: 13px; color: var(--muted); transition: .15s; border-left: 3px solid transparent; }
+.dim-nav-item:hover { background: var(--bg); color: var(--text); }
+.dim-nav-item.active { color: var(--accent); border-left-color: var(--accent); background: var(--bg); font-weight: 600; }
+.dim-nav-item .count { font-size: 11px; color: var(--muted); float: right; }
+.assertion-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; margin-bottom: 10px; position: relative; }
+.assertion-card.locked { border-color: var(--orange); }
+.assertion-card .conf-bar { height: 4px; background: var(--border); border-radius: 2px; margin: 8px 0; }
+.assertion-card .conf-fill { height: 100%; border-radius: 2px; background: var(--green); transition: width .3s; }
+.assertion-card .conf-fill.low { background: var(--orange); }
+.assertion-card .conf-fill.mid { background: var(--accent); }
+.assertion-card .meta { font-size: 11px; color: var(--muted); display: flex; gap: 12px; margin-top: 6px; }
+.assertion-card .actions { position: absolute; top: 10px; right: 12px; display: flex; gap: 6px; }
+.assertion-card .actions button { background: none; border: 1px solid var(--border); border-radius: 4px; cursor: pointer; font-size: 12px; padding: 2px 8px; color: var(--muted); }
+.assertion-card .actions button:hover { background: var(--bg); color: var(--text); }
+.assertion-card .actions button.danger:hover { background: var(--red); color: #fff; border-color: var(--red); }
+.persona-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+.persona-toolbar button { padding: 6px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); cursor: pointer; font-size: 13px; color: var(--text); }
+.persona-toolbar button:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.persona-toolbar select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--card); color: var(--text); }
 </style>
 </head>
 <body>
@@ -119,6 +142,7 @@ h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); text-transform: 
 <div class="view-toggle">
   <button class="toggle-btn active" onclick="switchView('graph')">图谱视图</button>
   <button class="toggle-btn" onclick="switchView('list')">列表视图</button>
+  <button class="toggle-btn" onclick="switchView('persona')">🧬 人格画像</button>
 </div>
 <div id="graphView">
   <div id="graphContainer" style="background:var(--card);border:1px solid var(--border);border-radius:8px;overflow:hidden;height:500px;position:relative;">
@@ -159,6 +183,25 @@ h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); text-transform: 
   <button onclick="loadMemories()">搜索</button>
 </div>
 <div class="mem-list" id="memList"></div>
+</div>
+
+<!-- 人格画像 -->
+<div id="personaView" style="display:none;">
+<div class="persona-toolbar">
+  <button onclick="refreshPersona()">🔄 增量提炼</button>
+  <select id="sensitivitySelect" onchange="setSensitivity(this.value)">
+    <option value="1">灵敏度 1 (几乎全人格)</option>
+    <option value="2" selected>灵敏度 2 (默认)</option>
+    <option value="3">灵敏度 3 (中等)</option>
+    <option value="4">灵敏度 4 (少量人格)</option>
+    <option value="5">灵敏度 5 (几乎不依赖)</option>
+  </select>
+  <span style="font-size:12px;color:var(--muted);margin-left:auto" id="personaStats"></span>
+</div>
+<div class="persona-layout">
+  <div class="dim-nav" id="dimNav"></div>
+  <div id="assertionList"></div>
+</div>
 </div>
 
 <div class="modal" id="modal" onclick="if(event.target===this)closeModal()">
@@ -231,6 +274,7 @@ function renderMemories(mems) {
       <div class="title">${esc(m.title)}</div>
       <div class="meta">
         <span style="color:var(--accent)">${m.memory_type}</span>
+        <span>${m.source_agent||'?'}</span>
         <span>置信度 ${(m.confidence*100).toFixed(0)}%</span>
         <span>${m.session_id?.slice(0,8)||'?'}</span>
         <span>${m.valid_from?.slice(0,10)||'?'}</span>
@@ -357,8 +401,8 @@ function renderGraph(mode) {
 
   // 力导向参数：主屏紧凑，全屏适中
   const simParams = isFull
-    ? { linkDist: 120, linkStrength: 0.2, charge: -45, collideBase: 10 }
-    : { linkDist: 100, linkStrength: 0.25, charge: -45, collideBase: 10 };
+    ? { linkDist: 60, linkStrength: 0.4, charge: -15, collideBase: 7 }
+    : { linkDist: 25, linkStrength: 0.7, charge: -15, collideBase: 5 };
 
   const simulation = d3.forceSimulation(nodes)
     .alphaDecay(0.02)  // 模拟逐渐稳定
@@ -400,12 +444,110 @@ function switchView(view) {
   event.target.classList.add('active');
   document.getElementById('graphView').style.display = view==='graph'?'block':'none';
   document.getElementById('memListSection').style.display = view==='list'?'block':'none';
+  document.getElementById('personaView').style.display = view==='persona'?'block':'none';
   if(view==='graph'&&!graphData) initGraph();
+  if(view==='persona'&&!personaData) loadPersona();
 }
 
 window.addEventListener('resize', ()=>{
   if(graphSimulation) renderGraph();
 });
+
+// ── 人格画像 ──
+let personaData = null;
+let currentDim = null;
+
+async function loadPersona() {
+  const r = await fetch('/api/persona');
+  personaData = await r.json();
+  const dims = Object.keys(personaData.assertions);
+  const total = Object.values(personaData.assertions).flat().length;
+  document.getElementById('personaStats').textContent = total + ' 条断言 · 上次: ' + (personaData.settings.last_baseline_at?.slice(0,16)||'未建');
+  document.getElementById('sensitivitySelect').value = personaData.settings.sensitivity_level||'2';
+  renderDimNav(dims);
+  if(dims.length) selectDim(dims[0]);
+}
+
+function renderDimNav(dims) {
+  const nav = document.getElementById('dimNav');
+  const dimLabels = {
+    value:'💎 价值观', decision:'🎯 决策模式', identity:'🏷️ 身份',
+    preference:'❤️ 偏好', sensitivity:'⚠️ 敏感话题', relationship:'🔗 关系',
+    knowledge:'📚 知识边界', communication:'💬 沟通风格',
+    mental_model:'🧩 思维模型', emotion:'🌊 情绪特征'
+  };
+  nav.innerHTML = dims.map(d=>{
+    const cnt = personaData.assertions[d].length;
+    return `<div class="dim-nav-item" onclick="selectDim('${d}')">${dimLabels[d]||d}<span class="count">${cnt}</span></div>`;
+  }).join('');
+}
+
+function selectDim(dim) {
+  currentDim = dim;
+  document.querySelectorAll('.dim-nav-item').forEach(el=>el.classList.remove('active'));
+  [...document.querySelectorAll('.dim-nav-item')].find(el=>el.textContent.includes(dim))?.classList.add('active');
+  renderAssertions(personaData.assertions[dim]||[]);
+}
+
+function renderAssertions(list) {
+  const container = document.getElementById('assertionList');
+  if(!list.length) { container.innerHTML = '<div class="empty">该维度暂无断言</div>'; return; }
+  container.innerHTML = list.map(a=>{
+    const confPct = Math.round(a.confidence*100);
+    const confClass = a.confidence<0.4?'low':a.confidence<0.7?'mid':'';
+    const lockIcon = a.locked ? '🔒' : '';
+    return `<div class="assertion-card${a.locked?' locked':''}">
+      <div class="actions">
+        ${a.locked
+          ? `<button onclick="toggleLock('${a.id}',false)" title="解锁">🔓</button>`
+          : `<button onclick="toggleLock('${a.id}',true)" title="锁定">🔒</button>`}
+        <button onclick="editAssertion('${a.id}')" title="编辑">✏️</button>
+        <button class="danger" onclick="deleteAssertion('${a.id}')" title="删除">🗑️</button>
+      </div>
+      <div style="font-size:14px;line-height:1.5">${lockIcon} ${esc(a.assertion)}</div>
+      <div class="conf-bar"><div class="conf-fill ${confClass}" style="width:${confPct}%"></div></div>
+      <div class="meta">
+        <span>置信度 ${confPct}%</span>
+        <span>来源 ${a.evidences.length} 条记忆</span>
+        <span>${a.updated_at?.slice(0,10)||'?'}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleLock(id, lock) {
+  await fetch('/api/persona/action', {method:'POST',body:JSON.stringify({action:lock?'lock':'unlock',id})});
+  loadPersona();
+}
+
+async function deleteAssertion(id) {
+  if(!confirm('确定删除？')) return;
+  await fetch('/api/persona/action', {method:'POST',body:JSON.stringify({action:'delete',id})});
+  loadPersona();
+}
+
+function editAssertion(id) {
+  const a = Object.values(personaData.assertions).flat().find(x=>x.id===id);
+  if(!a) return;
+  const text = prompt('编辑断言:', a.assertion);
+  if(text && text!==a.assertion) {
+    fetch('/api/persona/action', {method:'POST',body:JSON.stringify({action:'edit',id,assertion:text})}).then(()=>loadPersona());
+  }
+}
+
+async function refreshPersona() {
+  const r = await fetch('/api/persona/action', {method:'POST',body:JSON.stringify({action:'refresh'})});
+  const result = await r.json();
+  alert('刷新完成: ' + JSON.stringify(result));
+  personaData = null;
+  loadPersona();
+}
+
+async function setSensitivity(level) {
+  await fetch('/api/persona/action', {method:'POST',body:JSON.stringify({action:'edit',id:'__settings__',assertion:level})});
+  // 直接更新数据库中的设置
+  await fetch('/api/persona/action', {method:'POST',body:JSON.stringify({action:'set_sensitivity',id:level})});
+}
 
 initGraph();
 </script>
@@ -503,6 +645,14 @@ class MemoHandler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self._json({"error": str(e)}, 500)
 
+    def do_POST(self):
+        try:
+            self._do_GET()  # 统一路由处理
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self._json({"error": str(e)}, 500)
+
     def _do_GET(self):
         path = urlparse(self.path).path
 
@@ -520,9 +670,36 @@ class MemoHandler(BaseHTTPRequestHandler):
             } for t in tags])
         elif path == "/api/graph":
             self._json(_get_graph_data())
+        elif path == "/api/persona":
+            from memo.persona.extractor import get_active_assertions, get_persona_settings
+            assertions = get_active_assertions()
+            settings = get_persona_settings()
+            # 按维度分组
+            by_dim = {}
+            for a in assertions:
+                d = a["dimension"]
+                if d not in by_dim:
+                    by_dim[d] = []
+                evs = a.get("evidences", "[]")
+                import json as _j
+                ev_list = _j.loads(evs) if isinstance(evs, str) else evs
+                by_dim[d].append({
+                    "id": a["id"],
+                    "dimension": a["dimension"],
+                    "assertion": a["assertion"],
+                    "confidence": a["confidence"],
+                    "evidences": ev_list,
+                    "signal_level": a["signal_level"],
+                    "locked": a["locked"],
+                    "is_custom": a["is_custom"],
+                    "updated_at": a["updated_at"],
+                })
+            self._json({"assertions": by_dim, "settings": settings})
         elif path == "/api/memories":
             rows = db.fetchall(
-                "SELECT * FROM memory_units WHERE is_superseded=0 ORDER BY created_at DESC LIMIT 100"
+                "SELECT mu.*, s.agent_id as source_agent FROM memory_units mu"
+                " LEFT JOIN sessions s ON mu.session_id = s.id"
+                " WHERE mu.is_superseded=0 ORDER BY mu.created_at DESC LIMIT 100"
             )
             from memo.store.graph_store import graph_store as gs
             mems = []
@@ -533,6 +710,7 @@ class MemoHandler(BaseHTTPRequestHandler):
                     "title": r["title"], "summary": r["summary"],
                     "memory_type": r["memory_type"], "confidence": r["confidence"],
                     "valid_from": r["valid_from"],
+                    "source_agent": r["source_agent"] or "?",
                     "feature_tags": [t.name for t in tags],
                 })
             self._json(mems)
@@ -552,8 +730,45 @@ class MemoHandler(BaseHTTPRequestHandler):
                 "valid_from": mem.valid_from, "is_superseded": mem.is_superseded,
                 "feature_tags": [t.name for t in tags],
             })
+        elif path == "/api/persona/action":
+            self._handle_persona_action()
         else:
             self._json({"error": "not found"}, 404)
+
+    def _handle_persona_action(self):
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        body = _j.loads(self.rfile.read(length)) if length > 0 else {}
+        action = body.get("action", "")
+        aid = body.get("id", "")
+        if not aid:
+            self._json({"error": "missing id"}, 400); return
+        now = __import__("datetime").datetime.now().isoformat()
+        if action == "lock":
+            db.execute("UPDATE persona_assertions SET locked=1, updated_at=? WHERE id=?", (now, aid))
+        elif action == "unlock":
+            db.execute("UPDATE persona_assertions SET locked=0, updated_at=? WHERE id=?", (now, aid))
+        elif action == "delete":
+            db.execute("UPDATE persona_assertions SET is_superseded=1, updated_at=? WHERE id=?", (now, aid))
+        elif action == "edit":
+            new_text = body.get("assertion", "")
+            new_conf = body.get("confidence")
+            if new_text:
+                db.execute("UPDATE persona_assertions SET assertion=?, updated_at=? WHERE id=?", (new_text, now, aid))
+            if new_conf is not None:
+                db.execute("UPDATE persona_assertions SET confidence=?, updated_at=? WHERE id=?", (float(new_conf), now, aid))
+        elif action == "refresh":
+            from memo.core.engine import engine as _eng
+            result = _eng.update_persona()
+            self._json(result); return
+        elif action == "set_sensitivity":
+            db.execute("INSERT OR REPLACE INTO persona_settings (key, value) VALUES ('sensitivity_level', ?)", (str(aid),))
+            db.commit()
+            self._json({"ok": True}); return
+        else:
+            self._json({"error": f"unknown action {action}"}, 400); return
+        db.commit()
+        self._json({"ok": True})
 
     def _json(self, data, code=200):
         body = json.dumps(data, ensure_ascii=False, default=str).encode()

@@ -5,42 +5,37 @@
 #   "mcpServers": {
 #     "memo": {
 #       "command": "python",
-#       "args": ["E:/memo/scripts/run_mcp.py"],
+#       "args": ["<项目路径>/scripts/run_mcp.py"],
 #       "env": {
-#         "OPENAI_API_KEY": "sk-your-key-here",
-#         "MEMO_DB_PATH": "E:/memo/memo/data/memo.db"
+#         "LLM_API_KEY": "sk-your-key-here",
+#         "MEMO_DB_PATH": "<项目路径>/memo/data/memo.db"
 #       }
 #     }
 #   }
 # }
 #
-# Claude Code 配置 (~/.claude/claude_code_config.json):
+# Claude Code / Cursor 配置（从 HanaAgent MCP 配置页直接添加）:
 # {
 #   "mcpServers": {
 #     "memo": {
 #       "command": "python",
-#       "args": ["E:/memo/scripts/run_mcp.py"]
+#       "args": ["<项目路径>/scripts/run_mcp.py"]
 #     }
 #   }
 # }
 #
-# Cursor 配置 (.cursor/mcp.json):
-# {
-#   "mcpServers": {
-#     "memo": {
-#       "command": "python",
-#       "args": ["E:/memo/scripts/run_mcp.py"]
-#     }
-#   }
-# }
+# 快速安装（HanaAgent）:
+#   1. 打开 HanaAgent → 设置 → MCP 连接器
+#   2. 点击「添加 MCP 服务器」
+#   3. 类型选 stdio，命令填：python <项目路径>/scripts/run_mcp.py
 
 {
   "mcpServers": {
     "memo": {
       "command": "python",
-      "args": ["E:/memo/scripts/run_mcp.py"],
+      "args": ["scripts/run_mcp.py"],
       "env": {
-        "MEMO_DB_PATH": "E:/memo/memo/data/memo.db"
+        "MEMO_DB_PATH": "memo/data/memo.db"
       }
     }
   }

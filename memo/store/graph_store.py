@@ -45,7 +45,12 @@ class GraphStore:
         category: str = "CONCEPT",
         embedding: np.ndarray | None = None,
     ) -> FeatureTag:
-        """查找已有特征词，不存在则创建。"""
+        """查找已有特征词，不存在则创建。自动标准化 category 为大写。"""
+        # 标准化 category
+        category = category.upper()
+        valid = {'PERSON', 'OBJECT', 'LOCATION', 'EVENT', 'ORGANIZATION', 'CONCEPT'}
+        if category not in valid:
+            category = 'CONCEPT'
         row = self.db.fetchone(
             "SELECT * FROM feature_tags WHERE name = ?", (name,)
         )

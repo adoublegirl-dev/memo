@@ -1,6 +1,6 @@
-# Memo 部署指南（V0.3.0）
+# Memo 部署指南
 
-> 让任何 MCP 兼容的 AI Agent 拥有活的、会进化的记忆系统。赫布学习 + 扩散激活 + 网状记忆图谱。
+> 让任何 MCP 兼容的 AI Agent 拥有活的、会进化的记忆系统。赫布学习 + 扩散激活 + 网状记忆图谱 + 人格引擎。
 
 ---
 
@@ -18,9 +18,9 @@
 
 ## 第一步：Clone + 安装
 
-```powershell
-git clone https://github.com/adoublegirl-dev/memo.git D:\memo
-cd D:\memo
+```bash
+git clone https://github.com/adoublegirl-dev/memo.git <项目路径>
+cd <项目路径>
 
 pip install -r requirements.txt
 pip install "mcp>=1.0"
@@ -28,20 +28,22 @@ pip install "mcp>=1.0"
 
 > pip 慢加镜像：`pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple`
 
+> 将 `<项目路径>` 替换为你的 Memo 实际目录。
+
 ---
 
 ## 第二步：配置环境
 
-```powershell
+```bash
 copy .env.example .env
-notepad .env
+# 编辑 .env 填入你的 API Key
 ```
 
 填入（DeepSeek 示例）：
 
 ```env
-OPENAI_API_KEY=sk-your-key
-OPENAI_BASE_URL=https://api.deepseek.com/v1
+LLM_API_KEY=sk-your-key
+LLM_BASE_URL=https://api.deepseek.com/v1
 MEMO_EXTRACTION_MODEL=deepseek-v4-flash
 MEMO_GATING_MODEL=deepseek-v4-flash
 MEMO_DB_PATH=data/memo.db
@@ -54,8 +56,11 @@ MEMO_LOG_LEVEL=INFO
 
 ## 第三步：初始化 + 自检
 
-```powershell
-$env:HF_ENDPOINT='https://hf-mirror.com'
+```bash
+# 国内用户先设镜像
+# Windows: set HF_ENDPOINT=https://hf-mirror.com
+# macOS/Linux: export HF_ENDPOINT=https://hf-mirror.com
+
 python scripts/init_db.py
 ```
 
@@ -72,7 +77,7 @@ python scripts/init_db.py
   "mcpServers": {
     "memo": {
       "command": "python",
-      "args": ["D:\\memo\\scripts\\run_mcp.py"],
+      "args": ["<项目路径>/scripts/run_mcp.py"],
       "env": { "HF_ENDPOINT": "https://hf-mirror.com" }
     }
   }
@@ -104,9 +109,12 @@ c.recall("查询关键词", top_k=5)
 
 ## 第五步：启动服务
 
-双击 `start_all.bat`，自动启动：
-- **看板** → `http://localhost:9120`（特征词图谱 + 记忆列表）
-- **自动同步守护进程** → 后台监控 Agent 对话，实时写入
+双击 `start_all.bat`（Windows），或运行：
+
+```bash
+python scripts/memo_dashboard.py   # 看板 → http://localhost:9120
+python scripts/memo_watcher.py     # 后台守护进程
+```
 
 停止：双击 `stop_all.bat`
 
@@ -114,13 +122,13 @@ c.recall("查询关键词", top_k=5)
 
 ## 第六步：导入历史会话（可选）
 
-如果想把 HanaAgent 过往的聊天记录一次性入库，使用导入脚本。
+如果想把 HanaAgent 过往的聊天记录一次性入库：
 
 ### 6.1 导入前准备
 
-```powershell
+```bash
 # 确保服务已停止
-double-click stop_all.bat
+double-click stop_all.bat  # Windows
 
 # （可选）清空现有测试数据
 python scripts/_mark_legacy.py
@@ -129,8 +137,8 @@ python scripts/_clean_legacy.py
 
 ### 6.2 执行导入
 
-```powershell
-$env:HF_ENDPOINT='https://hf-mirror.com'
+```bash
+# Windows: set HF_ENDPOINT=https://hf-mirror.com
 python scripts/import_sessions.py --skip-cas
 ```
 
@@ -138,26 +146,23 @@ python scripts/import_sessions.py --skip-cas
 - 脚本自动扫描 `~/.hanako/agents/hanako/sessions/` 下所有历史会话
 - 每轮对话：MVG 门控预判价值 → LLM 提取特征词/摘要 → 写入
 - 门控自动过滤闲聊（"嗯好的"、"知道了"等），只保留有价值内容
-- 中断后用 `--resume` 续传（V0.4.0），当前版本需重头跑
 
 ### 6.3 导入后处理
 
 导入时跳过了 CAS 变更检测，需要导入后统一做一次批量扫描：
 
-```powershell
+```bash
 python -c "from memo.core.engine import engine; engine.init(); r=engine.run_lifecycle(); print(r)"
 ```
 
-这会执行：遗忘衰减 → consolidation → **CAS 批量变更扫描**（一次性对比全部记忆，发现推翻/细化关系）→ 快照。
+这会执行：遗忘衰减 → consolidation → CAS 批量变更扫描 → 快照。
 
 > 批量扫描比逐条对比高效得多——导入 77 轮只需几十秒，而逐条需要数百次额外 LLM 调用。
 
 ### 6.4 验证导入结果
 
-```powershell
-# 启动看板
-double-click start_all.bat
-# 浏览器打开 http://localhost:9120
+```bash
+# 启动看板，浏览器打开 http://localhost:9120
 # 切换到「图谱视图」查看特征词关联网络
 ```
 
@@ -178,23 +183,22 @@ double-click start_all.bat
 
 ---
 
-## V0.3.0 核心能力
+## 核心能力
 
-### 四项优化
+### MVG 记忆价值门控
+写入前 LLM 4 维评分预判，总分 < 3.0 跳过（过滤闲聊）
 
-| 优化 | 说明 |
-|------|------|
-| **MVG** 记忆价值门控 | 写入前 LLM 4 维评分预判，总分 < 3.0 跳过（过滤闲聊） |
-| **CAS** 变更感知 | 写入后自动检测是否推翻旧事实，标记旧记忆失效 |
-| **ESA** 显式信号放大 | 手动「记住」L2 级（检索 ×1.5 + 遗忘豁免），自动 L0/L1 |
-| **SCB** 会话凝聚力加成 | 同会话内特征词关联边权重加成 1.5x |
+### CAS 变更感知
+写入后自动检测是否推翻旧事实，标记旧记忆失效
 
-### 其他亮点
+### SCB 会话凝聚力加成
+同会话内特征词关联边权重加成 + 赫布学习
 
-- **D3.js 力导向图**：看板「图谱视图」可视化特征词节点 + 赫布关系边，点击节点高亮邻居 + 关联记忆
-- **LLM 重试**：API 失败/空响应/JSON 解析失败自动指数退避重试（3 次）
-- **导入断点续传**（V0.4.0 计划）
-- **测试数据标记**：`_mark_legacy.py` + `_clean_legacy.py` 安全清理
+### D3.js 力导向图
+看板「图谱视图」可视化特征词节点 + 赫布关系边，点击节点高亮邻居 + 关联记忆
+
+### 人格引擎（10 维度）
+从记忆自动提炼 values / decisions / preferences / identity / sensitivity / relationship / knowledge / communication / mental_model / emotion
 
 ---
 
@@ -202,10 +206,10 @@ double-click start_all.bat
 
 | 环境变量 | 默认值 | 说明 |
 |------|------|------|
-| `OPENAI_API_KEY` | — | LLM API Key |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API 地址 |
-| `MEMO_EXTRACTION_MODEL` | `gpt-4o-mini` | 提取用模型 |
-| `MEMO_GATING_MODEL` | `gpt-4o-mini` | 门控用模型 |
+| `LLM_API_KEY` | — | LLM API Key |
+| `LLM_BASE_URL` | `https://api.deepseek.com/v1` | API 地址 |
+| `MEMO_EXTRACTION_MODEL` | `deepseek-v4-flash` | 提取用模型 |
+| `MEMO_GATING_MODEL` | `deepseek-v4-flash` | 门控用模型 |
 | `MEMO_DB_PATH` | `data/memo.db` | 数据库路径 |
 | `MEMO_GATING_ENABLED` | `true` | 启用门控 |
 | `MEMO_GATING_THRESHOLD` | `3.0` | 门控写入阈值 |
@@ -218,7 +222,7 @@ double-click start_all.bat
 ## 项目结构
 
 ```
-memo/
+项目根目录/
 ├── memo/               # 核心 Python 包
 │   ├── core/           # 引擎 + 配置
 │   ├── store/          # 数据库/图/向量
@@ -226,7 +230,8 @@ memo/
 │   ├── extraction/     # LLM 提取器 + 门控 + 变更检测
 │   ├── retrieval/      # 三通道检索 + 融合
 │   ├── lifecycle/      # 遗忘/固化/快照
-│   ├── mcp/            # MCP Server（8 工具）
+│   ├── persona/        # 人格引擎
+│   ├── mcp/            # MCP Server
 │   ├── integration/    # MemoClient 直接调用
 │   └── utils/          # LLM/嵌入/日志
 ├── scripts/            # 运维脚本
@@ -243,7 +248,7 @@ memo/
 
 ### Q: 数据库被锁了怎么办？
 
-双击 `stop_all.bat` 停服，然后用 SQLite 工具检查数据库完整性。⚠️ **切勿直接删除 memo.db 文件——这会丢失所有数据。** 如需重建，先备份：`copy data\memo.db data\memo.db.backup`，再运行 `python scripts/init_db.py` 重建空库。
+先停止服务，然后用 SQLite 工具检查数据库完整性。切勿直接删除 `memo.db` 文件。如需重建，先备份：`copy memo\data\memo.db memo\data\memo.db.backup`，再运行 `python scripts/init_db.py` 重建空库。
 
 ### Q: LLM 调用失败？
 

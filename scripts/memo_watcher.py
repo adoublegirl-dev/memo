@@ -1,10 +1,13 @@
-"""Memo 自动同步守护进程 —— 监控 HanaAgent 会话文件，自动写入 Memo。
+"""Memo 自动同步守护进程 —— 监控 HanaAgent 会话 + Bridge inbox，自动写入 Memo。
 
 原理：
   1. 找到最新的会话 JSONL 文件
   2. tail 监听新写入的消息行
   3. 当检测到一轮完整的 user → assistant 对话完成时
   4. 自动调用 Memo 的 remember_conversation 写入
+
+  5. 同时监控 ~/.memo/inbox/（Bridge 导出目录）
+  6. 发现新文件 → 导入 → 移到 processed/
 
 启动方式：
   python scripts/memo_watcher.py
@@ -14,19 +17,23 @@
 
 import json
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
 
-import os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 项目路径
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from memo.core.engine import engine
 from memo.utils.logger import logger
 
 # ── 配置 ──
-SESSIONS_DIR = Path(os.path.expanduser("~/.hanako/agents/hanako/sessions"))
-POLL_INTERVAL = 2  # 每 2 秒检查一次
-MIN_MESSAGE_LENGTH = 30  # 跳过太短的消息（闲聊、嗯、好的等）
+SESSIONS_DIR = Path.home() / ".hanako" / "agents" / "hanako" / "sessions"
+INBOX_DIR = Path.home() / ".memo" / "inbox"
+POLL_INTERVAL = 5  # 轮询间隔（秒）
+MIN_TURN_LENGTH = 30
 
 
 def find_latest_session() -> Path | None:
@@ -67,7 +74,7 @@ def extract_user_text(msgs: list[dict]) -> list[str]:
                 part.get("text", "") for part in content if isinstance(part, dict) and part.get("type") == "text"
             )
         content = content.strip()
-        if len(content) >= MIN_MESSAGE_LENGTH:
+        if len(content) >= MIN_TURN_LENGTH:
             texts.append(f"User: {content}")
     return texts
 
@@ -88,7 +95,7 @@ def extract_assistant_text(msgs: list[dict]) -> list[str]:
                     # 跳过 type=thinking
             content = " ".join(parts)
         content = content.strip()
-        if len(content) >= MIN_MESSAGE_LENGTH:
+        if len(content) >= MIN_TURN_LENGTH:
             texts.append(f"Assistant: {content}")
     return texts
 
@@ -122,9 +129,22 @@ def main():
     last_processed_count = 0
     current_file = None
     auto_session_id = engine.start_session("自动同步会话").id  # 复用同一个会话
+    last_persona_refresh = 0  # 人格刷新时间戳
+    PERSONA_REFRESH_SECONDS = 12 * 3600  # 12 小时
 
     try:
         while True:
+            # 人格刷新检查（每 12 小时）
+            now_ts = time.time()
+            if now_ts - last_persona_refresh > PERSONA_REFRESH_SECONDS:
+                try:
+                    logger.info("触发人格增量刷新...")
+                    result = engine.update_persona()
+                    logger.info(f"人格刷新完成: {result}")
+                    last_persona_refresh = now_ts
+                except Exception as e:
+                    logger.warning(f"人格刷新异常: {e}")
+
             latest = find_latest_session()
             if not latest:
                 logger.debug("未找到会话文件")
@@ -180,10 +200,70 @@ def main():
                         logger.warning(f"同步失败: {e}")
 
             last_processed_count = total_msgs
+
+            # Bridge inbox 监控
+            _process_inbox()
+
             time.sleep(POLL_INTERVAL)
 
     except KeyboardInterrupt:
         print("\n守护进程已停止")
+
+
+def _process_inbox():
+    """处理 Bridge inbox 中的导出文件。
+
+    扫描 ~/.memo/inbox/ 中的 JSONL 文件，导入后移到 processed/ 子目录。
+    """
+    if not INBOX_DIR.exists():
+        return
+
+    processed_dir = INBOX_DIR / "processed"
+    processed_dir.mkdir(exist_ok=True)
+
+    files = sorted(INBOX_DIR.glob("*.jsonl"))
+    if not files:
+        return
+
+    session_id = engine.start_session(f"Bridge-{agent_name}", agent_id=agent_name).id
+    imported = 0
+
+    for f in files:
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    record = json.loads(line)
+                    conversation = record.get("conversation", "")
+                    agent_name = record.get("agent", "unknown")
+
+                    if len(conversation) < MIN_TURN_LENGTH:
+                        continue
+
+                    result = engine.remember_conversation(
+                        session_id=session_id,
+                        conversation=conversation,
+                        auto_extract=True,
+                        skip_gating=False,
+                    )
+                    if result.get("memory_id"):
+                        imported += 1
+                        logger.info(
+                            f"📥 Bridge 导入 [{agent_name}]: {result['title'][:40]} "
+                            f"({len(result['feature_tags'])} 特征词)"
+                        )
+
+            # 移到 processed
+            shutil.move(str(f), str(processed_dir / f.name))
+
+        except Exception as e:
+            logger.warning(f"Bridge 导入失败 [{f.name}]: {e}")
+
+    if imported > 0:
+        engine.end_session(session_id)
+        logger.info(f"Bridge 批次完成: {imported} 条记忆")
 
 
 if __name__ == "__main__":

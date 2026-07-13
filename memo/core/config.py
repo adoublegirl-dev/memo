@@ -39,14 +39,14 @@ class MemoConfig:
     )
 
     # ── LLM 提取（API 调用，轻量模型即可） ──
-    openai_api_key: str = field(
-        default_factory=lambda: os.getenv("OPENAI_API_KEY", "")
+    llm_api_key: str = field(
+        default_factory=lambda: os.getenv("LLM_API_KEY", "")
     )
-    openai_base_url: str = field(
-        default_factory=lambda: os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    llm_base_url: str = field(
+        default_factory=lambda: os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
     )
     extraction_model: str = field(
-        default_factory=lambda: os.getenv("MEMO_EXTRACTION_MODEL", "gpt-4o-mini")
+        default_factory=lambda: os.getenv("MEMO_EXTRACTION_MODEL", "deepseek-v4-flash")
     )
 
     # ── 嵌入模型（本地 BGE-small） ──
@@ -96,7 +96,7 @@ class MemoConfig:
         default_factory=lambda: float(os.getenv("MEMO_GATING_THRESHOLD", "3.0"))
     )
     gating_model: str = field(
-        default_factory=lambda: os.getenv("MEMO_GATING_MODEL", "gpt-4o-mini")
+        default_factory=lambda: os.getenv("MEMO_GATING_MODEL", "deepseek-v4-flash")
     )
 
     # ── CAS 变更感知 ──
@@ -113,6 +113,17 @@ class MemoConfig:
     )
     session_spread_boost: float = field(
         default_factory=lambda: float(os.getenv("MEMO_SESSION_SPREAD_BOOST", "1.2"))
+    )
+
+    # ── 人格引擎 ──
+    persona_enabled: bool = field(
+        default_factory=lambda: os.getenv("MEMO_PERSONA_ENABLED", "true").lower() == "true"
+    )
+    persona_refresh_interval_hours: int = field(
+        default_factory=lambda: int(os.getenv("MEMO_PERSONA_REFRESH_HOURS", "12"))
+    )
+    persona_sensitivity_level: int = field(
+        default_factory=lambda: int(os.getenv("MEMO_PERSONA_SENSITIVITY", "2"))
     )
 
     def ensure_dirs(self) -> None:

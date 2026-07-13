@@ -84,7 +84,7 @@ npx @modelcontextprotocol/inspector python E:/memo/scripts/run_mcp.py
 3. 点击 `memo_remember` → 填入参数：
    ```json
    {
-     "conversation": "我叫托马斯尔康，正在开发一个记忆系统，叫 Memo。它用赫布学习和扩散激活来做网状记忆图谱。"
+     "conversation": "我是Memo开发者，正在开发一个记忆系统，叫 Memo。它用赫布学习和扩散激活来做网状记忆图谱。"
    }
    ```
    → **Run** → 看到提取结果
@@ -105,33 +105,33 @@ npx @modelcontextprotocol/inspector python E:/memo/scripts/run_mcp.py
 6. 点击 `memo_hot_tags` → **Run** → 看到高频特征词排行
 7. 点击 `memo_snapshot` → **Run** → 看到全局快照
 
-### 3.3 可选：配 OpenAI API Key 启用 LLM 提取
+### 3.3 可选：配 API Key 启用 LLM 提取
 
-编辑 `E:\memo\.env`（从 `.env.example` 复制）：
+编辑 `.env`（从 `.env.example` 复制）：
 
 ```env
-OPENAI_API_KEY=sk-your-real-key
+LLM_API_KEY=sk-your-real-key
 ```
 
 重启 Inspector，再写入记忆时会看到 `提取方式: llm`，特征词质量远高于 jieba。
 
 ---
 
-## 方法四：接入 Hanako Agent（真实验证）
+## 方法四：接入 HanaAgent（真实验证）
 
 ### 4.1 添加 MCP 配置
 
-在 Hanako 的 MCP 配置中添加 Memo：
+在 HanaAgent 的 MCP 配置中添加 Memo：
 
 ```json
 {
   "mcpServers": {
     "memo": {
       "command": "python",
-      "args": ["E:/memo/scripts/run_mcp.py"],
+      "args": ["<项目路径>/scripts/run_mcp.py"],
       "env": {
-        "OPENAI_API_KEY": "sk-...",
-        "MEMO_DB_PATH": "E:/memo/memo/data/memo.db"
+        "LLM_API_KEY": "sk-...",
+        "MEMO_DB_PATH": "<项目路径>/memo/data/memo.db"
       }
     }
   }
@@ -140,19 +140,19 @@ OPENAI_API_KEY=sk-your-real-key
 
 ### 4.2 开始对话测试
 
-对 Hanako 说：
+对 HanaAgent 说：
 
 > **第一轮（写入）**：「帮我记住，我正在做一个叫"炸飞机"的联机对战游戏，已经实现了排位赛和天梯赛，ELO 初始分 1200，K 值 32。」
 
-Hanako 会调用 `memo_remember`，自动提取特征词（炸飞机、排位赛、天梯赛、ELO 算法...）并写入。
+ASH 会调用 `memo_remember`，自动提取特征词（炸飞机、排位赛、天梯赛、ELO 算法...）并写入。
 
 > **第二轮（跨会话检索）**：新开一个会话，问：「之前那个游戏的匹配算法参数是什么？」
 
-Hanako 会调用 `memo_recall("匹配算法参数")` → 三通道检索 → 返回第一轮的记忆 → 正确回答。
+ASH 会调用 `memo_recall("匹配算法参数")` → 三通道检索 → 返回第一轮的记忆 → 正确回答。
 
 > **第三轮（图关联验证）**：新会话问：「除了排位赛还有什么竞技模式？」
 
-Hanako 调用 `memo_recall`，通过特征词图谱的 CO_OCCUR 关系，发现"排位赛"和"天梯赛"有强关联，自动关联返回。
+ASH 调用 `memo_recall`，通过特征词图谱的 CO_OCCUR 关系，发现"排位赛"和"天梯赛"有强关联，自动关联返回。
 
 ---
 

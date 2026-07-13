@@ -1,0 +1,5 @@
+import sys; sys.path.insert(0,'.')
+from memo.store.database import db; db.init()
+db.execute("UPDATE sessions SET agent_id='ASH' WHERE agent_id='default'")
+db.commit()
+print('Updated to ASH:', db.fetchone("SELECT COUNT(*) as c FROM sessions WHERE agent_id='ASH'")['c'], 'sessions')
