@@ -177,7 +177,7 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 
 ---
 
-## 九、给同事的测试步骤
+## 九、测试步骤
 
 1. 解压到本地目录，改 `.env` 填 API Key
 2. `pip install -r requirements.txt`
