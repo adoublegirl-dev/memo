@@ -35,7 +35,7 @@ Memo 是一个本地运行的 AI 记忆系统，做两件事：
 ```
 LLM_API_KEY=sk-your-deepseek-key
 LLM_BASE_URL=https://api.deepseek.com/v1
-MEMO_DB_PATH=data/memo.db
+MEMO_DB_PATH=memo/data/memo.db
 ```
 
 如果用自己的 API，改 `LLM_BASE_URL` 和模型名即可。
@@ -96,7 +96,7 @@ python scripts/memo_watcher.py     # 守护进程（Bridge inbox 监控 + 人格
 | **Claude Desktop** | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | **Cursor** | `.cursor/mcp.json` |
 
-### 4.2 安装 Skill（推荐，让 Agent 自动记录）
+### 4.2 安装 Skill（推荐，让 Agent 自动运行）
 
 将 `SKILL.md` 复制到 Agent 的 skills 目录：
 
@@ -106,9 +106,16 @@ python scripts/memo_watcher.py     # 守护进程（Bridge inbox 监控 + 人格
 | **HanaAgent** | `~/.hanako/skills/memo/SKILL.md` |
 | **QoderWork** | Skills 市场导入 |
 
-安装后 Agent 会在每次对话结束时自动调用 `memo_remember` 写入记忆。
+安装后 Agent 会：
+- **每轮对话前**自动检索相关记忆
+- **每轮对话后**静默写入对话记忆
+- **涉及决策/偏好时**自动调用人格引擎
 
-### 4.3 首次建人格基线
+### 4.3 注入 Agent 提示词
+
+将 `AGENT_PROMPT.md` 的内容追加到 Agent 的 System Prompt 中，Agent 就会自动执行检索+记忆+人格三阶段联动。
+
+### 4.4 首次建人格基线
 
 ```bash
 python -c "from memo.core.engine import engine; engine.init(); r=engine.build_persona_baseline(); print(r)"
@@ -116,7 +123,17 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 
 ---
 
-## 五、MCP 工具清单（11 个）
+## 五、Agent 行为（接入后自动执行）
+
+| 阶段 | 时机 | 工具 | 说明 |
+|------|------|------|------|
+| **检索** | 每次回复前 | `memo_recall` | 自动提炼关键词检索过往记忆，融入回答 |
+| **写入** | 每次回复后 | `memo_remember` | 静默写入本轮对话，不打扰用户 |
+| **人格** | 决策/偏好类问题 | `persona_ask` | 匹配人格画像，给出带立场的回复 |
+
+---
+
+## 六、MCP 工具清单（11 个）
 
 | 工具 | 用途 | 示例 |
 |------|------|------|
@@ -134,19 +151,19 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 
 ---
 
-## 六、看板
+## 七、看板
 
 浏览器打开 `http://localhost:9120`
 
 | Tab | 内容 |
 |-----|------|
 | 图谱视图 | 特征词 D3 力导向图 |
-| 列表视图 | 记忆卡片列表（含来源 Agent 标签） |
+| 列表视图 | 记忆卡片列表（含来源 Agent 标签、Agent 筛选器） |
 | 人格画像 | 10 维度人格断言管理 |
 
 ---
 
-## 七、架构
+## 八、架构
 
 ```
 ┌─────────────────────────────────────────┐
@@ -165,7 +182,7 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 
 ---
 
-## 八、运维
+## 九、运维
 
 | 操作 | 命令 |
 |------|------|
@@ -173,19 +190,19 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 | 停止全部 | `stop_all.bat` |
 | 手动生命周期 | `python -c "from memo.core.engine import engine; engine.init(); engine.run_lifecycle()"` |
 | 人格增量刷新 | `python -c "from memo.core.engine import engine; engine.init(); engine.update_persona()"` |
-| 数据库备份 | 复制 `data/memo.db` |
+| 数据库备份 | 复制 `memo/data/memo.db` |
 
 ---
 
-## 九、测试步骤
+## 十、测试步骤
 
 1. 解压到本地目录，改 `.env` 填 API Key
 2. `pip install -r requirements.txt`
 3. 初始化：`python -c "from memo.core.engine import engine; engine.init(); print('OK')"`
 4. 启动：双击 `start_all.bat`
 5. 打开 `http://localhost:9120` 确认看板正常
-6. 在 WorkBuddy 的 MCP 配置里添加 memo
-7. 重启 WorkBuddy，对话中让它"记住这段对话"
+6. 在 Agent 的 MCP 配置里添加 memo
+7. 重启 Agent，对话中让它"记住这段对话"
 8. 刷新看板，确认记忆数量增长
 9. 运行 `build_persona_baseline()` 建人格基线
 10. 切换到人格画像 Tab，查看 10 维断言
