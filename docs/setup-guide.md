@@ -1,160 +1,160 @@
-# Memo 新机部署执行说明
+﻿# Memo 鏂版満閮ㄧ讲鎵ц璇存槑
 
-> 从零开始，10 分钟完成 Memo 记忆系统部署。适用于任何 Windows/macOS 机器。
+> 浠庨浂寮€濮嬶紝10 鍒嗛挓瀹屾垚 Memo 璁板繂绯荤粺閮ㄧ讲銆傞€傜敤浜庝换浣?Windows/macOS 鏈哄櫒銆?
 
 ---
 
-## 第一步：Clone 项目
+## 绗竴姝ワ細Clone 椤圭洰
 
-打开终端：
+鎵撳紑缁堢锛?
 
 ```bash
-git clone https://github.com/adoublegirl-dev/memo.git <项目路径>
-cd <项目路径>
+git clone https://github.com/adoublegirl-dev/memo.git <椤圭洰璺緞>
+cd <椤圭洰璺緞>
 ```
 
-> 如果 GitHub 连不上，手动建一个项目文件夹，把项目文件解压进去。
+> 濡傛灉 GitHub 杩炰笉涓婏紝鎵嬪姩寤轰竴涓」鐩枃浠跺す锛屾妸椤圭洰鏂囦欢瑙ｅ帇杩涘幓銆?
 
 ---
 
-## 第二步：安装依赖
+## 绗簩姝ワ細瀹夎渚濊禆
 
 ```bash
 pip install -r requirements.txt
 pip install "mcp>=1.0"
 ```
 
-> pip 慢加国内镜像：`pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple`
+> pip 鎱㈠姞鍥藉唴闀滃儚锛歚pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple`
 
 ---
 
-## 第三步：配置环境
+## 绗笁姝ワ細閰嶇疆鐜
 
 ```bash
 copy .env.example .env
-# 编辑 .env 填入你的 API Key
+# 缂栬緫 .env 濉叆浣犵殑 API Key
 ```
 
-在 `.env` 里填入：
+鍦?`.env` 閲屽～鍏ワ細
 
 ```env
 LLM_API_KEY=sk-your-key-here
 LLM_BASE_URL=https://api.deepseek.com/v1
 MEMO_EXTRACTION_MODEL=deepseek-v4-flash
-MEMO_DB_PATH=data/memo.db
+MEMO_DB_PATH=memo/data/memo.db
 MEMO_LOG_LEVEL=INFO
 ```
 
 ---
 
-## 第四步：首次运行验证
+## 绗洓姝ワ細棣栨杩愯楠岃瘉
 
 ```bash
-# 下载嵌入模型（约 120 MB，首次需联网）
+# 涓嬭浇宓屽叆妯″瀷锛堢害 120 MB锛岄娆￠渶鑱旂綉锛?
 python -c "from memo.utils.embedding import embedding_model; print('dim:', len(embedding_model.encode('test')))"
 
-# 基础自检
+# 鍩虹鑷
 python scripts/quick_check.py
 ```
 
-看到 `Phase 0 基础设施验证通过！` 即成功。
+鐪嬪埌 `Phase 0 鍩虹璁炬柦楠岃瘉閫氳繃锛乣 鍗虫垚鍔熴€?
 
-> HuggingFace 下载慢：先设 `$env:HF_ENDPOINT='https://hf-mirror.com'`
+> HuggingFace 涓嬭浇鎱細鍏堣 `$env:HF_ENDPOINT='https://hf-mirror.com'`
 
 ---
 
-## 第五步：配置 Agent 接入
+## 绗簲姝ワ細閰嶇疆 Agent 鎺ュ叆
 
-> 将下面命令中的 `<项目路径>` 替换为你的 Memo 实际目录（如 `D:/Memo` 或 `/home/user/Memo`）。
+> 灏嗕笅闈㈠懡浠や腑鐨?`<椤圭洰璺緞>` 鏇挎崲涓轰綘鐨?Memo 瀹為檯鐩綍锛堝 `D:/Memo` 鎴?`/home/user/Memo`锛夈€?
 
 ### 5A. HanaAgent
 
-在 HanaAgent 设置 → MCP 中添加连接器，JSON 配置：
+鍦?HanaAgent 璁剧疆 鈫?MCP 涓坊鍔犺繛鎺ュ櫒锛孞SON 閰嶇疆锛?
 
 ```json
 {
   "name": "memo",
   "transport": "stdio",
   "command": "python",
-  "args": ["<项目路径>/scripts/run_mcp.py"]
+  "args": ["<椤圭洰璺緞>/scripts/run_mcp.py"]
 }
 ```
 
 ### 5B. Claude Desktop
 
-编辑 `%APPDATA%\Claude\claude_desktop_config.json`：
+缂栬緫 `%APPDATA%\Claude\claude_desktop_config.json`锛?
 
 ```json
 {
   "mcpServers": {
     "memo": {
       "command": "python",
-      "args": ["<项目路径>/scripts/run_mcp.py"]
+      "args": ["<椤圭洰璺緞>/scripts/run_mcp.py"]
     }
   }
 }
 ```
 
-### 5C. 其他 MCP Agent
+### 5C. 鍏朵粬 MCP Agent
 
-通用配置：指向 `<项目路径>/scripts/run_mcp.py` 即可。
+閫氱敤閰嶇疆锛氭寚鍚?`<椤圭洰璺緞>/scripts/run_mcp.py` 鍗冲彲銆?
 
 ---
 
-## 第六步：启动后台服务
+## 绗叚姝ワ細鍚姩鍚庡彴鏈嶅姟
 
-双击 `start_all.bat`（Windows）或运行：
+鍙屽嚮 `start_all.bat`锛圵indows锛夋垨杩愯锛?
 
 ```bash
-python scripts/memo_dashboard.py   # 看板 → http://localhost:9120
-python scripts/memo_watcher.py     # 后台守护进程
+python scripts/memo_dashboard.py   # 鐪嬫澘 鈫?http://localhost:9120
+python scripts/memo_watcher.py     # 鍚庡彴瀹堟姢杩涚▼
 ```
 
 ---
 
-## 第七步：验证 Agent 能调 Memo
+## 绗竷姝ワ細楠岃瘉 Agent 鑳借皟 Memo
 
-对 Agent 说：
+瀵?Agent 璇达細
 
-> 帮我查看 Memo 记忆系统的统计信息
+> 甯垜鏌ョ湅 Memo 璁板繂绯荤粺鐨勭粺璁′俊鎭?
 
-如果返回了会话数、记忆数、特征词数，说明接入成功。
+濡傛灉杩斿洖浜嗕細璇濇暟銆佽蹇嗘暟銆佺壒寰佽瘝鏁帮紝璇存槑鎺ュ叆鎴愬姛銆?
 
 ---
 
-## 日常操作速查
+## 鏃ュ父鎿嶄綔閫熸煡
 
-| 操作 | 命令 |
+| 鎿嶄綔 | 鍛戒护 |
 |------|------|
-| 一键启动 | 双击 `start_all.bat` |
-| 一键停止 | 双击 `stop_all.bat` |
-| 查看看板 | 浏览器打开 `http://localhost:9120` |
-| 完整性验证 | `python scripts/verify_all.py` |
-| 导入历史会话 | `python scripts/import_sessions.py` |
-| 更新代码 | `git pull` |
+| 涓€閿惎鍔?| 鍙屽嚮 `start_all.bat` |
+| 涓€閿仠姝?| 鍙屽嚮 `stop_all.bat` |
+| 鏌ョ湅鐪嬫澘 | 娴忚鍣ㄦ墦寮€ `http://localhost:9120` |
+| 瀹屾暣鎬ч獙璇?| `python scripts/verify_all.py` |
+| 瀵煎叆鍘嗗彶浼氳瘽 | `python scripts/import_sessions.py` |
+| 鏇存柊浠ｇ爜 | `git pull` |
 
 ---
 
-## 项目结构
+## 椤圭洰缁撴瀯
 
 ```
-项目根目录/
-├── memo/               # 核心 Python 包
-├── docs/               # 文档
-├── scripts/            # 脚本
-├── tests/              # 测试
-├── start_all.bat       # 一键启动
-├── stop_all.bat        # 一键停止
-├── .env.example        # 配置模板
-├── CHANGELOG.md        # 版本记录
-└── README.md           # 项目说明
+椤圭洰鏍圭洰褰?
+鈹溾攢鈹€ memo/               # 鏍稿績 Python 鍖?
+鈹溾攢鈹€ docs/               # 鏂囨。
+鈹溾攢鈹€ scripts/            # 鑴氭湰
+鈹溾攢鈹€ tests/              # 娴嬭瘯
+鈹溾攢鈹€ start_all.bat       # 涓€閿惎鍔?
+鈹溾攢鈹€ stop_all.bat        # 涓€閿仠姝?
+鈹溾攢鈹€ .env.example        # 閰嶇疆妯℃澘
+鈹溾攢鈹€ CHANGELOG.md        # 鐗堟湰璁板綍
+鈹斺攢鈹€ README.md           # 椤圭洰璇存槑
 ```
 
 ---
 
-## 注意事项
+## 娉ㄦ剰浜嬮」
 
-1. **API Key 安全**：`.env` 已在 `.gitignore` 排除，不会被 push
-2. **数据库备份**：复制 `memo/data/memo.db` 即可备份全部记忆
-3. **多机同步**：代码通过 git 同步，数据库文件手动复制
-4. **更新代码**：`git pull` 后如果依赖变了，重新 `pip install -r requirements.txt`
+1. **API Key 瀹夊叏**锛歚.env` 宸插湪 `.gitignore` 鎺掗櫎锛屼笉浼氳 push
+2. **鏁版嵁搴撳浠?*锛氬鍒?`memo/data/memo.db` 鍗冲彲澶囦唤鍏ㄩ儴璁板繂
+3. **澶氭満鍚屾**锛氫唬鐮侀€氳繃 git 鍚屾锛屾暟鎹簱鏂囦欢鎵嬪姩澶嶅埗
+4. **鏇存柊浠ｇ爜**锛歚git pull` 鍚庡鏋滀緷璧栧彉浜嗭紝閲嶆柊 `pip install -r requirements.txt`

@@ -180,9 +180,15 @@ h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); text-transform: 
     <option value="EVENT">事件</option>
     <option value="REASONING">推理</option>
   </select>
+  <select id="agentFilter" onchange="loadMemories()">
+    <option value="">全部来源</option>
+    <option value="Hanako">Hanako</option>
+    <option value="WorkBuddy">WorkBuddy</option>
+  </select>
   <button onclick="loadMemories()">搜索</button>
 </div>
 <div class="mem-list" id="memList"></div>
+<div id="loadMore" style="text-align:center;padding:16px;"><button onclick="loadMore()" style="padding:8px 24px;border:1px solid var(--border);border-radius:8px;background:var(--card);cursor:pointer;color:var(--text)">加载更多</button></div>
 </div>
 
 <!-- 人格画像 -->
@@ -213,15 +219,14 @@ let allMemories = [];
 let allTags = [];
 
 async function load() {
-  const [stats, tags, mems] = await Promise.all([
+  const [stats, tags] = await Promise.all([
     fetch('/api/stats').then(r=>r.json()),
     fetch('/api/tags').then(r=>r.json()),
-    fetch('/api/memories').then(r=>r.json()),
   ]);
-  allTags = tags; allMemories = mems;
+  allTags = tags;
   renderStats(stats);
   renderTags(tags);
-  renderMemories(mems);
+  loadMemories(true);
 }
 
 function renderStats(s) {
@@ -254,22 +259,41 @@ function renderTags(tags) {
 
 function searchTag(name) {
   document.getElementById('searchInput').value = name;
-  loadMemories();
+  loadMemories(true);
 }
 
-function loadMemories() {
-  const q = document.getElementById('searchInput').value.toLowerCase();
+let memOffset = 0;
+const MEM_LIMIT = 200;
+
+async function loadMemories(reset = true) {
+  if (reset) memOffset = 0;
+  const q = document.getElementById('searchInput').value.trim();
   const type = document.getElementById('typeFilter').value;
-  let mems = allMemories;
-  if(q) mems = mems.filter(m=>m.title.toLowerCase().includes(q)||m.summary.toLowerCase().includes(q)||m.feature_tags.some(t=>t.toLowerCase().includes(q)));
-  if(type) mems = mems.filter(m=>m.memory_type===type);
-  renderMemories(mems);
+  const agent = document.getElementById('agentFilter').value;
+  let url = `/api/memories?limit=${MEM_LIMIT}&offset=${memOffset}`;
+  if (q) url += `&q=${encodeURIComponent(q)}`;
+  if (agent) url += `&agent=${encodeURIComponent(agent)}`;
+  const mems = await fetch(url).then(r=>r.json());
+  // 客户端再按 type 过滤（API 暂不支持 type 参数）
+  const filtered = type ? mems.filter(m=>m.memory_type===type) : mems;
+  if (reset) {
+    allMemories = filtered;
+  } else {
+    allMemories = allMemories.concat(filtered);
+  }
+  renderMemories(allMemories);
+  document.getElementById('loadMore').style.display = mems.length < MEM_LIMIT ? 'none' : '';
+}
+
+function loadMore() {
+  memOffset += MEM_LIMIT;
+  loadMemories(false);
 }
 
 function renderMemories(mems) {
   const list = document.getElementById('memList');
   if(!mems.length) { list.innerHTML='<div class="empty">没有匹配的记忆</div>'; return; }
-  list.innerHTML = mems.map(m=>`
+  list.innerHTML = `<div style="font-size:12px;color:var(--muted);margin-bottom:8px">共 ${mems.length} 条</div>` + mems.map(m=>`
     <div class="mem-item" onclick="showDetail('${m.id}')">
       <div class="title">${esc(m.title)}</div>
       <div class="meta">
@@ -637,6 +661,14 @@ def _get_graph_data():
 
 # ── HTTP Server ──
 class MemoHandler(BaseHTTPRequestHandler):
+    def _get_query_param(self, key: str, default: str = "") -> str:
+        """从 URL query string 解析参数。"""
+        from urllib.parse import parse_qs
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        vals = params.get(key, [default])
+        return vals[0] if vals else default
+
     def do_GET(self):
         try:
             self._do_GET()
@@ -696,11 +728,27 @@ class MemoHandler(BaseHTTPRequestHandler):
                 })
             self._json({"assertions": by_dim, "settings": settings})
         elif path == "/api/memories":
-            rows = db.fetchall(
+            # 解析查询参数
+            q = self._get_query_param("q", "")
+            agent = self._get_query_param("agent", "")
+            limit = int(self._get_query_param("limit", "500"))
+            offset = int(self._get_query_param("offset", "0"))
+
+            sql = (
                 "SELECT mu.*, s.agent_id as source_agent FROM memory_units mu"
                 " LEFT JOIN sessions s ON mu.session_id = s.id"
-                " WHERE mu.is_superseded=0 ORDER BY mu.created_at DESC LIMIT 100"
+                " WHERE mu.is_superseded=0"
             )
+            params = []
+            if q:
+                sql += " AND (mu.title LIKE ? OR mu.summary LIKE ? OR mu.raw_text LIKE ?)"
+                params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
+            if agent:
+                sql += " AND s.agent_id = ?"
+                params.append(agent)
+            sql += " ORDER BY mu.created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            rows = db.fetchall(sql, tuple(params))
             from memo.store.graph_store import graph_store as gs
             mems = []
             for r in rows:
