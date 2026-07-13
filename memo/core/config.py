@@ -26,7 +26,7 @@ def _resolve_db_path() -> str:
         if not p.is_absolute():
             p = _PROJECT_ROOT / p
         return str(p)
-    return str(_PROJECT_ROOT / "data" / "memo.db")
+    return str(_PROJECT_ROOT / "memo" / "data" / "memo.db")
 
 
 @dataclass
