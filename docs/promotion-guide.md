@@ -93,7 +93,7 @@ L2 冷存储   → 完整对话原文 + 双时序历史，按需检索
 
 ```bash
 git clone https://github.com/adoublegirl-dev/memo.git
-cd memo/memo-project
+cd memo
 pip install -r requirements.txt
 python scripts/quick_check.py   # 看到 "Phase 0 验证通过" 即成功
 ```

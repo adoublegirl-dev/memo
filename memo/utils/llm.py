@@ -32,15 +32,15 @@ class LLMClient:
     def client(self) -> OpenAI:
         if self._client is None:
             self._client = OpenAI(
-                api_key=config.openai_api_key,
-                base_url=config.openai_base_url,
+                api_key=config.llm_api_key,
+                base_url=config.llm_base_url,
             )
         return self._client
 
     @property
     def available(self) -> bool:
         """LLM 是否可用（已配置 API key）。"""
-        return bool(config.openai_api_key)
+        return bool(config.llm_api_key)
 
     def chat(
         self,
@@ -52,7 +52,7 @@ class LLMClient:
     ) -> str:
         """同步调用 LLM，返回文本。支持自动重试。"""
         if not self.available:
-            raise RuntimeError("LLM 不可用：未配置 OPENAI_API_KEY")
+            raise RuntimeError("LLM 不可用：未配置 LLM_API_KEY")
 
         kwargs: dict[str, Any] = dict(
             model=model or config.extraction_model,

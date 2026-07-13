@@ -27,7 +27,7 @@ class MemoClient:
     支持自动会话管理。
     """
 
-    def __init__(self, agent_id: str = "hanako"):
+    def __init__(self, agent_id: str = "ash"):
         from memo.core.engine import engine as _engine
         self._engine = _engine
         self._agent_id = agent_id

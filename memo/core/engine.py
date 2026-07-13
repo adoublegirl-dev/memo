@@ -56,7 +56,7 @@ class Engine:
 
     # ── 会话 ──
 
-    def start_session(self, title: str = "", agent_id: str = "default") -> Session:
+    def start_session(self, title: str = "", agent_id: str = "ASH") -> Session:
         """开始新会话。"""
         self._ensure_init()
         return memory_store.create_session(agent_id=agent_id, title=title)
@@ -247,23 +247,6 @@ class Engine:
             recent_memories.sort(key=lambda m: m.created_at, reverse=True)
             context_texts = [m.raw_text for m in recent_memories[:context_rounds]]
             context_texts.reverse()  # 时间正序
-
-        # Step 0.5: 去重检查（同会话最近 3 条记忆标题相似度 > 0.85 → 跳过）
-        recent_titles = [
-            m.title for m in memory_store.get_session_memories(session_id)[-3:]
-        ]
-        if recent_titles and title:
-            from memo.utils.embedding import embedding_model
-            emb_new = embedding_model.encode(title)
-            for old_title in recent_titles:
-                emb_old = embedding_model.encode(old_title)
-                if embedding_model.cosine_similarity(emb_new, emb_old) > 0.85:
-                    logger.info(f"去重跳过: 标题相似 {old_title[:30]}...")
-                    return {
-                        "memory_id": None, "title": "", "feature_tags": [],
-                        "conflicts_found": [], "extraction_method": "dedup_skip",
-                        "gating_result": None,
-                    }
 
         # Step 1: 提取
         from memo.extraction.extractor import (
@@ -530,7 +513,7 @@ class Engine:
     def run_lifecycle(self) -> dict[str, Any]:
         """执行一次完整的生命周期维护。
 
-        包含：遗忘衰减 + 固化检查 + 快照检查。
+        包含：遗忘衰减 + 固化检查 + CAS 扫描 + 快照检查 + 人格增量更新。
         """
         self._ensure_init()
         report = {}
@@ -550,8 +533,63 @@ class Engine:
         # 4. 快照检查
         report["snapshot"] = self._run_snapshot_check()
 
+        # 5. 人格增量更新
+        report["persona"] = self._run_persona_incremental()
+
         logger.info(f"生命周期完成: {report}")
         return report
+
+    # ── 人格引擎 ──
+
+    def build_persona_baseline(self) -> dict[str, Any]:
+        """批量建人格基线（首次运行）。
+
+        采样 L2+L1+高价值 L0 记忆 → 10 维逐维提炼 → 初始断言。
+        仅需运行一次，后续用 run_lifecycle() 做增量更新。
+        """
+        self._ensure_init()
+        from memo.persona.extractor import build_persona_baseline as _build
+        return _build()
+
+    def update_persona(self) -> dict[str, Any]:
+        """增量更新人格断言。"""
+        self._ensure_init()
+        from memo.persona.extractor import update_persona_incremental
+        return update_persona_incremental()
+
+    def persona_ask(self, question: str) -> dict[str, Any]:
+        """人格路由问答。
+
+        自动判断问题走人格通道/混合通道/经验通道，返回人格化回复。
+        """
+        self._ensure_init()
+        from memo.persona.router import route, build_persona_reply
+        route_result = route(question)
+        reply = build_persona_reply(question, route_result)
+        return reply
+
+    def persona_profile(self, dimension: str | None = None) -> list[dict]:
+        """获取人格画像。"""
+        self._ensure_init()
+        from memo.persona.extractor import get_active_assertions
+        return get_active_assertions(dimension)
+
+    def _run_persona_incremental(self) -> dict[str, Any]:
+        """生命周期内的人格增量更新。"""
+        try:
+            from memo.persona.extractor import update_persona_incremental, get_persona_settings
+            settings = get_persona_settings()
+            last = settings.get("last_incremental_at", "")
+            if not last:
+                # 还没有基线，检查是否应该建基线
+                total = db.fetchone("SELECT COUNT(*) as cnt FROM memory_units WHERE is_superseded = 0")
+                if total["cnt"] >= 10:
+                    return self.build_persona_baseline()
+                return {"status": "skipped", "reason": "记忆数不足，暂不建基线"}
+            return update_persona_incremental()
+        except Exception as e:
+            logger.warning(f"人格增量更新异常: {e}")
+            return {"status": "error", "reason": str(e)}
 
     def _run_forgetting(self) -> dict[str, Any]:
         """执行遗忘衰减。"""

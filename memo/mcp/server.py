@@ -15,7 +15,7 @@ MCP 客户端配置 (Claude Desktop / Cursor / Claude Code):
       }
     }
 
-Core Profile (8 tools):
+Core Profile (11 tools):
     memo_remember      — 写入记忆（自动提取或手动）
     memo_recall        — 三通道混合检索
     memo_start_session — 开始新会话
@@ -24,9 +24,13 @@ Core Profile (8 tools):
     memo_hot_tags      — 获取高频特征词
     memo_maintain      — 手动触发生命周期维护
     memo_snapshot      — 获取最新全局快照
+    memo_export        — 导出对话到 Memo inbox（跨 Agent Bridge）
+    persona_ask        — 人格路由问答
+    persona_profile    — 获取人格画像
 """
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -103,6 +107,10 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "如果此记忆更新/推翻旧事实，列出旧事实的关键词"
+                    },
+                    "agent_name": {
+                        "type": "string",
+                        "description": "来源 Agent 名称（WorkBuddy / HanaAgent / Qoder 等），用于跨 Agent 来源追溯"
                     },
                 }
             }
@@ -187,6 +195,92 @@ async def list_tools() -> list[Tool]:
                 "properties": {}
             }
         ),
+        Tool(
+            name="memo_export",
+            description="导出当前对话到 Memo inbox 目录。Agent 对话结束时调用此工具，"
+                        "将对话内容写入 ~/.memo/inbox/，Memo watcher 会自动导入。"
+                        "这是跨 Agent Bridge 的核心工具——任何支持 MCP 的 Agent 安装后，"
+                        "对话记录都会汇入同一个 Memo 记忆库。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "conversation": {
+                        "type": "string",
+                        "description": "完整的对话文本（User + Assistant 交替）"
+                    },
+                    "agent_name": {
+                        "type": "string",
+                        "description": "来源 Agent 名称（如 WorkBuddy / Qoder / Claude）"
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "description": "额外元数据（可选）"
+                    },
+                },
+                "required": ["conversation"]
+            }
+        ),
+        Tool(
+            name="persona_ask",
+            description="人格路由问答。基于用户的人格画像，对问题给出带人格立场的回复。"
+                        "自动判断走人格通道/混合通道/经验通道。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "用户的问题"
+                    },
+                },
+                "required": ["question"]
+            }
+        ),
+        Tool(
+            name="persona_profile",
+            description="获取用户人格画像。按维度展示所有活跃断言。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "dimension": {
+                        "type": "string",
+                        "description": "限定维度（可选，如 value/decision/preference），不传返回全部"
+                    },
+                }
+            }
+        ),
+        Tool(
+            name="memo_import_sessions",
+            description="导入历史会话到 Memo。支持 hanaagent / workbuddy / auto（自动检测）。后台执行，通过 memo_import_status 查看进度。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "enum": ["hanaagent", "workbuddy", "auto"],
+                        "default": "auto",
+                        "description": "数据源：hanaagent / workbuddy / auto"
+                    },
+                    "skip_cas": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "跳过 CAS 变更检测（导入后统一跑 run_lifecycle 更高效）"
+                    },
+                    "restart": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "强制从头开始（忽略断点续传进度）"
+                    },
+                }
+            }
+        ),
+        Tool(
+            name="memo_import_status",
+            description="查询当前导入任务的进度。",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
     ]
 
 
@@ -226,7 +320,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
             session_id = _active_session_id
             if not session_id:
-                session = engine.start_session(title="自动会话")
+                agent_name = arguments.get("agent_name", "unknown")
+                session = engine.start_session(title="自动会话", agent_id=agent_name)
                 _active_session_id = session.id
                 session_id = session.id
 
@@ -338,12 +433,107 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 output += f"   活跃项目: {', '.join(projects)}\n"
             return [TextContent(type="text", text=output.strip())]
 
+        elif name == "memo_export":
+            conversation = arguments["conversation"]
+            agent_name = arguments.get("agent_name", "unknown")
+            metadata = arguments.get("metadata", {})
+            result = _export_to_inbox(conversation, agent_name, metadata)
+            return [TextContent(type="text", text=result)]
+
+        elif name == "persona_ask":
+            question = arguments["question"]
+            result = engine.persona_ask(question)
+            output = (
+                f"🧬 人格路由: {result['channel']}\n"
+                f"   置信度: {result['confidence']}\n\n"
+                f"{result['reply']}"
+            )
+            if result.get("citations"):
+                output += "\n\n📎 引用:\n"
+                for c in result["citations"][:3]:
+                    output += f"   [{c['confidence']:.2f}] {c['assertion'][:80]}\n"
+            return [TextContent(type="text", text=output)]
+
+        elif name == "persona_profile":
+            dimension = arguments.get("dimension")
+            assertions = engine.persona_profile(dimension)
+            if not assertions:
+                return [TextContent(type="text", text="暂无活跃的人格断言。请先运行 build_persona_baseline() 建基线。")]
+            by_dim = {}
+            for a in assertions:
+                d = a["dimension"]
+                by_dim.setdefault(d, []).append(a)
+            output = f"🧬 人格画像 ({len(assertions)} 条断言, {len(by_dim)} 维)\n\n"
+            dim_labels = {
+                "value": "💎 价值观", "decision": "🎯 决策", "identity": "🏷️ 身份",
+                "preference": "❤️ 偏好", "sensitivity": "⚠️ 敏感", "relationship": "🔗 关系",
+                "knowledge": "📚 知识边界", "communication": "💬 沟通",
+                "mental_model": "🧩 思维模型", "emotion": "🌊 情绪"
+            }
+            for dim, items in by_dim.items():
+                label = dim_labels.get(dim, dim)
+                output += f"{label}:\n"
+                for a in items[:2]:
+                    output += f"   [{a['confidence']:.2f}] {a['assertion'][:100]}\n"
+                output += "\n"
+            return [TextContent(type="text", text=output.strip())]
+
+        elif name == "memo_import_sessions":
+            source = arguments.get("source", "auto")
+            skip_cas = arguments.get("skip_cas", True)
+            restart = arguments.get("restart", False)
+            from memo.services import start_import
+            result = start_import(source, skip_cas=skip_cas, restart=restart)
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "memo_import_status":
+            from memo.services import get_import_status
+            result = get_import_status()
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
         else:
             return [TextContent(type="text", text=f"未知工具: {name}")]
 
     except Exception as e:
         logger.error(f"工具 {name} 执行失败: {e}", exc_info=True)
         return [TextContent(type="text", text=f"❌ 错误: {e}")]
+
+
+# ── Bridge 导出 ──
+
+def _export_to_inbox(conversation: str, agent_name: str, metadata: dict) -> str:
+    """导出对话到 Memo inbox 目录。
+
+    Watcher 会监控此目录并自动导入新文件。
+    """
+    import json
+    from datetime import datetime
+
+    inbox_dir = Path.home() / ".memo" / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{timestamp}_{agent_name}.jsonl"
+    filepath = inbox_dir / filename
+
+    record = {
+        "exported_at": datetime.now().isoformat(),
+        "agent": agent_name,
+        "conversation": conversation,
+        "metadata": metadata,
+    }
+
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    logger.info(f"对话已导出: {filepath}")
+    return (
+        f"✅ 对话已导出到 Memo inbox\n"
+        f"   文件: {filename}\n"
+        f"   来源: {agent_name}\n"
+        f"   长度: {len(conversation)} 字符\n"
+        f"   Memo watcher 将在下次轮询时自动导入"
+    )
 
 
 # ── 入口 ──

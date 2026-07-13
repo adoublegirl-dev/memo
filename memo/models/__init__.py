@@ -32,7 +32,6 @@ class RelationType(str, Enum):
     CONTRADICT = "CONTRADICT"
     REFINES = "REFINES"        # 细化关系（补充但不推翻旧记忆）
     SUPERSEDES = "SUPERSEDES"  # 推翻关系（新记忆替代旧记忆）
-    MERGED_INTO = "MERGED_INTO"  # 合并关系（旧记忆被合并到新记忆）
 
 
 class MemoryType(str, Enum):
@@ -156,5 +155,4 @@ RELATION_TYPE_FACTOR: dict[RelationType, float] = {
     RelationType.CONTRADICT: -1.0,  # 矛盾关系负向激活
     RelationType.REFINES: 0.6,       # 细化关系，弱关联
     RelationType.SUPERSEDES: 0.0,    # 仅用于追溯链，不参与扩散激活
-    RelationType.MERGED_INTO: 0.0,    # 合并关系，不参与扩散
 }
