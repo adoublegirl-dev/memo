@@ -131,6 +131,7 @@ def main():
     auto_session_id = engine.start_session("自动同步会话").id  # 复用同一个会话
     last_persona_refresh = 0  # 人格刷新时间戳
     PERSONA_REFRESH_SECONDS = 12 * 3600  # 12 小时
+    last_risk_check_date = ""  # 风险检测日期（每天一次）
 
     try:
         while True:
@@ -144,6 +145,19 @@ def main():
                     last_persona_refresh = now_ts
                 except Exception as e:
                     logger.warning(f"人格刷新异常: {e}")
+
+            # 每日 10 点风险检测
+            now_dt = __import__("datetime").datetime.now()
+            today_str = now_dt.strftime("%Y-%m-%d")
+            if now_dt.hour >= 10 and today_str != last_risk_check_date:
+                last_risk_check_date = today_str
+                try:
+                    from memo.todo.manager import check_risk
+                    risk = check_risk()
+                    if risk["urgent"] or risk["overdue"]:
+                        logger.warning(f"待办风险: {risk['summary']}")
+                except Exception as e:
+                    logger.debug(f"风险检测异常: {e}")
 
             latest = find_latest_session()
             if not latest:

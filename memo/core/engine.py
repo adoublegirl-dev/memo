@@ -615,6 +615,70 @@ class Engine:
         if not self._initialized:
             self.init()
 
+    # ── 待办管理 ──
+
+    def todo_add(self, title: str, **kwargs) -> dict:
+        """创建待办。"""
+        self._ensure_init()
+        from memo.todo.manager import add_todo
+        return add_todo(title=title, **kwargs)
+
+    def todo_search(self, **kwargs) -> list[dict]:
+        """搜索待办。"""
+        self._ensure_init()
+        from memo.todo.manager import search_todos
+        return search_todos(**kwargs)
+
+    def todo_list(self, **kwargs) -> list[dict]:
+        """列出待办。"""
+        self._ensure_init()
+        from memo.todo.manager import list_todos
+        return list_todos(**kwargs)
+
+    def todo_close(self, ids: list[str], **kwargs) -> list[dict]:
+        """批量关闭待办。"""
+        self._ensure_init()
+        from memo.todo.manager import close_todos
+        results = close_todos(ids, **kwargs)
+        # 完成的待办写入记忆
+        for r in results:
+            if r.get("closed"):
+                try:
+                    session = self.start_session(title=f"待办完成")
+                    self.remember_conversation(
+                        session_id=session.id,
+                        conversation=f"完成待办: {r['title']}",
+                        auto_extract=True,
+                    )
+                    self.end_session(session.id)
+                except Exception as e:
+                    logger.debug(f"待办完成记忆写入失败: {e}")
+        return results
+
+    def todo_reopen(self, ids: list[str], **kwargs) -> list[dict]:
+        """重新开启待办。"""
+        self._ensure_init()
+        from memo.todo.manager import reopen_todos
+        return reopen_todos(ids, **kwargs)
+
+    def todo_update(self, todo_id: str, **kwargs) -> dict:
+        """更新待办。"""
+        self._ensure_init()
+        from memo.todo.manager import update_todo
+        return update_todo(todo_id, **kwargs)
+
+    def todo_check_risk(self) -> dict:
+        """检测待办风险。"""
+        self._ensure_init()
+        from memo.todo.manager import check_risk
+        return check_risk()
+
+    def todo_stats(self) -> dict:
+        """待办统计。"""
+        self._ensure_init()
+        from memo.todo.manager import get_todo_stats
+        return get_todo_stats()
+
     def stats(self) -> dict[str, Any]:
         """获取记忆统计信息。"""
         self._ensure_init()
