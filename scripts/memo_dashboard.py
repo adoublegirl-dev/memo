@@ -105,6 +105,12 @@ h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); text-transform: 
 .graph-node-label { font-size: 10px; fill: var(--text); pointer-events: none; user-select: none; }
 #graphContainer.fullscreen { display: none; }
 
+/* 主导航 */
+.nav-tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid var(--border); }
+.nav-tab { padding: 8px 24px; cursor: pointer; font-size: 16px; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -2px; transition: .15s; }
+.nav-tab:hover { color: var(--text); }
+.nav-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
 /* 人格画像 */
 .persona-layout { display: grid; grid-template-columns: 180px 1fr; gap: 16px; min-height: 400px; }
 .dim-nav { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px 0; }
@@ -130,11 +136,16 @@ h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); text-transform: 
 </style>
 </head>
 <body>
-<h1>🧠 Memo 记忆看板</h1>
+<div class="nav-tabs">
+  <div class="nav-tab active" onclick="switchTab('memo')">🧠 Memo 记忆看板</div>
+  <div class="nav-tab" onclick="switchTab('todos')">📋 待办</div>
+</div>
 <h2>赫布学习 + 扩散激活 + 网状记忆图谱</h2>
 
+<div id="memoContent">
 <div class="stats" id="stats"></div>
 
+<div id="sharedContent">
 <h3>🔥 特征词云 <span style="font-size:12px;color:var(--muted);margin-left:8px;">点击词 → 搜索</span></h3>
 <div class="tag-cloud" id="tagCloud"></div>
 
@@ -208,6 +219,27 @@ h3 { font-size: 14px; margin-bottom: 12px; color: var(--muted); text-transform: 
   <div class="dim-nav" id="dimNav"></div>
   <div id="assertionList"></div>
 </div>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- 待办管理（独立页） -->
+<div id="todoView" style="display:none;">
+<div class="persona-toolbar">
+  <div id="todoRisk" style="flex:1"></div>
+  <div style="display:flex;gap:8px">
+    <button onclick="refreshTodos()">🔄 刷新</button>
+  </div>
+</div>
+<div class="todo-filters" style="display:flex;gap:6px;margin-bottom:12px">
+  <button class="toggle-btn active" data-key="all" onclick="filterTodos('all')">全部</button>
+  <button class="toggle-btn" data-key="high" onclick="filterTodos('high')">高优</button>
+  <button class="toggle-btn" data-key="doing" onclick="filterTodos('doing')">进行中</button>
+  <button class="toggle-btn" data-key="done" onclick="filterTodos('done')">已完成</button>
+</div>
+<div id="todoList" style="max-height:500px;overflow-y:auto"></div>
 </div>
 
 <div class="modal" id="modal" onclick="if(event.target===this)closeModal()">
@@ -463,6 +495,16 @@ document.addEventListener('keydown', e => {
   }
 });
 
+function switchTab(tab) {
+  document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));
+  [...document.querySelectorAll('.nav-tab')].find(t=>t.textContent.includes(tab==='memo'?'Memo':'待办'))?.classList.add('active');
+  const isTodo = tab==='todos';
+  document.getElementById('memoContent').style.display = isTodo?'none':'';
+  document.getElementById('todoView').style.display = isTodo?'block':'none';
+  document.querySelector('h2').style.display = isTodo?'none':'';
+  if(isTodo && !todoData) loadTodos();
+}
+
 function switchView(view) {
   document.querySelectorAll('.toggle-btn').forEach(b=>b.classList.remove('active'));
   event.target.classList.add('active');
@@ -571,6 +613,95 @@ async function setSensitivity(level) {
   await fetch('/api/persona/action', {method:'POST',body:JSON.stringify({action:'edit',id:'__settings__',assertion:level})});
   // 直接更新数据库中的设置
   await fetch('/api/persona/action', {method:'POST',body:JSON.stringify({action:'set_sensitivity',id:level})});
+}
+
+// ── 待办管理 ──
+let todoData = null;
+let todoFilter = 'all';
+
+async function loadTodos() {
+  const r = await fetch('/api/todos');
+  todoData = await r.json();
+  // 风险横幅（独立）
+  const riskDiv = document.getElementById('todoRisk');
+  const risk = todoData.risk;
+  if(risk.summary==='无风险') {
+    riskDiv.innerHTML = '<div style="background:var(--card);border:1px solid var(--green);border-radius:6px;padding:10px 16px;color:var(--green);font-size:14px">✅ 无风险</div>';
+  } else {
+    riskDiv.innerHTML = '<div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;padding:10px 16px;font-size:14px">⚠️ <strong>'+risk.summary+'</strong>';
+    if(risk.overdue&&risk.overdue.length) riskDiv.innerHTML += '<div style="margin-top:4px;font-size:13px">逾期: '+risk.overdue.map(x=>x.title).join(', ')+'</div>';
+    if(risk.urgent&&risk.urgent.length) riskDiv.innerHTML += '<div style="margin-top:4px;font-size:13px">紧急: '+risk.urgent.map(x=>x.title).join(', ')+'</div>';
+    riskDiv.innerHTML += '</div>';
+  }
+  // 更新筛选按钮数量
+  const allTodos = (todoData.todos||[]).concat(todoData.done||[]);
+  const counts = {
+    all: allTodos.filter(t=>t.status!=='cancelled').length,
+    high: allTodos.filter(t=>t.priority==='high'&&t.status!=='cancelled'&&t.status!=='done').length,
+    doing: allTodos.filter(t=>t.status==='doing').length,
+    done: (todoData.done||[]).length
+  };
+  document.querySelectorAll('.todo-filters .toggle-btn').forEach(b=>{
+    const raw = b.getAttribute('data-label') || b.textContent.trim().split('(')[0].trim();
+    b.setAttribute('data-label', raw);
+    const key = b.getAttribute('data-key');
+    b.textContent = raw + ' (' + (counts[key]!=null?counts[key]:'?') + ')';
+  });
+  filterTodos(todoFilter);
+}
+
+function refreshTodos() { todoData=null; loadTodos(); }
+
+function filterTodos(f) {
+  todoFilter = f;
+  document.querySelectorAll('.todo-filters .toggle-btn').forEach(b=>b.classList.remove('active'));
+  [...document.querySelectorAll('.todo-filters .toggle-btn')].forEach(b=>{
+    const t = b.textContent.trim();
+    if((f==='all'&&t.startsWith('全部'))||(f==='high'&&t.startsWith('高优'))||(f==='doing'&&t.startsWith('进行中'))||(f==='done'&&t.startsWith('已完成'))) b.classList.add('active');
+  });
+  let list = f==='done' ? (todoData.done||[]) : (todoData.todos||[]);
+  if(f==='high') list = list.filter(t=>t.priority==='high');
+  if(f==='doing') list = list.filter(t=>t.status==='doing');
+  renderTodos(list);
+}
+
+function renderTodos(list) {
+  const container = document.getElementById('todoList');
+  if(!list.length) { container.innerHTML='<div class="empty">暂无待办</div>'; return; }
+  const priIcon = {high:'🔴',medium:'🟡',low:'🟢'};
+  container.innerHTML = list.map(t=>`
+    <div class="assertion-card">
+      <div class="actions">
+        ${t.status!=='done'?`<button onclick="closeTodo('${t.id}')" title="完成">✅</button>`:''}
+        ${t.status==='done'?`<button onclick="reopenTodo('${t.id}')" title="重开">🔄</button>`:''}
+        ${t.status!=='cancelled'?`<button class="danger" onclick="cancelTodo('${t.id}')" title="取消">❌</button>`:''}
+      </div>
+      <div style="font-size:14px;line-height:1.5">${priIcon[t.priority]||'⚪'} ${esc(t.title)}</div>
+      <div class="meta">
+        <span>${t.status==='done'?'✅已完成':t.status==='cancelled'?'❌已取消':t.status}</span>
+        <span>来源: ${t.source_agent||'?'}</span>
+        ${t.due_date?`<span>📅 ${t.due_date}</span>`:''}
+        ${t.completed_at?`<span>完成于 ${t.completed_at.slice(0,10)}</span>`:''}
+      </div>
+    </div>
+  `).join('');
+}
+
+async function closeTodo(id) {
+  const t = (todoData.todos||[]).concat(todoData.done||[]).find(x=>x.id===id);
+  if(!confirm('确定完成: '+t?.title+'?')) return;
+  await fetch('/api/todo/action',{method:'POST',body:JSON.stringify({action:'close',id})});
+  refreshTodos();
+}
+async function reopenTodo(id) {
+  await fetch('/api/todo/action',{method:'POST',body:JSON.stringify({action:'reopen',id})});
+  refreshTodos();
+}
+async function cancelTodo(id) {
+  const t = (todoData.todos||[]).concat(todoData.done||[]).find(x=>x.id===id);
+  if(!confirm('确定取消: '+t?.title+'? (不可恢复)')) return;
+  await fetch('/api/todo/action',{method:'POST',body:JSON.stringify({action:'cancel',id})});
+  refreshTodos();
 }
 
 initGraph();
@@ -778,6 +909,23 @@ class MemoHandler(BaseHTTPRequestHandler):
                 "valid_from": mem.valid_from, "is_superseded": mem.is_superseded,
                 "feature_tags": [t.name for t in tags],
             })
+        elif path == "/api/todos":
+            from memo.todo.manager import list_todos, get_todo_stats, check_risk
+            stats = get_todo_stats()
+            risk = check_risk()
+            todos = list_todos(status="todo+doing", limit=50)
+            done = list_todos(status="done", limit=10)
+            self._json({"todos": todos, "done": done, "stats": stats, "risk": risk})
+        elif path == "/api/todo/action":
+            self._handle_todo_action()
+        elif path.startswith("/api/todo/"):
+            tid = path.split("/")[-1]
+            from memo.todo.manager import get_todo, get_todo_history
+            todo = get_todo(tid)
+            if not todo:
+                self._json({"error": "not found"}, 404); return
+            history = get_todo_history(tid)
+            self._json({"todo": todo, "history": history})
         elif path == "/api/persona/action":
             self._handle_persona_action()
         else:
@@ -816,6 +964,23 @@ class MemoHandler(BaseHTTPRequestHandler):
         else:
             self._json({"error": f"unknown action {action}"}, 400); return
         db.commit()
+        self._json({"ok": True})
+
+    def _handle_todo_action(self):
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        body = _j.loads(self.rfile.read(length)) if length > 0 else {}
+        action = body.get("action", "")
+        tid = body.get("id", "")
+        from memo.todo.manager import close_todos, reopen_todos, update_todo
+        if action == "close":
+            close_todos([tid], agent="dashboard")
+        elif action == "reopen":
+            reopen_todos([tid], agent="dashboard")
+        elif action == "cancel":
+            update_todo(tid, status="cancelled", agent="dashboard")
+        else:
+            self._json({"error": f"unknown action {action}"}, 400); return
         self._json({"ok": True})
 
     def _json(self, data, code=200):

@@ -15,18 +15,25 @@ MCP 客户端配置 (Claude Desktop / Cursor / Claude Code):
       }
     }
 
-Core Profile (11 tools):
-    memo_remember      — 写入记忆（自动提取或手动）
+Core Profile (18 tools):
+    memo_remember      — 写入记忆
     memo_recall        — 三通道混合检索
     memo_start_session — 开始新会话
     memo_end_session   — 结束当前会话
     memo_stats         — 记忆统计
-    memo_hot_tags      — 获取高频特征词
-    memo_maintain      — 手动触发生命周期维护
-    memo_snapshot      — 获取最新全局快照
-    memo_export        — 导出对话到 Memo inbox（跨 Agent Bridge）
+    memo_hot_tags      — 高频特征词
+    memo_maintain      — 生命周期维护
+    memo_snapshot      — 全局快照
+    memo_export        — Bridge 导出
     persona_ask        — 人格路由问答
-    persona_profile    — 获取人格画像
+    persona_profile    — 人格画像
+    todo_add           — 创建待办
+    todo_search        — 搜索待办
+    todo_list          — 列出待办
+    todo_close         — 完成待办
+    todo_reopen        — 重新开启
+    todo_update        — 编辑待办
+    todo_check_risk    — 风险检测
 """
 
 import asyncio
@@ -281,6 +288,95 @@ async def list_tools() -> list[Tool]:
                 "properties": {}
             }
         ),
+        Tool(
+            name="todo_add",
+            description="创建待办。返回预览信息，用户确认后正式入库。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "待办标题"},
+                    "description": {"type": "string", "description": "详细描述"},
+                    "priority": {"type": "string", "enum": ["high", "medium", "low"], "description": "优先级"},
+                    "due_date": {"type": "string", "description": "截止日期，如 2026-07-18"},
+                    "memory_id": {"type": "string", "description": "关联记忆 ID"},
+                    "agent_name": {"type": "string", "description": "来源 Agent"},
+                },
+                "required": ["title"]
+            }
+        ),
+        Tool(
+            name="todo_search",
+            description="搜索待办。返回匹配的待办列表，支持模糊搜索。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "keyword": {"type": "string", "description": "搜索关键词"},
+                    "status": {"type": "string", "description": "状态过滤，如 todo+doing"},
+                    "include_done": {"type": "boolean", "description": "是否包含已完成"},
+                    "limit": {"type": "integer", "default": 10},
+                },
+                "required": ["keyword"]
+            }
+        ),
+        Tool(
+            name="todo_list",
+            description="列出待办。支持按状态和优先级过滤。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "description": "状态过滤，多个用+连接"},
+                    "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "limit": {"type": "integer", "default": 20},
+                }
+            }
+        ),
+        Tool(
+            name="todo_close",
+            description="完成待办。支持批量关闭，传入 ID 列表。完成后自动写入记忆。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "待办 ID 列表"},
+                    "note": {"type": "string", "description": "完成备注"},
+                    "agent_name": {"type": "string", "description": "来源 Agent"},
+                },
+                "required": ["ids"]
+            }
+        ),
+        Tool(
+            name="todo_reopen",
+            description="重新开启已完成的待办。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ids": {"type": "array", "items": {"type": "string"}, "description": "待办 ID 列表"},
+                    "agent_name": {"type": "string", "description": "来源 Agent"},
+                },
+                "required": ["ids"]
+            }
+        ),
+        Tool(
+            name="todo_update",
+            description="编辑待办。可修改标题、优先级、截止日期等。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "待办 ID"},
+                    "title": {"type": "string"},
+                    "priority": {"type": "string", "enum": ["high", "medium", "low"]},
+                    "status": {"type": "string"},
+                    "due_date": {"type": "string"},
+                    "description": {"type": "string"},
+                    "agent_name": {"type": "string"},
+                },
+                "required": ["id"]
+            }
+        ),
+        Tool(
+            name="todo_check_risk",
+            description="检测待办风险。返回逾期、紧急、预警待办。每天 10 点自动提醒。",
+            inputSchema={"type": "object", "properties": {}}
+        ),
     ]
 
 
@@ -490,6 +586,75 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             from memo.services import get_import_status
             result = get_import_status()
             return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "todo_add":
+            title = arguments["title"]
+            result = engine.todo_add(
+                title=title,
+                description=arguments.get("description", ""),
+                priority=arguments.get("priority", "medium"),
+                due_date=arguments.get("due_date", ""),
+                memory_id=arguments.get("memory_id", ""),
+                source_agent=arguments.get("agent_name", ""),
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "todo_search":
+            result = engine.todo_search(
+                keyword=arguments.get("keyword", ""),
+                status=arguments.get("status", "todo+doing"),
+                include_done=arguments.get("include_done", False),
+                limit=arguments.get("limit", 10),
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "todo_list":
+            result = engine.todo_list(
+                status=arguments.get("status", "todo+doing"),
+                priority=arguments.get("priority", ""),
+                limit=arguments.get("limit", 20),
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "todo_close":
+            ids = arguments["ids"]
+            result = engine.todo_close(
+                ids=ids,
+                note=arguments.get("note", ""),
+                agent=arguments.get("agent_name", ""),
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "todo_reopen":
+            ids = arguments["ids"]
+            result = engine.todo_reopen(
+                ids=ids,
+                agent=arguments.get("agent_name", ""),
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "todo_update":
+            result = engine.todo_update(
+                todo_id=arguments["id"],
+                title=arguments.get("title", ""),
+                priority=arguments.get("priority", ""),
+                status=arguments.get("status", ""),
+                due_date=arguments.get("due_date", ""),
+                description=arguments.get("description", ""),
+                agent=arguments.get("agent_name", ""),
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "todo_check_risk":
+            result = engine.todo_check_risk()
+            output = f"⚠️ 风险: {result['summary']}\n"
+            for item in result.get("overdue", []):
+                output += f"  🔴 逾期{item['days_overdue']}天: {item['title']}\n"
+            for item in result.get("urgent", []):
+                output += f"  🔴 {item['hours_left']}h后到期: {item['title']}\n"
+            for item in result.get("warning", []):
+                output += f"  🟡 {item.get('due','')} {item['title']}\n"
+            return [TextContent(type="text", text=output.strip())]
 
         else:
             return [TextContent(type="text", text=f"未知工具: {name}")]
