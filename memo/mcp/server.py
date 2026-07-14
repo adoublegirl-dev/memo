@@ -516,7 +516,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if not row:
                 return [TextContent(type="text", text="尚无全局快照。多积累一些记忆后会自动生成。")]
 
-            import json
             output = (
                 f"📸 全局记忆快照 ({row['snapshot_at'][:19]})\n"
                 f"   会话: {row['total_sessions']} | 记忆: {row['total_memory_units']}\n"
