@@ -1,6 +1,6 @@
 # Memo（麦默）记忆系统
 
-> V0.6.0 · 赫布学习 + 扩散激活 + 网状记忆图谱 + 人格引擎 + 跨 Agent Bridge
+> V0.7.0 · 记忆 + 人格 + 待办 + 跨 Agent Bridge
 
 ## 一、是什么
 
@@ -148,6 +148,10 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 | `memo_snapshot` | 全局快照 | |
 | `persona_ask` | 人格路由问答 | `persona_ask({question:"我应该怎么推进这个项目？"})` |
 | `persona_profile` | 查看人格画像 | `persona_profile({dimension:"value"})` |
+| `todo_add` | 创建待办 | `todo_add({title:"写完报告",priority:"high",due_date:"2026-07-20"})` |
+| `todo_list` | 列出待办 | `todo_list({status:"todo+doing"})` |
+| `todo_close` | 完成待办 | `todo_close({ids:["abc123"]})` |
+| `todo_check_risk` | 风险检测 | 返回逾期/紧急/预警 |
 
 ---
 
