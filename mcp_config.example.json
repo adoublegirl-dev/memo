@@ -8,7 +8,7 @@
 #       "args": ["<项目路径>/scripts/run_mcp.py"],
 #       "env": {
 #         "LLM_API_KEY": "sk-your-key-here",
-#         "MEMO_DB_PATH": "<项目路径>/memo/data/memo.db"
+#         "MEMO_DB_PATH": "<项目路径>/data/memo.db"
 #       }
 #     }
 #   }
@@ -35,7 +35,7 @@
       "command": "python",
       "args": ["scripts/run_mcp.py"],
       "env": {
-        "MEMO_DB_PATH": "memo/data/memo.db"
+        "MEMO_DB_PATH": "data/memo.db"
       }
     }
   }

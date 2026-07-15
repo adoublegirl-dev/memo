@@ -1,6 +1,6 @@
 [project]
 name = "memo"
-version = "0.1.0"
+version = "0.7.0"
 description = "活的、会进化的 Agent 记忆系统 —— 赫布学习 + 扩散激活 + 网状记忆图谱"
 requires-python = ">=3.11"
 license = {text = "MIT"}

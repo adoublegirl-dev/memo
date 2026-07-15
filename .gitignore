@@ -13,7 +13,6 @@ _zip_compare/
 # legacy / transition docs (local only)
 docs/V0.3.0-*
 docs/V0.4.0-*
-HANDOFF.md
 
 # legacy
 memo-project/

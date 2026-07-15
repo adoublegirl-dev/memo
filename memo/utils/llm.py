@@ -115,7 +115,7 @@ class LLMClient:
                 return json.loads(raw)
             except json.JSONDecodeError as e:
                 # 尝试从非标准输出中提取 JSON
-                match = re.search(r"\{.*\}", last_raw, re.DOTALL)
+                match = re.search(r"\{.*?\}", last_raw, re.DOTALL)
                 if match:
                     try:
                         return json.loads(match.group())
