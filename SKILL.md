@@ -9,7 +9,7 @@ default-enabled: false
 SQLite 本地数据库，非 PostgreSQL。赫布学习 + 扩散激活 + 网状记忆图谱。
 
 项目路径：自动检测（`memo/core/config.py` 自动识别项目根目录）
-数据库：`memo/data/memo.db`（通过 config 自动读取）
+数据库：`data/memo.db`（通过 config 自动读取）
 
 ## 安装（跨 Agent 统一配置）
 

@@ -122,7 +122,7 @@ def build_persona_baseline() -> dict[str, Any]:
 
             # 解析 JSON
             import json, re
-            json_match = re.search(r"\[.*\]", response, re.DOTALL)
+            json_match = re.search(r"\[.*?\]", response, re.DOTALL)
             if not json_match:
                 logger.warning(f"维度 {dim_key} 未返回有效 JSON，跳过")
                 continue
@@ -266,7 +266,7 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
                 )
 
                 import json, re
-                json_match = re.search(r"\{.*\}", response, re.DOTALL)
+                json_match = re.search(r"\{.*?\}", response, re.DOTALL)
                 if not json_match:
                     continue
                 result = json.loads(json_match.group())

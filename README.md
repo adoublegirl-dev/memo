@@ -26,7 +26,7 @@ Memo 是一个本地运行的 AI 记忆系统，做两件事：
 
 ### 3.1 解压
 
-将 `Memo_V0.6.0.zip` 解压到任意目录（建议 `D:\Memo` 或 `~/Memo`）。
+将 `Memo_V0.7.0.zip` 解压到任意目录（建议 `D:\Memo` 或 `~/Memo`）。
 
 ### 3.2 配置
 
@@ -35,7 +35,7 @@ Memo 是一个本地运行的 AI 记忆系统，做两件事：
 ```
 LLM_API_KEY=sk-your-deepseek-key
 LLM_BASE_URL=https://api.deepseek.com/v1
-MEMO_DB_PATH=memo/data/memo.db
+MEMO_DB_PATH=data/memo.db
 ```
 
 如果用自己的 API，改 `LLM_BASE_URL` 和模型名即可。
@@ -194,7 +194,7 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 | 停止全部 | `stop_all.bat` |
 | 手动生命周期 | `python -c "from memo.core.engine import engine; engine.init(); engine.run_lifecycle()"` |
 | 人格增量刷新 | `python -c "from memo.core.engine import engine; engine.init(); engine.update_persona()"` |
-| 数据库备份 | 复制 `memo/data/memo.db` |
+| 数据库备份 | 复制 `data/memo.db` |
 
 ---
 

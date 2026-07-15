@@ -239,6 +239,19 @@ def _process_inbox():
     if not files:
         return
 
+    # 从第一个文件的首条记录提取 agent_name（用于 session 命名）
+    agent_name = "unknown"
+    for f in files:
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                first_line = fh.readline().strip()
+                if first_line:
+                    record = json.loads(first_line)
+                    agent_name = record.get("agent", "unknown")
+                    break
+        except Exception:
+            continue
+
     session_id = engine.start_session(f"Bridge-{agent_name}", agent_id=agent_name).id
     imported = 0
 
@@ -251,7 +264,7 @@ def _process_inbox():
                         continue
                     record = json.loads(line)
                     conversation = record.get("conversation", "")
-                    agent_name = record.get("agent", "unknown")
+                    record_agent = record.get("agent", "unknown")
 
                     if len(conversation) < MIN_TURN_LENGTH:
                         continue
@@ -265,7 +278,7 @@ def _process_inbox():
                     if result.get("memory_id"):
                         imported += 1
                         logger.info(
-                            f"📥 Bridge 导入 [{agent_name}]: {result['title'][:40]} "
+                            f"📥 Bridge 导入 [{record_agent}]: {result['title'][:40]} "
                             f"({len(result['feature_tags'])} 特征词)"
                         )
 
