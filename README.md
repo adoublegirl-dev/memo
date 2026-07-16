@@ -1,15 +1,17 @@
 # Memo（麦默）记忆系统
 
-> V0.7.0 · 记忆 + 人格 + 待办 + 跨 Agent Bridge
+> V0.9-alpha · 记忆 + 人格 + 待办 + Context Space + 跨 Agent Bridge
 
 ## 一、是什么
 
-Memo 是一个本地运行的 AI 记忆系统，做两件事：
+Memo 是一个本地运行的 AI Context Space，做四件事：
 
-1. **记忆**：用一个 SQLite 文件，记住你在各个 AI Agent 里的每一段对话
-2. **人格**：从所有记忆里提炼出你是谁、你怎么想问题、你偏好什么，形成"数字分身"
+1. **记忆**：用一个 SQLite 文件，沉淀各个 AI Agent 里的长期上下文
+2. **空间**：用 Context Space 按项目、事项、客户、产品线组织记忆、待办和会话
+3. **人格**：从所有记忆里提炼出你是谁、你怎么想问题、你偏好什么，形成"数字分身"
+4. **行动**：把记忆中的下一步沉淀为待办、风险和项目推进线索
 
-任何支持 MCP 的 Agent（WorkBuddy / HanaAgent / QoderWork / Claude / Cursor）安装后，共用同一套记忆和人格。
+任何支持 MCP 的 Agent（WorkBuddy / HanaAgent / QoderWork / Claude / Cursor）安装后，共用同一套记忆、空间、人格和待办。
 
 ---
 
@@ -133,7 +135,7 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 
 ---
 
-## 六、MCP 工具清单（11 个）
+## 六、MCP 工具清单（核心工具）
 
 | 工具 | 用途 | 示例 |
 |------|------|------|
@@ -152,6 +154,13 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 | `todo_list` | 列出待办 | `todo_list({status:"todo+doing"})` |
 | `todo_close` | 完成待办 | `todo_close({ids:["abc123"]})` |
 | `todo_check_risk` | 风险检测 | 返回逾期/紧急/预警 |
+| `space_create` | 创建 Context Space | `space_create({name:"Memo"})` |
+| `space_list` | 列出 Space | |
+| `space_activate` / `space_deactivate` | 激活/退出当前 Space | |
+| `space_profile` | 查看 Space 简报 | |
+| `space_recall` | 在 Space 内检索 | |
+| `space_detect` | 检测文本可能属于哪个 Space | |
+| `memory_govern` | 记忆治理：标重要/错误/过期/静默/软删除 | |
 
 ---
 
@@ -161,9 +170,12 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 
 | Tab | 内容 |
 |-----|------|
-| 图谱视图 | 特征词 D3 力导向图 |
-| 列表视图 | 记忆卡片列表（含来源 Agent 标签、Agent 筛选器） |
+| 总览 | 记忆、会话、关系、待办和活跃特征词 |
+| 记忆治理 | 搜索记忆，标重要/错误/过期/静默/软删除 |
+| 上下文空间 | Space 创建、编辑、归档、简报、记忆解绑 |
+| 待办 | 创建、完成、重开待办，支持绑定 Space |
 | 人格画像 | 10 维度人格断言管理 |
+| 图谱视图 | 当前为入口占位，下一阶段接入 Canvas 图谱 |
 
 ---
 
@@ -195,6 +207,9 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 | 手动生命周期 | `python -c "from memo.core.engine import engine; engine.init(); engine.run_lifecycle()"` |
 | 人格增量刷新 | `python -c "from memo.core.engine import engine; engine.init(); engine.update_persona()"` |
 | 数据库备份 | 复制 `data/memo.db` |
+| 安全升级 | `upgrade.bat` 或先 `python scripts/init_db.py` 再 `start_all.bat` |
+| 环境自检 | `python scripts/doctor.py` |
+| 安全打包 | `python scripts/build_release.py --include-dist` |
 
 ---
 

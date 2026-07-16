@@ -132,6 +132,21 @@ class SpaceManager:
             (new_id(), space_id, alias.strip(), datetime.now().isoformat()),
         )
 
+    def remove_alias(self, space_id: str, alias: str) -> dict:
+        space = self.resolve(space_id)
+        if not space:
+            return {"error": "space not found"}
+        db.execute("DELETE FROM space_aliases WHERE space_id = ? AND alias = ?", (space["id"], alias.strip()))
+        db.commit()
+        return {"space_id": space["id"], "alias": alias, "removed": True}
+
+    def aliases(self, space_id: str) -> list[str]:
+        space = self.resolve(space_id)
+        if not space:
+            return []
+        rows = db.fetchall("SELECT alias FROM space_aliases WHERE space_id = ? ORDER BY alias", (space["id"],))
+        return [r["alias"] for r in rows]
+
     def bind_memory(
         self,
         space_id: str,
@@ -155,6 +170,17 @@ class SpaceManager:
         self._refresh_counts(sid)
         db.commit()
         return {"space_id": sid, "memory_id": memory_id, "bound": True}
+
+    def unbind_memory(self, space_id: str, memory_id: str) -> dict:
+        """从 Space 中解绑记忆，不删除记忆本身。"""
+        space = self.resolve(space_id)
+        if not space:
+            return {"error": "space not found"}
+        sid = space["id"]
+        db.execute("DELETE FROM space_memories WHERE space_id = ? AND memory_id = ?", (sid, memory_id))
+        self._refresh_counts(sid)
+        db.commit()
+        return {"space_id": sid, "memory_id": memory_id, "unbound": True}
 
     def bind_todo(self, space_id: str, todo_id: str, relation_type: str = "action") -> dict:
         """将待办绑定到 Space。"""
@@ -181,6 +207,18 @@ class SpaceManager:
         )
         db.commit()
         return {"id": space["id"], "archived": True}
+
+    def restore(self, space_id: str) -> dict:
+        space = self.resolve(space_id)
+        if not space:
+            return {"error": "space not found"}
+        now = datetime.now().isoformat()
+        db.execute(
+            "UPDATE spaces SET status='active', archived_at=NULL, updated_at=? WHERE id=?",
+            (now, space["id"]),
+        )
+        db.commit()
+        return {"id": space["id"], "restored": True}
 
     def _refresh_counts(self, space_id: str) -> None:
         mem = db.fetchone("SELECT COUNT(*) AS c FROM space_memories WHERE space_id = ?", (space_id,))

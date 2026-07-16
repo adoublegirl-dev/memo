@@ -118,31 +118,32 @@
 
 ## 四、P3 待办：记忆治理
 
-- [ ] `memory_units.status`
-- [ ] `memory_units.user_weight`
-- [ ] `memory_units.pinned`
-- [ ] `memory_audit_logs`
-- [ ] Dashboard 记忆编辑
-- [ ] 标记重要
-- [ ] 标记错误
-- [ ] 标记过期
-- [ ] 软删除
+- [x] `memory_units.status`
+- [x] `memory_units.user_weight`
+- [x] `memory_units.pinned`
+- [x] `memory_audit_logs`
+- [x] Dashboard 基础记忆治理入口
+- [x] 标记重要
+- [x] 标记错误
+- [x] 标记过期
+- [x] 静默/不再引用
+- [x] 软删除 / 恢复
 - [ ] 检索解释
-- [ ] 用户反馈影响排序
+- [ ] 用户反馈影响排序精细化
 
 ---
 
 ## 五、P4 待办：发布与交付
 
-- [ ] `scripts/doctor.py` 环境检查
-- [ ] `scripts/build_release.py` 安全打包
-- [ ] README 更新 Context Space 说明
-- [ ] README 更新 Dashboard 构建说明
-- [ ] docs/setup-guide.md 修复乱码和旧路径
-- [ ] docs/deploy-guide.md 修复乱码和旧路径
-- [ ] docs/testing-guide.md 修复乱码和旧路径
-- [ ] GitHub Release 打包规则
-- [ ] 明确是否提交 `dashboard/dist`
+- [x] `scripts/doctor.py` 环境检查
+- [x] `scripts/build_release.py` 安全打包
+- [x] README 更新 Context Space 说明
+- [x] README 更新 Dashboard 构建说明
+- [x] docs/setup-guide.md 修复乱码和旧路径
+- [x] docs/deploy-guide.md 修复乱码和旧路径
+- [x] docs/testing-guide.md 修复乱码和旧路径
+- [x] GitHub Release 打包规则（由 build_release.py 执行）
+- [x] 明确提交 `dashboard/dist` 可选：发布包用 `--include-dist`
 
 ---
 

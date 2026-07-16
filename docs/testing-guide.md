@@ -1,210 +1,65 @@
-﻿# Memo 娴嬭瘯鎸囧崡
+# Memo 测试指南
 
-> 涓夌鏂规硶锛岀敱绠€鍒扮箒锛屼换閫変竴绉嶅嵆鍙獙璇併€?
+## 1. 原则
 
----
+测试必须使用隔离数据库，不能污染 `data/memo.db`。
 
-## 鏂规硶涓€锛歅ython 鐩存帴璋冪敤锛堟渶蹇紝1 鍒嗛挓锛?
+当前测试配置：
 
-涓嶄緷璧?MCP銆佷笉渚濊禆 API Key锛岀洿鎺ュ湪鍛戒护琛岃窇銆?
+- `test.bat` 会设置 `MEMO_ENV=test`
+- pytest fixture 会强制使用 `data/memo_test.db`
+- 测试结束后清理 `memo_test.db*`
 
-```powershell
-cd E:\memo
-python tests/test_integration_phase1.py
+## 2. 运行测试
+
+```bat
+test.bat
 ```
 
-**浣犱細鐪嬪埌锛?*
-- 鑷姩鍒涘缓 2 涓ā鎷熶細璇?
-- 鍐欏叆 3 鏉¤蹇嗭紙鐢?jieba 鑷姩鎻愬彇鐗瑰緛璇嶏級
-- 5 鏉℃煡璇㈤獙璇佹绱㈢粨鏋?
-- 缁熻淇℃伅鍜岀敓鍛藉懆鏈熸姤鍛?
+或：
 
-**棰勬湡杈撳嚭锛?*
-```
-馃搧 浼氳瘽 1锛氭帓浣嶈禌绯荤粺寮€鍙?
-  鉁?璁板繂: 鎴戞兂鍦ㄧ偢椋炴満娓告垙閲屽姞鍏ユ帓浣嶈禌绯荤粺
-  鉁?鐗瑰緛璇? ['娈典綅', '鎺掍綅璧?, 'ELO', ...]
-
-馃攳 鏌ヨ: 鎺掍綅璧涚殑 ELO 鍒濆鍒嗘槸澶氬皯锛?
-  1. [0.0164] 鎺掍綅璧涗箣澶栨垜杩樻兂鍋氫釜澶╂璧?..
-     鐗瑰緛璇? 澶╂, 鎺掍綅璧? ELO
-
-Phase 1 闆嗘垚娴嬭瘯閫氳繃锛佲渽
+```bat
+set MEMO_ENV=test
+pytest
 ```
 
----
+## 3. 写入自检
 
-## 鏂规硶浜岋細MCP Server 鍐掔儫娴嬭瘯锛堟鏌ュ伐鍏峰垪琛級
-
-楠岃瘉 MCP 鍗忚鐨?8 涓伐鍏烽兘鑳芥甯稿搷搴斻€?
-
-```powershell
-cd E:\memo
-python tests/test_mcp_smoke.py
+```bat
+set MEMO_ENV=test
+python scripts\init_db.py --self-test
 ```
 
-**浣犱細鐪嬪埌锛?*
-```
-鉁?宸ュ叿鍒楄〃: 8 涓?
-  - memo_remember
-  - memo_recall
-  ...锛堝叏閮?8 涓伐鍏峰悕锛?
+不要在 production 下执行写入自检，除非明确设置：
 
-鉁?memo_stats({})
-鉁?memo_remember({"conversation": "..."})
-鉁?memo_recall({"query": "MCP Server 娴嬭瘯", "top_k": 3})
-...锛堟瘡涓伐鍏疯皟鐢ㄤ竴娆★紝鍏ㄩ儴 鉁咃級
-
-MCP Server 鍐掔儫娴嬭瘯閫氳繃锛?
+```bat
+set MEMO_ALLOW_PRODUCTION_SELF_TEST=true
+python scripts\init_db.py --self-test
 ```
 
----
+## 4. Dashboard 构建验证
 
-## 鏂规硶涓夛細鐪熷疄 MCP 瀹㈡埛绔祴璇曪紙鎺ㄨ崘锛?
-
-杩欐槸鏈€鎺ヨ繎鐢熶骇鐜鐨勬祴璇曟柟寮忋€傜敤 MCP Inspector 鎴栫洿鎺ユ帴鍏?Claude Desktop銆?
-
-### 3.1 瀹夎 MCP Inspector
-
-```powershell
-npm install -g @modelcontextprotocol/inspector
+```bat
+npm run build
 ```
 
-### 3.2 鍚姩 Inspector
+## 5. 发布前检查
 
-```powershell
-npx @modelcontextprotocol/inspector python E:/memo/scripts/run_mcp.py
+```bat
+python scripts\doctor.py
+python scripts\build_release.py --include-dist
 ```
 
-娴忚鍣ㄤ細鑷姩鎵撳紑 `http://localhost:5173`銆?
+## 6. 当前测试覆盖
 
-**鍦?Inspector 鐣岄潰涓細**
-1. 鐐瑰嚮 **Tools** 鏍囩椤碉紝鐪嬪埌 8 涓伐鍏?
-2. 鐐瑰嚮 `memo_stats` 鈫?**Run** 鈫?鐪嬪埌缁熻淇℃伅
-3. 鐐瑰嚮 `memo_remember` 鈫?濉叆鍙傛暟锛?
-   ```json
-   {
-     "conversation": "鎴戞槸Memo寮€鍙戣€咃紝姝ｅ湪寮€鍙戜竴涓蹇嗙郴缁燂紝鍙?Memo銆傚畠鐢ㄨ但甯冨涔犲拰鎵╂暎婵€娲绘潵鍋氱綉鐘惰蹇嗗浘璋便€?
-   }
-   ```
-   鈫?**Run** 鈫?鐪嬪埌鎻愬彇缁撴灉
-4. 鍐嶅啓涓€鏉★細
-   ```json
-   {
-     "conversation": "Memo 鐨勪笁閫氶亾妫€绱㈠寘鎷悜閲忚涔夈€丅M25 鍏ㄦ枃銆佸浘鎵╂暎婵€娲伙紝鐢?RRF 铻嶅悎銆傜壒寰佽瘝涔嬮棿鐢ㄨ但甯冩潈閲嶈繛鎺ャ€?
-   }
-   ```
-   鈫?**Run**
-5. 鐐瑰嚮 `memo_recall` 鈫?濉叆锛?
-   ```json
-   {
-     "query": "Memo 鐨勬绱㈡槸鎬庝箞鍋氱殑锛?
-   }
-   ```
-   鈫?**Run** 鈫?鐪嬪埌涓ゆ潯璁板繂閮借鍛戒腑锛岀壒寰佽瘝褰㈡垚浜嗗叧鑱?
-6. 鐐瑰嚮 `memo_hot_tags` 鈫?**Run** 鈫?鐪嬪埌楂橀鐗瑰緛璇嶆帓琛?
-7. 鐐瑰嚮 `memo_snapshot` 鈫?**Run** 鈫?鐪嬪埌鍏ㄥ眬蹇収
+- Space 创建 / 绑定记忆 / Space recall / 待办绑定
+- Space 名称检测
+- MCP 工具冒烟测试
+- 端到端记忆写入与检索基础流程
 
-### 3.3 鍙€夛細閰?API Key 鍚敤 LLM 鎻愬彇
+后续建议补充：
 
-缂栬緫 `.env`锛堜粠 `.env.example` 澶嶅埗锛夛細
-
-```env
-LLM_API_KEY=sk-your-real-key
-```
-
-閲嶅惎 Inspector锛屽啀鍐欏叆璁板繂鏃朵細鐪嬪埌 `鎻愬彇鏂瑰紡: llm`锛岀壒寰佽瘝璐ㄩ噺杩滈珮浜?jieba銆?
-
----
-
-## 鏂规硶鍥涳細鎺ュ叆 HanaAgent锛堢湡瀹為獙璇侊級
-
-### 4.1 娣诲姞 MCP 閰嶇疆
-
-鍦?HanaAgent 鐨?MCP 閰嶇疆涓坊鍔?Memo锛?
-
-```json
-{
-  "mcpServers": {
-    "memo": {
-      "command": "python",
-      "args": ["<椤圭洰璺緞>/scripts/run_mcp.py"],
-      "env": {
-        "LLM_API_KEY": "sk-...",
-        "MEMO_DB_PATH": "<椤圭洰璺緞>/memo/data/memo.db"
-      }
-    }
-  }
-}
-```
-
-### 4.2 寮€濮嬪璇濇祴璇?
-
-瀵?HanaAgent 璇达細
-
-> **绗竴杞紙鍐欏叆锛?*锛氥€屽府鎴戣浣忥紝鎴戞鍦ㄥ仛涓€涓彨"鐐搁鏈?鐨勮仈鏈哄鎴樻父鎴忥紝宸茬粡瀹炵幇浜嗘帓浣嶈禌鍜屽ぉ姊禌锛孍LO 鍒濆鍒?1200锛孠 鍊?32銆傘€?
-
-ASH 浼氳皟鐢?`memo_remember`锛岃嚜鍔ㄦ彁鍙栫壒寰佽瘝锛堢偢椋炴満銆佹帓浣嶈禌銆佸ぉ姊禌銆丒LO 绠楁硶...锛夊苟鍐欏叆銆?
-
-> **绗簩杞紙璺ㄤ細璇濇绱級**锛氭柊寮€涓€涓細璇濓紝闂細銆屼箣鍓嶉偅涓父鎴忕殑鍖归厤绠楁硶鍙傛暟鏄粈涔堬紵銆?
-
-ASH 浼氳皟鐢?`memo_recall("鍖归厤绠楁硶鍙傛暟")` 鈫?涓夐€氶亾妫€绱?鈫?杩斿洖绗竴杞殑璁板繂 鈫?姝ｇ‘鍥炵瓟銆?
-
-> **绗笁杞紙鍥惧叧鑱旈獙璇侊級**锛氭柊浼氳瘽闂細銆岄櫎浜嗘帓浣嶈禌杩樻湁浠€涔堢珵鎶€妯″紡锛熴€?
-
-ASH 璋冪敤 `memo_recall`锛岄€氳繃鐗瑰緛璇嶅浘璋辩殑 CO_OCCUR 鍏崇郴锛屽彂鐜?鎺掍綅璧?鍜?澶╂璧?鏈夊己鍏宠仈锛岃嚜鍔ㄥ叧鑱旇繑鍥炪€?
-
----
-
-## 鍏抽敭楠岃瘉鐐规竻鍗?
-
-| # | 楠岃瘉鐐?| 棰勬湡 | 鏂规硶 |
-|---|--------|------|:---:|
-| 1 | 鏁版嵁搴撳垵濮嬪寲 | 8 寮犺〃 + FTS5 绱㈠紩鍒涘缓鎴愬姛 | 鏂规硶涓€ |
-| 2 | 璁板繂鍐欏叆 | 瀵硅瘽鈫掔壒寰佽瘝/鎽樿/鍏崇郴锛屽啓鍏?L1+L2 | 鏂规硶涓€/涓?|
-| 3 | 鍚戦噺缂栫爜 | 姣忔潯璁板繂缂栫爜骞惰鍏ュ悜閲忕储寮?| 鏂规硶涓€ |
-| 4 | 鐗瑰緛璇嶆縺娲?| 鍐欏叆鏃惰嚜鍔ㄥ垱寤?婵€娲荤壒寰佽瘝锛屾洿鏂版潈閲?| 鏂规硶涓€ |
-| 5 | 璧竷鍏崇郴 | 鍚屼竴鏉¤蹇嗙殑鐗瑰緛璇嶈嚜鍔ㄥ缓绔?CO_OCCUR 杈?| 鏂规硶涓€ |
-| 6 | 鍚戦噺妫€绱?| 璇箟鐩镐技鏌ヨ鍛戒腑鐩稿叧璁板繂 | 鏂规硶涓€/涓?|
-| 7 | 鍥炬墿鏁ｆ縺娲?| 閫氳繃鐗瑰緛璇嶅叧鑱旀壘鍒拌法浼氳瘽鐩稿叧璁板繂 | 鏂规硶涓?鍥?|
-| 8 | RRF 铻嶅悎 | 涓夐€氶亾缁撴灉鍚堝苟锛屾帓搴忓悎鐞?| 鏂规硶涓€/涓?|
-| 9 | 閬楀繕琛板噺 | 姣忔棩琛板噺妫€绱㈠己搴︼紝浼戠湢鏉′欢瑙﹀彂 | 闇€澶氬ぉ鎴栨墜鍔ㄨ皟鍙?|
-| 10 | 鍙屾椂搴忔浛浠?| 鏂颁簨瀹炴爣璁版棫浜嬪疄 is_superseded | 闇€ LLM |
-| 11 | MCP 宸ュ叿鍒楄〃 | 8 涓伐鍏峰彲鍙戠幇 | 鏂规硶浜?涓?|
-| 12 | MCP 宸ュ叿璋冪敤 | 姣忎釜宸ュ叿杈撳叆杈撳嚭姝ｇ‘ | 鏂规硶涓?|
-| 13 | 璺ㄤ細璇濇绱?| 鏂颁細璇濊兘妫€绱㈠埌鏃т細璇濈殑璁板繂 | 鏂规硶鍥?|
-
----
-
-## 鏃?API Key 鏃剁殑闄嶇骇琛屼负
-
-| 鍔熻兘 | 鏈?API Key | 鏃?API Key |
-|------|-----------|-----------|
-| 鐗瑰緛璇嶆彁鍙?| LLM 鎻愬彇 3-8 涓珮璐ㄩ噺璇?| jieba TF-IDF 鎻愬彇 1-6 涓瘝 |
-| 鎽樿鐢熸垚 | LLM 鎬荤粨 | 鎴彇鍓?300 瀛楃 |
-| 鍏崇郴鎻愬彇 | LLM 鍒ゆ柇鍥犳灉/娲剧敓鍏崇郴 | 浠?CO_OCCUR |
-| 鍐茬獊妫€娴?| LLM 璇箟鍒ゆ柇 | 涓嶆墽琛?|
-| 妫€绱㈤噸鎺?| 鍙€?LLM 閲嶆帓 top-N | 璺宠繃閲嶆帓 |
-
-**鏃?API Key 涔熻兘瀹屾暣璺戦€氭墍鏈夋牳蹇冩祦绋嬨€?* LLM 鍙槸鎻愬崌鎻愬彇璐ㄩ噺锛屼笉闃诲鍔熻兘銆?
-
----
-
-## 蹇€熷懡浠ら€熸煡
-
-```powershell
-# 鍩虹鑷锛堜笉渚濊禆 LLM锛?
-python E:\memo\scripts\quick_check.py
-
-# 闆嗘垚娴嬭瘯锛堟ā鎷熷浼氳瘽锛?
-python E:\memo\tests\test_integration_phase1.py
-
-# MCP 鍐掔儫娴嬭瘯
-python E:\memo\tests\test_mcp_smoke.py
-
-# 鍚姩 MCP Server锛堥厤鍒?Agent 鐢級
-python E:\memo\scripts\run_mcp.py
-
-# 娓呯┖鏁版嵁搴撻噸鏂版祴璇?
-Remove-Item E:\memo\memo\data\memo.db -Force
-```
+- 记忆治理 action 测试
+- Space 归档 / 恢复 / alias 测试
+- build_release 排除敏感文件测试
+- doctor pending migration 检测测试

@@ -122,6 +122,86 @@ class MemoryStore:
         )
         db.commit()
 
+    # ── 记忆治理 ──
+
+    def govern_memory(
+        self,
+        memory_id: str,
+        action: str,
+        actor: str = "dashboard",
+        note: str = "",
+        status: str | None = None,
+        user_weight: float | None = None,
+        pinned: bool | None = None,
+        user_note: str | None = None,
+    ) -> dict:
+        """用户侧记忆治理：标重要、错误、过期、静默、软删除、恢复、备注。"""
+        row = db.fetchone("SELECT * FROM memory_units WHERE id = ?", (memory_id,))
+        if not row:
+            return {"error": "memory not found"}
+
+        now = datetime.now().isoformat()
+        updates: dict[str, Any] = {}
+
+        if action == "pin":
+            updates["pinned"] = 1
+            updates["user_weight"] = user_weight if user_weight is not None else max(float(row["user_weight"]), 1.5)
+        elif action == "unpin":
+            updates["pinned"] = 0
+        elif action == "mark_wrong":
+            updates["status"] = "wrong"
+            updates["user_weight"] = 0.0
+        elif action == "mark_expired":
+            updates["status"] = "expired"
+            updates["user_weight"] = 0.2
+            updates["valid_until"] = now
+        elif action == "mute":
+            updates["status"] = "muted"
+            updates["user_weight"] = 0.0
+        elif action == "delete":
+            updates["status"] = "deleted"
+            updates["user_weight"] = 0.0
+        elif action == "restore":
+            updates["status"] = "active"
+            updates["user_weight"] = user_weight if user_weight is not None else 1.0
+            updates["valid_until"] = None
+        elif action == "update":
+            if status is not None:
+                updates["status"] = status
+            if user_weight is not None:
+                updates["user_weight"] = user_weight
+            if pinned is not None:
+                updates["pinned"] = 1 if pinned else 0
+            if user_note is not None:
+                updates["user_note"] = user_note
+        else:
+            return {"error": f"unknown memory action: {action}"}
+
+        if user_note is not None and action != "update":
+            updates["user_note"] = user_note
+        updates["updated_at"] = now
+
+        for key, value in updates.items():
+            old_value = row[key] if key in row.keys() else ""
+            db.execute(f"UPDATE memory_units SET {key} = ? WHERE id = ?", (value, memory_id))
+            self._audit(memory_id, key, old_value, value, actor, note or action)
+        db.commit()
+        return {"id": memory_id, "action": action, "updated": True, "fields": updates}
+
+    def _audit(self, memory_id: str, action: str, old_value: Any, new_value: Any, actor: str, note: str = "") -> None:
+        db.execute(
+            """INSERT INTO memory_audit_logs (memory_id, action, old_value, new_value, actor, note, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (memory_id, action, str(old_value or ""), str(new_value or ""), actor, note, datetime.now().isoformat()),
+        )
+
+    def get_memory_audit(self, memory_id: str, limit: int = 50) -> list[dict]:
+        rows = db.fetchall(
+            "SELECT * FROM memory_audit_logs WHERE memory_id = ? ORDER BY created_at DESC LIMIT ?",
+            (memory_id, limit),
+        )
+        return [dict(r) for r in rows]
+
     def _row_to_memory(self, row) -> MemoryUnit:
         emb = blob_decode(row["embedding"]) if row["embedding"] else None
         return MemoryUnit(
@@ -139,6 +219,11 @@ class MemoryStore:
             confidence=row["confidence"],
             memory_type=row["memory_type"],
             signal_level=row["signal_level"] if "signal_level" in row.keys() else 0,
+            status=row["status"] if "status" in row.keys() else "active",
+            user_weight=row["user_weight"] if "user_weight" in row.keys() else 1.0,
+            pinned=bool(row["pinned"]) if "pinned" in row.keys() else False,
+            user_note=row["user_note"] if "user_note" in row.keys() else "",
+            updated_at=row["updated_at"] if "updated_at" in row.keys() and row["updated_at"] else "",
             embedding=emb,
             created_at=row["created_at"] or "",
         )

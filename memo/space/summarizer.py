@@ -55,6 +55,7 @@ class SpaceSummarizer:
         profile = json_decode(space.get("profile_json", "{}"))
         return {
             "space": space,
+            "aliases": space_manager.aliases(sid),
             "mode": mode,
             "profile": profile if isinstance(profile, dict) else {},
             "status": {
