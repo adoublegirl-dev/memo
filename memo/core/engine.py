@@ -109,7 +109,7 @@ class Engine:
         if not title:
             title = self._auto_title(raw_text)
 
-        # 写入记忆单元（手动模式 signal_level=L2）
+        # 写入记忆单元（手动模式 signal_level=L2）。显式手动记忆不自动跳过，但记录指纹供后续去重。
         memory_id = memory_store.add_memory(
             session_id=session_id,
             title=title,
@@ -159,6 +159,12 @@ class Engine:
                     semantic_similarity=sim,
                     session_id=session_id,
                 )
+
+        try:
+            from memo.dedupe import record_created
+            record_created(memory_id, raw_text, title, summary, session_id=session_id)
+        except Exception as e:
+            logger.debug(f"手动记忆去重指纹记录失败: {e}")
 
         if space_id:
             self.space_bind_memory(
@@ -237,6 +243,63 @@ class Engine:
         """
         self._ensure_init()
 
+        source_agent = ""
+        if session_id:
+            row = db.fetchone("SELECT agent_id FROM sessions WHERE id = ?", (session_id,))
+            source_agent = row["agent_id"] if row else ""
+
+        # Step -2: ingestion 事件闸门，避免 watcher/import/MCP 重试重复处理同一输入。
+        try:
+            from memo.dedupe import check_ingestion, record_ingestion
+            ingestion = check_ingestion(
+                conversation,
+                source_type="memo_remember",
+                source_agent=source_agent,
+                source_session_id=session_id,
+            )
+            if ingestion.get("duplicate"):
+                record_ingestion(
+                    conversation,
+                    source_type="memo_remember",
+                    source_agent=source_agent,
+                    source_session_id=session_id,
+                    processed_memory_id=ingestion.get("processed_memory_id"),
+                    status="skipped",
+                    reason=ingestion.get("reason", "ingestion_duplicate"),
+                    metadata=ingestion,
+                )
+                logger.info(f"ingestion 去重跳过: {ingestion.get('reason')}")
+                return {
+                    "memory_id": None,
+                    "title": "",
+                    "feature_tags": [],
+                    "conflicts_found": [],
+                    "extraction_method": "ingestion_skipped",
+                    "gating_result": {"reason": ingestion.get("reason", "ingestion_duplicate"), "verdict": "skip", "total_score": 0},
+                    "dedupe_result": ingestion,
+                }
+        except Exception as e:
+            logger.debug(f"ingestion 去重检查失败，继续写入: {e}")
+
+        # Step -1: 入库前 exact / structured 去重，尽量避免无意义 LLM 调用。
+        try:
+            from memo.dedupe import check_before_extract, record_skipped
+            pre_dedupe = check_before_extract(conversation, session_id=session_id, source_agent=source_agent)
+            if pre_dedupe.should_skip:
+                record_skipped(pre_dedupe, session_id=session_id, source_agent=source_agent)
+                logger.info(f"去重跳过: {pre_dedupe.reason} -> {pre_dedupe.existing_memory_id}")
+                return {
+                    "memory_id": None,
+                    "title": "",
+                    "feature_tags": [],
+                    "conflicts_found": [],
+                    "extraction_method": "dedupe_skipped",
+                    "gating_result": {"reason": pre_dedupe.reason, "verdict": "skip", "total_score": 0},
+                    "dedupe_result": pre_dedupe.as_dict(),
+                }
+        except Exception as e:
+            logger.debug(f"入库前去重检查失败，继续写入: {e}")
+
         # Step 0: MVG 记忆价值门控
         gating_result = None
         if not skip_gating:
@@ -288,6 +351,30 @@ class Engine:
                 extracted = _jieba_extract(conversation)
             extraction_method = "jieba"
 
+        # Step 1.5: 提取后按事实 key / title-summary 做近重复检查。
+        try:
+            from memo.dedupe import check_after_extract, record_skipped
+            post_dedupe = check_after_extract(
+                conversation,
+                extracted.get("title", ""),
+                extracted.get("summary", ""),
+                extracted.get("memory_type", ""),
+            )
+            if post_dedupe.should_skip:
+                record_skipped(post_dedupe, session_id=session_id, source_agent=source_agent)
+                logger.info(f"去重跳过: {post_dedupe.reason} -> {post_dedupe.existing_memory_id}")
+                return {
+                    "memory_id": None,
+                    "title": extracted.get("title", ""),
+                    "feature_tags": [],
+                    "conflicts_found": [],
+                    "extraction_method": "dedupe_skipped",
+                    "gating_result": {"reason": post_dedupe.reason, "verdict": "skip", "total_score": 0},
+                    "dedupe_result": post_dedupe.as_dict(),
+                }
+        except Exception as e:
+            logger.debug(f"提取后去重检查失败，继续写入: {e}")
+
         # Step 2: 写入记忆单元（灰色地带降低置信度，MVG 高分提升 signal_level）
         mem_confidence = 0.5 if (gating_result and gating_result["verdict"] == "gray") else 0.85
         mem_signal = 0  # L0 普通自动
@@ -304,6 +391,28 @@ class Engine:
             confidence=mem_confidence,
             signal_level=mem_signal,
         )
+
+        try:
+            from memo.dedupe import record_created, record_ingestion
+            record_created(
+                memory_id,
+                conversation,
+                extracted.get("title", ""),
+                extracted.get("summary", ""),
+                session_id=session_id,
+                source_agent=source_agent,
+            )
+            record_ingestion(
+                conversation,
+                source_type="memo_remember",
+                source_agent=source_agent,
+                source_session_id=session_id,
+                processed_memory_id=memory_id,
+                status="processed",
+                reason="created",
+            )
+        except Exception as e:
+            logger.debug(f"记忆去重/ingestion 指纹记录失败: {e}")
 
         # Step 3: 向量编码
         text_for_embedding = f"{extracted['title']} {extracted['summary']} {conversation[:500]}"
@@ -471,8 +580,9 @@ class Engine:
         # 通道③
         graph_results = self._channel_graph(query, top_k=20, current_session_id=current_session_id, space_id=space_id)
 
-        # RRF 融合
-        fused = self._rrf_fuse(vec_results, bm25_results, graph_results, top_k=top_k)
+        # RRF 融合。Space within/boost 需要更大的候选池，避免先截断导致空间内结果被丢弃。
+        fused_limit = max(top_k * 5, 30) if space_id else top_k
+        fused = self._rrf_fuse(vec_results, bm25_results, graph_results, top_k=fused_limit)
 
         space_memory_ids: set[str] = set()
         if space_id:
@@ -497,7 +607,9 @@ class Engine:
                     adjusted_score *= 1.25
                 from_current_space = bool(space_id and mem_id in space_memory_ids)
                 if from_current_space and space_mode == "boost":
-                    adjusted_score *= 1.1
+                    adjusted_score *= 1.25
+                    if mem.memory_type == "DECISION":
+                        adjusted_score *= 1.08
                 # 获取关联特征词
                 tags = graph_store.get_memory_tags(mem_id)
                 explanation_reasons = []
@@ -806,11 +918,11 @@ class Engine:
         from memo.space.manager import space_manager
         return space_manager.remove_alias(space_id, alias)
 
-    def space_profile(self, space_id: str) -> dict:
+    def space_profile(self, space_id: str, mode: str = "brief", persist: bool = False) -> dict:
         """获取空间简报。"""
         self._ensure_init()
         from memo.space.summarizer import space_summarizer
-        return space_summarizer.summarize(space_id)
+        return space_summarizer.summarize(space_id, mode=mode, persist=persist)
 
     def space_recall(self, space_id: str, query: str, top_k: int | None = None, mode: str = "boost") -> list[dict]:
         """在空间语境下检索记忆。"""
@@ -828,6 +940,89 @@ class Engine:
         """查看单条记忆治理审计日志。"""
         self._ensure_init()
         return memory_store.get_memory_audit(memory_id, limit=limit)
+
+    def memory_link(
+        self,
+        source_memory_id: str,
+        target_memory_id: str,
+        relation_type: str = "MERGED_INTO",
+        confidence: float = 0.8,
+        reason: str = "",
+        created_by: str = "engine",
+    ) -> dict:
+        """建立记忆治理关系。"""
+        self._ensure_init()
+        return memory_store.link_memories(source_memory_id, target_memory_id, relation_type, confidence, reason, created_by)
+
+    def memory_links(self, memory_id: str, limit: int = 50) -> list[dict]:
+        """获取记忆关系链。"""
+        self._ensure_init()
+        return memory_store.get_memory_links(memory_id, limit=limit)
+
+    def governance_overview(self, limit: int = 50) -> dict[str, Any]:
+        """记忆治理概览：去重、导入事件、合并链、审计。"""
+        self._ensure_init()
+        from memo.dedupe.ingestion import recent_ingestion_events
+        dedupe = db.fetchall("SELECT * FROM memory_dedupe_records ORDER BY created_at DESC LIMIT ?", (limit,))
+        links = db.fetchall("SELECT * FROM memory_links ORDER BY created_at DESC LIMIT ?", (limit,))
+        governed = db.fetchall("SELECT id,title,status,updated_at FROM memory_units WHERE status IN ('wrong','expired','muted','deleted') ORDER BY updated_at DESC LIMIT ?", (limit,))
+        return {
+            "dedupe_records": [dict(r) for r in dedupe],
+            "ingestion_events": recent_ingestion_events(limit=limit),
+            "memory_links": [dict(r) for r in links],
+            "governed_memories": [dict(r) for r in governed],
+            "source_groups": self._governance_source_groups(limit=limit),
+        }
+
+    def _governance_source_groups(self, limit: int = 50) -> list[dict[str, Any]]:
+        """按同源输入聚合记忆，用于治理页避免 raw_text 相同的多条记忆平铺。"""
+        from memo.dedupe.normalizer import normalize_conversation, stable_hash
+
+        rows = db.fetchall(
+            """SELECT id,title,summary,memory_type,status,confidence,created_at,updated_at,raw_text
+               FROM memory_units
+               WHERE raw_text IS NOT NULL AND trim(raw_text) != '' AND COALESCE(status,'active') != 'deleted'
+               ORDER BY created_at DESC
+               LIMIT 2000"""
+        )
+        groups: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            raw = r["raw_text"] or ""
+            normalized = normalize_conversation(raw)
+            if not normalized:
+                continue
+            key = stable_hash(normalized)
+            g = groups.setdefault(key, {"source_hash": key, "normalized_preview": normalized[:220], "members": []})
+            member = {k: r[k] for k in r.keys() if k != "raw_text"}
+            member["raw_length"] = len(raw)
+            g["members"].append(member)
+
+        result = []
+        type_rank = {"DECISION": 0, "PREFERENCE": 1, "FACT": 2, "REASONING": 3, "EVENT": 4}
+        for g in groups.values():
+            members = g["members"]
+            if len(members) <= 1:
+                continue
+            canonical = sorted(
+                members,
+                key=lambda m: (
+                    0 if m.get("status", "active") == "active" else 1,
+                    type_rank.get(str(m.get("memory_type", "FACT")).upper(), 9),
+                    -float(m.get("confidence") or 0),
+                    m.get("created_at") or "",
+                ),
+            )[0]
+            g["count"] = len(members)
+            g["canonical_id"] = canonical["id"]
+            g["canonical_title"] = canonical.get("title", "")
+            g["memory_types"] = sorted({str(m.get("memory_type", "")) for m in members if m.get("memory_type")})
+            g["statuses"] = sorted({str(m.get("status", "active")) for m in members})
+            g["created_at_min"] = min((m.get("created_at") or "") for m in members)
+            g["created_at_max"] = max((m.get("created_at") or "") for m in members)
+            result.append(g)
+
+        result.sort(key=lambda g: (g["count"], g["created_at_max"]), reverse=True)
+        return result[:limit]
 
     # ── 待办管理 ──
 

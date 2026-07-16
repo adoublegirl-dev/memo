@@ -8,7 +8,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from memo.store.database import blob_encode, db, json_encode, new_id
+from memo.dedupe.normalizer import normalize_conversation
+from memo.store.database import blob_decode, blob_encode, db, json_encode, new_id
 from memo.utils.embedding import embedding_model
 from memo.utils.logger import logger
 
@@ -26,10 +27,10 @@ class SpaceManager:
         profile: dict[str, Any] | None = None,
         created_by: str = "manual",
     ) -> dict:
-        """创建 Space。已存在同名 Space 时返回已有记录。"""
-        existing = self.get_by_name(name)
+        """创建 Space。已存在同名/别名/高相似 Space 时返回已有记录。"""
+        existing = self.find_duplicate(name=name, type=type, description=description, goal=goal)
         if existing:
-            return {**existing, "created": False}
+            return {**existing, "created": False, "duplicate_reason": existing.get("duplicate_reason", "matched")}
 
         sid = new_id()
         now = datetime.now().isoformat()
@@ -104,6 +105,42 @@ class SpaceManager:
         row = db.fetchone("SELECT * FROM spaces WHERE name = ?", (name,))
         return self._row_to_dict(row) if row else None
 
+    def find_duplicate(self, name: str, type: str = "", description: str = "", goal: str = "") -> dict | None:
+        """创建前查重：name/alias/canonical + embedding 高相似。"""
+        if not name.strip():
+            return None
+        direct = self.get_by_name(name)
+        if direct:
+            return {**direct, "duplicate_reason": "same_name"}
+        normalized = normalize_conversation(name)
+        row = db.fetchone(
+            """SELECT s.* FROM spaces s
+               JOIN space_aliases a ON a.space_id = s.id
+               WHERE lower(trim(a.alias)) = ? OR a.normalized_alias = ?
+               LIMIT 1""",
+            (name.strip().lower(), normalized),
+        )
+        if row:
+            return {**self._row_to_dict(row), "duplicate_reason": "alias_match"}
+
+        text = " ".join([name, type or "", description or "", goal or ""]).strip()
+        if not text:
+            return None
+        vec = embedding_model.encode(text)
+        best = None
+        best_score = 0.0
+        for r in db.fetchall("SELECT * FROM spaces WHERE status != 'archived' LIMIT 200"):
+            if r["centroid_embedding"] is None:
+                continue
+            score = embedding_model.cosine_similarity(vec, blob_decode(r["centroid_embedding"]))
+            same_type_bonus = 0.04 if (type and r["type"] == type) else 0.0
+            score += same_type_bonus
+            if score > best_score:
+                best_score, best = score, r
+        if best and best_score >= 0.88:
+            return {**self._row_to_dict(best), "duplicate_reason": f"embedding_similarity:{best_score:.3f}"}
+        return None
+
     def get_default(self) -> dict | None:
         row = db.fetchone("SELECT * FROM spaces WHERE is_default = 1 ORDER BY created_at LIMIT 1")
         return self._row_to_dict(row) if row else None
@@ -126,10 +163,11 @@ class SpaceManager:
     def add_alias(self, space_id: str, alias: str) -> None:
         if not alias.strip():
             return
+        normalized = normalize_conversation(alias)
         db.execute(
-            """INSERT OR IGNORE INTO space_aliases (id, space_id, alias, created_at)
-               VALUES (?, ?, ?, ?)""",
-            (new_id(), space_id, alias.strip(), datetime.now().isoformat()),
+            """INSERT OR IGNORE INTO space_aliases (id, space_id, alias, normalized_alias, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (new_id(), space_id, alias.strip(), normalized, datetime.now().isoformat()),
         )
 
     def remove_alias(self, space_id: str, alias: str) -> dict:

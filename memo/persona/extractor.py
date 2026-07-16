@@ -4,6 +4,7 @@
 增量更新（模式 A/B 通用）：新记忆逐条检查 → 印证/补充/推翻已有断言
 """
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -33,6 +34,63 @@ MAX_TOKEN_CHARS = 20000
 BASELINE_CONFIDENCE_L2 = 0.70
 BASELINE_CONFIDENCE_L1_CROSS = 0.50
 BASELINE_CONFIDENCE_SINGLE = 0.30
+PERSONA_DUP_SIM_THRESHOLD = 0.88
+
+
+def _audit_persona(assertion_id: str, action: str, old_value: str = "", new_value: str = "", actor: str = "system", note: str = "") -> None:
+    db.execute(
+        """INSERT INTO persona_audit_logs (assertion_id, action, old_value, new_value, actor, note, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (assertion_id, action, old_value, new_value, actor, note, datetime.now().isoformat()),
+    )
+
+
+def _merge_or_insert_assertion(
+    dimension: str,
+    assertion_text: str,
+    confidence: float,
+    evidences: list[str] | None = None,
+    signal_level: int = 0,
+    actor: str = "persona",
+) -> tuple[str, bool]:
+    """同维人格断言去重：相似则合并证据和置信度，否则新增。"""
+    evidences = evidences or []
+    rows = db.fetchall(
+        "SELECT * FROM persona_assertions WHERE dimension = ? AND is_superseded = 0",
+        (dimension,),
+    )
+    if rows:
+        new_vec = embedding_model.encode(assertion_text)
+        best = None
+        best_score = 0.0
+        for r in rows:
+            sim = embedding_model.cosine_similarity(new_vec, embedding_model.encode(r["assertion"]))
+            if sim > best_score:
+                best_score, best = sim, r
+        if best and best_score >= PERSONA_DUP_SIM_THRESHOLD:
+            old_evs = json.loads(best["evidences"] or "[]")
+            merged_evs = list(dict.fromkeys(old_evs + evidences))
+            new_conf = min(1.0, max(float(best["confidence"]), confidence) + 0.03)
+            db.execute(
+                """UPDATE persona_assertions
+                   SET confidence = ?, evidences = ?, updated_at = ?, last_refreshed = ?
+                   WHERE id = ?""",
+                (new_conf, json.dumps(merged_evs), datetime.now().isoformat(), datetime.now().isoformat(), best["id"]),
+            )
+            _audit_persona(best["id"], "merge_similar", best["assertion"], assertion_text, actor, f"similarity={best_score:.3f}")
+            return best["id"], False
+
+    aid = new_id()
+    now = datetime.now().isoformat()
+    db.execute(
+        """INSERT INTO persona_assertions
+           (id, dimension, assertion, confidence, evidences, signal_level,
+            created_at, updated_at, last_refreshed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (aid, dimension, assertion_text, confidence, json.dumps(evidences), signal_level, now, now, now),
+    )
+    _audit_persona(aid, "create", "", assertion_text, actor, "inserted")
+    return aid, True
 
 
 def _sample_memories_for_baseline() -> list[dict]:
@@ -134,18 +192,17 @@ def build_persona_baseline() -> dict[str, Any]:
                     continue
 
                 confidence = float(a.get("confidence", BASELINE_CONFIDENCE_SINGLE))
-                evidences = json.dumps(a.get("evidences", []))
-
-                aid = new_id()
-                now = datetime.now().isoformat()
-                db.execute(
-                    """INSERT INTO persona_assertions
-                       (id, dimension, assertion, confidence, evidences, signal_level,
-                        created_at, updated_at, last_refreshed)
-                       VALUES (?, ?, ?, ?, ?, 2, ?, ?, ?)""",
-                    (aid, dim_key, assertion_text, confidence, evidences, now, now, now),
+                evidences = a.get("evidences", [])
+                _, created = _merge_or_insert_assertion(
+                    dim_key,
+                    assertion_text,
+                    confidence,
+                    evidences=evidences,
+                    signal_level=2,
+                    actor="persona_baseline",
                 )
-                total_created += 1
+                if created:
+                    total_created += 1
                 total_conf += confidence
 
             db.commit()
@@ -199,7 +256,7 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
     if new_memory_ids is None:
         if last_refresh:
             rows = db.fetchall(
-                """SELECT id, title, summary, raw_text, signal_level
+                """SELECT id, title, summary, raw_text, signal_level, memory_type
                    FROM memory_units
                    WHERE created_at > ? AND is_superseded = 0
                    ORDER BY created_at""",
@@ -207,7 +264,7 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
             )
         else:
             rows = db.fetchall(
-                """SELECT id, title, summary, raw_text, signal_level
+                """SELECT id, title, summary, raw_text, signal_level, memory_type
                    FROM memory_units
                    WHERE is_superseded = 0
                    ORDER BY created_at DESC LIMIT 50"""
@@ -215,8 +272,17 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
         new_memory_ids = [r["id"] for r in rows]
         new_memories = [dict(r) for r in rows]
     else:
-        # TODO: 按 ID 列表查询
-        new_memories = []
+        if not new_memory_ids:
+            new_memories = []
+        else:
+            placeholders = ",".join("?" * len(new_memory_ids))
+            rows = db.fetchall(
+                f"""SELECT id, title, summary, raw_text, signal_level, memory_type
+                    FROM memory_units
+                    WHERE id IN ({placeholders}) AND is_superseded = 0""",
+                tuple(new_memory_ids),
+            )
+            new_memories = [dict(r) for r in rows]
 
     if not new_memories:
         return {"updated": 0, "new": 0, "superseded": 0, "unchanged": 0}
@@ -237,14 +303,52 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
     new_assertions = 0
     superseded_count = 0
     unchanged = 0
+    skipped_memories = 0
+    candidate_checks = 0
+    top_k_assertions = 8
+
+    assertion_dicts = [dict(a) for a in assertions]
+
+    def _rank_relevant_assertions(mem_text: str) -> list[dict]:
+        """用本地 embedding 先筛出最相关的人格断言，避免全量 LLM 扫描。"""
+        if not assertion_dicts:
+            return []
+        mem_vec = embedding_model.encode(mem_text[:1500])
+        scored = []
+        for a in assertion_dicts:
+            a_text = f"{a['dimension']}: {a['assertion']}"
+            a_vec = embedding_model.encode(a_text)
+            sim = embedding_model.cosine_similarity(mem_vec, a_vec)
+            scored.append((max(0, sim), a))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        # 低相关断言不进入 LLM；但至少保留 top_k 里有基本相关性的候选。
+        return [a for score, a in scored[:top_k_assertions] if score >= 0.12]
 
     for mem in new_memories:
         mem_text = mem["raw_text"] or mem["summary"] or ""
         if len(mem_text) < 50:
+            skipped_memories += 1
             continue
 
-        # 对每条断言检查新记忆是否影响它
-        for a in assertions:
+        from memo.dedupe.normalizer import is_persona_relevant
+        if not is_persona_relevant(
+            mem_text,
+            title=mem.get("title", ""),
+            summary=mem.get("summary", ""),
+            memory_type=mem.get("memory_type", ""),
+            signal_level=int(mem.get("signal_level", 0) or 0),
+        ):
+            skipped_memories += 1
+            continue
+
+        relevant_assertions = _rank_relevant_assertions(mem_text)
+        if not relevant_assertions:
+            skipped_memories += 1
+            continue
+
+        # 只对 top8 相关断言检查新记忆是否影响它。
+        for a in relevant_assertions:
+            candidate_checks += 1
             try:
                 prompt = f"""你是用户的人格分析师。现有一条已有的人格断言，以及一条新的对话记忆。
 请判断新记忆对这条断言的影响。
@@ -291,22 +395,23 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
                         "UPDATE persona_assertions SET is_superseded = 1, superseded_by = ? WHERE id = ?",
                         (mem["id"], a["id"]),
                     )
+                    _audit_persona(a["id"], "supersede", a["assertion"], mem["id"], "persona_incremental", result.get("reason", ""))
                     superseded_count += 1
 
                 elif impact == "refine":
-                    # 补充新断言，低置信度
-                    aid = new_id()
-                    now = datetime.now().isoformat()
+                    # 补充新断言，低置信度；若同维相似则合并证据。
                     dim = a["dimension"]
                     new_assertion_text = f"{a['assertion']}（补充：{result.get('reason', '新信息')}）"
-                    db.execute(
-                        """INSERT INTO persona_assertions
-                           (id, dimension, assertion, confidence, evidences, signal_level,
-                            created_at, updated_at, last_refreshed)
-                           VALUES (?, ?, ?, 0.35, ?, 0, ?, ?, ?)""",
-                        (aid, dim, new_assertion_text, json.dumps([mem["id"]]), now, now, now),
+                    _, created = _merge_or_insert_assertion(
+                        dim,
+                        new_assertion_text,
+                        0.35,
+                        evidences=[mem["id"]],
+                        signal_level=0,
+                        actor="persona_incremental",
                     )
-                    new_assertions += 1
+                    if created:
+                        new_assertions += 1
 
                 else:
                     unchanged += 1
@@ -325,13 +430,37 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
     )
     db.commit()
 
-    logger.info(f"增量完成: 印证{updated} 推翻{superseded_count} 新增{new_assertions} 未变{unchanged}")
-    return {
+    result_payload = {
         "updated": updated,
         "new": new_assertions,
         "superseded": superseded_count,
         "unchanged": unchanged,
+        "skipped_memories": skipped_memories,
+        "candidate_checks": candidate_checks,
+        "top_k_assertions": top_k_assertions,
     }
+    try:
+        full_scan_estimate = len(new_memories) * len(assertion_dicts)
+        db.execute(
+            """INSERT INTO persona_update_runs
+               (id, new_memories, skipped_memories, candidate_checks, llm_calls_estimated,
+                saved_calls_estimated, top_k_assertions, result_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                new_id(), len(new_memories), skipped_memories, candidate_checks, candidate_checks,
+                max(0, full_scan_estimate - candidate_checks), top_k_assertions,
+                json.dumps(result_payload, ensure_ascii=False), datetime.now().isoformat(),
+            ),
+        )
+        db.commit()
+    except Exception as e:
+        logger.debug(f"人格增量成本统计记录失败: {e}")
+
+    logger.info(
+        f"增量完成: 印证{updated} 推翻{superseded_count} 新增{new_assertions} "
+        f"未变{unchanged} 跳过记忆{skipped_memories} LLM候选{candidate_checks}"
+    )
+    return result_payload
 
 
 def get_active_assertions(dimension: str | None = None) -> list[dict]:

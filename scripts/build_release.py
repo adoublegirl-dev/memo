@@ -19,12 +19,16 @@ EXCLUDES = [
     "data/*.db",
     "data/*.db-*",
     "data/backups/*",
+    "data/pids/*",
     "logs/*",
     "node_modules/*",
     "dashboard/node_modules/*",
     "__pycache__/*",
     "*.pyc",
     "*.log",
+    ".pytest_cache/*",
+    "scripts/_*.json",
+    "scripts/_check_*.py",
     "dist/*",
     "memo/data/*",
     "_zip_compare/*",
@@ -79,7 +83,7 @@ def main() -> int:
 
     print(f"发布包已生成: {output}")
     print(f"包含文件数: {count}")
-    print("已排除: .env、data/*.db、data/backups、logs、node_modules、测试/开发库")
+    print("已排除: .env、data/*.db、data/backups、data/pids、logs、node_modules、测试/开发库")
     return 0
 
 

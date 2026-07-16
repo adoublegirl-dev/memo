@@ -7,7 +7,7 @@
 import json
 import mimetypes
 import sys
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -1073,7 +1073,8 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._handle_space_action()
         elif path.startswith("/api/space/"):
             sid = path.split("/")[-1]
-            profile = engine.space_profile(sid)
+            mode = self._get_query_param("mode", "brief")
+            profile = engine.space_profile(sid, mode=mode)
             if profile.get("error"):
                 self._json(profile, 404); return
             self._json(profile)
@@ -1089,6 +1090,10 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._json({"todo": todo, "history": history})
         elif path == "/api/persona/action":
             self._handle_persona_action()
+        elif path == "/api/governance":
+            self._json(engine.governance_overview(limit=int(self._get_query_param("limit", "50"))))
+        elif path == "/api/memory/link":
+            self._handle_memory_link()
         else:
             self._json({"error": "not found"}, 404)
 
@@ -1140,6 +1145,9 @@ class MemoHandler(BaseHTTPRequestHandler):
                 memory_id=body.get("memory_id", ""),
             )
             self._json(result); return
+        if action == "summarize":
+            result = engine.space_profile(body.get("id", body.get("space_id", "")), mode=body.get("mode", "brief"), persist=bool(body.get("persist", False)))
+            self._json(result); return
         if action == "refresh_classification_queue":
             self._json(_refresh_space_classification_queue(limit=int(body.get("limit", 100)), threshold=float(body.get("threshold", 0.25)))); return
         if action in {"accept_candidate", "reject_candidate", "new_space_candidate"}:
@@ -1190,6 +1198,20 @@ class MemoHandler(BaseHTTPRequestHandler):
         )
         if result.get("error"):
             self._json(result, 400); return
+        self._json(result)
+
+    def _handle_memory_link(self):
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        body = _j.loads(self.rfile.read(length)) if length > 0 else {}
+        result = engine.memory_link(
+            source_memory_id=body.get("source_memory_id", ""),
+            target_memory_id=body.get("target_memory_id", ""),
+            relation_type=body.get("relation_type", "MERGED_INTO"),
+            confidence=float(body.get("confidence", 0.8)),
+            reason=body.get("reason", ""),
+            created_by="dashboard",
+        )
         self._json(result)
 
     def _handle_persona_action(self):
@@ -1308,7 +1330,7 @@ class MemoHandler(BaseHTTPRequestHandler):
 
 def main():
     port = 9120
-    server = HTTPServer(("0.0.0.0", port), MemoHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", port), MemoHandler)
     import sys; sys.stdout.write(f"\n  Memo 看板已启动 → http://localhost:{port}\n  按 Ctrl+C 停止\n"); sys.stdout.flush()
     try:
         server.serve_forever()
