@@ -23,4 +23,6 @@ export const api = {
   spaceClassificationQueue: (params = {}) => request(`/api/space/classification-queue?${new URLSearchParams(params)}`),
   spaceAction: (body) => request('/api/space/action', { method: 'POST', body: JSON.stringify(body) }),
   personaAction: (body) => request('/api/persona/action', { method: 'POST', body: JSON.stringify(body) }),
+  governance: (params = {}) => request(`/api/governance?${new URLSearchParams(params)}`),
+  memoryLink: (body) => request('/api/memory/link', { method: 'POST', body: JSON.stringify(body) }),
 };

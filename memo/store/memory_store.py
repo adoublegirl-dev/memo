@@ -202,6 +202,47 @@ class MemoryStore:
         )
         return [dict(r) for r in rows]
 
+    def link_memories(
+        self,
+        source_memory_id: str,
+        target_memory_id: str,
+        relation_type: str = "MERGED_INTO",
+        confidence: float = 0.8,
+        reason: str = "",
+        created_by: str = "system",
+    ) -> dict:
+        """建立记忆间治理关系，如 MERGED_INTO / REFINE / SUPERSEDE。"""
+        link_id = new_id()
+        db.execute(
+            """INSERT OR IGNORE INTO memory_links
+               (id, source_memory_id, target_memory_id, relation_type, confidence, reason, created_by, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                link_id,
+                source_memory_id,
+                target_memory_id,
+                relation_type,
+                confidence,
+                reason,
+                created_by,
+                datetime.now().isoformat(),
+            ),
+        )
+        if relation_type.upper() == "MERGED_INTO":
+            db.execute("UPDATE memory_units SET status='muted', updated_at=? WHERE id=?", (datetime.now().isoformat(), source_memory_id))
+            self._audit(source_memory_id, "merged_into", "", target_memory_id, created_by, reason)
+        db.commit()
+        return {"source_memory_id": source_memory_id, "target_memory_id": target_memory_id, "relation_type": relation_type, "linked": True}
+
+    def get_memory_links(self, memory_id: str, limit: int = 50) -> list[dict]:
+        rows = db.fetchall(
+            """SELECT * FROM memory_links
+               WHERE source_memory_id = ? OR target_memory_id = ?
+               ORDER BY created_at DESC LIMIT ?""",
+            (memory_id, memory_id, limit),
+        )
+        return [dict(r) for r in rows]
+
     def _row_to_memory(self, row) -> MemoryUnit:
         emb = blob_decode(row["embedding"]) if row["embedding"] else None
         return MemoryUnit(
