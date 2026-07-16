@@ -5,12 +5,15 @@
 """
 
 import json
+import mimetypes
 import sys
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 import os; sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DASHBOARD_DIST = PROJECT_ROOT / "dashboard" / "dist"
 from memo.core.engine import engine
 from memo.store.database import db
 
@@ -820,7 +823,12 @@ class MemoHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
 
         if path == "/":
-            self._html(PAGE)
+            if (DASHBOARD_DIST / "index.html").exists():
+                self._serve_static(DASHBOARD_DIST / "index.html")
+            else:
+                self._html(PAGE)
+        elif path.startswith("/assets/") and (DASHBOARD_DIST / path.lstrip("/")).exists():
+            self._serve_static(DASHBOARD_DIST / path.lstrip("/"))
         elif path == "/api/stats":
             self._json(engine.stats())
         elif path == "/api/tags":
@@ -911,11 +919,24 @@ class MemoHandler(BaseHTTPRequestHandler):
             })
         elif path == "/api/todos":
             from memo.todo.manager import list_todos, get_todo_stats, check_risk
+            space_id = self._get_query_param("space_id", "")
             stats = get_todo_stats()
             risk = check_risk()
-            todos = list_todos(status="todo+doing", limit=50)
-            done = list_todos(status="done", limit=10)
+            todos = list_todos(status="todo+doing", limit=50, space_id=space_id)
+            done = list_todos(status="done", limit=10, space_id=space_id)
             self._json({"todos": todos, "done": done, "stats": stats, "risk": risk})
+        elif path == "/api/spaces":
+            include_archived = self._get_query_param("include_archived", "false").lower() == "true"
+            space_type = self._get_query_param("type", "")
+            self._json(engine.space_list(include_archived=include_archived, type=space_type))
+        elif path == "/api/space/action":
+            self._handle_space_action()
+        elif path.startswith("/api/space/"):
+            sid = path.split("/")[-1]
+            profile = engine.space_profile(sid)
+            if profile.get("error"):
+                self._json(profile, 404); return
+            self._json(profile)
         elif path == "/api/todo/action":
             self._handle_todo_action()
         elif path.startswith("/api/todo/"):
@@ -930,6 +951,38 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._handle_persona_action()
         else:
             self._json({"error": "not found"}, 404)
+
+    def _handle_space_action(self):
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        body = _j.loads(self.rfile.read(length)) if length > 0 else {}
+        action = body.get("action", "")
+        if action == "create":
+            result = engine.space_create(
+                name=body.get("name", ""),
+                type=body.get("type", "general"),
+                description=body.get("description", ""),
+                goal=body.get("goal", ""),
+                aliases=body.get("aliases", []),
+                created_by="dashboard",
+            )
+            self._json(result); return
+        if action == "update":
+            result = engine.space_update(body.get("id", ""), **body.get("fields", {}))
+            self._json(result); return
+        if action == "detect":
+            result = engine.space_detect(body.get("conversation", ""), top_k=int(body.get("top_k", 3)))
+            self._json(result); return
+        if action == "bind_memory":
+            result = engine.space_bind_memory(
+                space_id=body.get("space_id", ""),
+                memory_id=body.get("memory_id", ""),
+                relation_type=body.get("relation_type", "related"),
+                relevance=float(body.get("relevance", 0.8)),
+                created_by="dashboard",
+            )
+            self._json(result); return
+        self._json({"error": f"unknown action {action}"}, 400)
 
     def _handle_persona_action(self):
         import json as _j
@@ -993,6 +1046,21 @@ class MemoHandler(BaseHTTPRequestHandler):
         body = html.encode()
         self.send_response(200); self.send_header("Content-Type","text/html; charset=utf-8")
         self.send_header("Content-Length",len(body)); self.end_headers(); self.wfile.write(body)
+
+    def _serve_static(self, filepath: Path):
+        body = filepath.read_bytes()
+        content_type = mimetypes.guess_type(str(filepath))[0] or "application/octet-stream"
+        if filepath.suffix == ".js":
+            content_type = "text/javascript; charset=utf-8"
+        elif filepath.suffix == ".css":
+            content_type = "text/css; charset=utf-8"
+        elif filepath.suffix == ".html":
+            content_type = "text/html; charset=utf-8"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-cache" if filepath.name == "index.html" else "public, max-age=31536000, immutable")
+        self.send_header("Content-Length", len(body))
+        self.end_headers(); self.wfile.write(body)
 
     def log_message(self, format, *args):
         pass  # 安静模式

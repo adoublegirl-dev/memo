@@ -56,10 +56,15 @@ class Engine:
 
     # ── 会话 ──
 
-    def start_session(self, title: str = "", agent_id: str = "ASH") -> Session:
+    def start_session(
+        self,
+        title: str = "",
+        agent_id: str = "ASH",
+        space_id: str | None = None,
+    ) -> Session:
         """开始新会话。"""
         self._ensure_init()
-        return memory_store.create_session(agent_id=agent_id, title=title)
+        return memory_store.create_session(agent_id=agent_id, title=title, space_id=space_id)
 
     def end_session(self, session_id: str) -> None:
         """结束会话。"""
@@ -78,6 +83,7 @@ class Engine:
         confidence: float = 0.8,
         feature_tags: list[str] | None = None,
         tag_relations: list[dict[str, str]] | None = None,
+        space_id: str | None = None,
     ) -> str:
         """写入一条记忆。
 
@@ -154,6 +160,15 @@ class Engine:
                     session_id=session_id,
                 )
 
+        if space_id:
+            self.space_bind_memory(
+                space_id=space_id,
+                memory_id=memory_id,
+                relation_type="related",
+                relevance=0.9,
+                created_by="manual",
+            )
+
         logger.info(f"记忆已写入: {title[:30]} ({memory_id[:8]})")
         return memory_id
 
@@ -196,6 +211,7 @@ class Engine:
         context_rounds: int = 3,
         skip_gating: bool = False,
         skip_cas: bool = False,
+        space_id: str | None = None,
     ) -> dict[str, Any]:
         """从一段对话中自动提取并写入记忆。
 
@@ -379,6 +395,34 @@ class Engine:
                 memory_store.supersede_memory(old_id, memory_id)
                 logger.info(f"冲突解决（is_update_of）: 旧记忆 {old_id[:8]} 被 {memory_id[:8]} 替代")
 
+        bound_spaces: list[dict[str, Any]] = []
+        try:
+            if space_id:
+                bound_spaces.append(self.space_bind_memory(
+                    space_id=space_id,
+                    memory_id=memory_id,
+                    relation_type=extracted.get("memory_type", "related").lower(),
+                    relevance=0.9,
+                    created_by="explicit",
+                ))
+                db.execute(
+                    "UPDATE sessions SET space_id = COALESCE(space_id, ?) WHERE id = ?",
+                    (space_id, session_id),
+                )
+                db.commit()
+            else:
+                for candidate in self.space_detect(conversation, top_k=2):
+                    if candidate.get("confidence", 0) >= 0.8:
+                        bound_spaces.append(self.space_bind_memory(
+                            space_id=candidate["space_id"],
+                            memory_id=memory_id,
+                            relation_type=extracted.get("memory_type", "related").lower(),
+                            relevance=candidate.get("confidence", 0.8),
+                            created_by="auto",
+                        ))
+        except Exception as e:
+            logger.warning(f"Space 自动绑定失败: {e}")
+
         logger.info(
             f"对话记忆已写入: {extracted['title'][:30]} ({memory_id[:8]}), "
             f"{len(tag_names)} 特征词, {len(conflicts)} 冲突"
@@ -392,6 +436,7 @@ class Engine:
             "extraction_method": extraction_method,
             "context_rounds_used": len(context_texts),
             "gating_result": gating_result,
+            "bound_spaces": bound_spaces,
         }
 
     # ── 记忆检索（核心） ──
@@ -401,6 +446,8 @@ class Engine:
         query: str,
         top_k: int | None = None,
         current_session_id: str | None = None,
+        space_id: str | None = None,
+        space_mode: str = "boost",
     ) -> list[dict[str, Any]]:
         """三通道混合检索。
 
@@ -427,14 +474,27 @@ class Engine:
         # RRF 融合
         fused = self._rrf_fuse(vec_results, bm25_results, graph_results, top_k=top_k)
 
+        space_memory_ids: set[str] = set()
+        if space_id:
+            resolved_space = self.space_get(space_id)
+            if resolved_space:
+                space_id = resolved_space["id"]
+                rows = db.fetchall("SELECT memory_id FROM space_memories WHERE space_id = ?", (space_id,))
+                space_memory_ids = {r["memory_id"] for r in rows}
+
         # 补充记忆单元详情
         enriched = []
         for mem_id, score in fused:
+            if space_mode == "within" and space_id and mem_id not in space_memory_ids:
+                continue
             mem = memory_store.get_memory(mem_id)
             if mem and not mem.is_superseded:
                 # ESA 信号加权
                 signal_multiplier = {0: 0.7, 1: 1.0, 2: 1.5}
                 adjusted_score = score * signal_multiplier.get(mem.signal_level, 1.0)
+                from_current_space = bool(space_id and mem_id in space_memory_ids)
+                if from_current_space and space_mode == "boost":
+                    adjusted_score *= 1.1
                 # 获取关联特征词
                 tags = graph_store.get_memory_tags(mem_id)
                 enriched.append({
@@ -455,10 +515,13 @@ class Engine:
                         if current_session_id
                         else False
                     ),
+                    "from_current_space": from_current_space,
+                    "space_id": space_id if from_current_space else "",
                     "valid_from": mem.valid_from,
                 })
 
-        return enriched
+        enriched.sort(key=lambda x: x["score"], reverse=True)
+        return enriched[:top_k]
 
     def _channel_vector(self, query: str, top_k: int = 20) -> dict[str, float]:
         """通道①：向量语义检索。"""
@@ -614,6 +677,62 @@ class Engine:
     def _ensure_init(self) -> None:
         if not self._initialized:
             self.init()
+
+    # ── Context Space ──
+
+    def space_create(self, **kwargs) -> dict:
+        """创建上下文空间。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        return space_manager.create(**kwargs)
+
+    def space_list(self, include_archived: bool = False, type: str = "") -> list[dict]:
+        """列出上下文空间。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        return space_manager.list(include_archived=include_archived, type=type)
+
+    def space_get(self, space_id: str) -> dict | None:
+        """按 id/name/alias 获取上下文空间。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        return space_manager.resolve(space_id)
+
+    def space_update(self, space_id: str, **kwargs) -> dict:
+        """更新上下文空间。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        return space_manager.update(space_id, **kwargs)
+
+    def space_detect(self, conversation: str, top_k: int = 3) -> list[dict]:
+        """检测对话可能所属的上下文空间。"""
+        self._ensure_init()
+        from memo.space.detector import space_detector
+        return space_detector.detect(conversation, top_k=top_k)
+
+    def space_bind_memory(
+        self,
+        space_id: str,
+        memory_id: str,
+        relation_type: str = "related",
+        relevance: float = 0.8,
+        created_by: str = "auto",
+    ) -> dict:
+        """绑定记忆到上下文空间。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        return space_manager.bind_memory(space_id, memory_id, relation_type, relevance, created_by)
+
+    def space_profile(self, space_id: str) -> dict:
+        """获取空间简报。"""
+        self._ensure_init()
+        from memo.space.summarizer import space_summarizer
+        return space_summarizer.summarize(space_id)
+
+    def space_recall(self, space_id: str, query: str, top_k: int | None = None, mode: str = "boost") -> list[dict]:
+        """在空间语境下检索记忆。"""
+        self._ensure_init()
+        return self.recall(query=query, top_k=top_k, space_id=space_id, space_mode=mode)
 
     # ── 待办管理 ──
 

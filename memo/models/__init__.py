@@ -53,6 +53,45 @@ class CreatedBy(str, Enum):
     USER_MANUAL = "USER_MANUAL"
 
 
+class SpaceType(str, Enum):
+    GENERAL = "general"
+    MANAGEMENT = "management"
+    PRODUCT = "product"
+    DEV_PROJECT = "dev_project"
+    CLIENT = "client"
+    PERSONAL = "personal"
+    LEARNING = "learning"
+    WRITING = "writing"
+    OPERATION = "operation"
+    LEGAL = "legal"
+    RELATIONSHIP = "relationship"
+
+
+@dataclass
+class Space:
+    id: str
+    name: str
+    type: str = SpaceType.GENERAL.value
+    description: str = ""
+    goal: str = ""
+    background: str = ""
+    current_state: str = ""
+    next_action: str = ""
+    priority: str = "medium"
+    status: str = "active"
+    profile_json: str = "{}"
+    memory_count: int = 0
+    todo_count: int = 0
+    session_count: int = 0
+    is_default: bool = False
+    created_by: str = "auto"
+    created_at: str = ""
+    updated_at: str = ""
+    last_active_at: str = ""
+    archived_at: str = ""
+    embedding: Any = None
+
+
 @dataclass
 class Session:
     id: str
@@ -62,6 +101,7 @@ class Session:
     created_at: str = ""
     ended_at: str = ""
     memory_count: int = 0
+    space_id: str = ""
 
 
 @dataclass

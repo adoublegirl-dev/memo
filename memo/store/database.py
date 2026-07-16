@@ -5,8 +5,10 @@
 """
 
 import json
+import shutil
 import sqlite3
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -49,12 +51,15 @@ class Database:
         files = sorted(migrations_dir.glob("*.sql"))
 
         current = self._current_version()
-        for f in files:
+        pending = [f for f in files if int(f.stem.split("_")[0]) > current]
+        if pending:
+            self._backup_before_migration()
+
+        for f in pending:
             version = f.stem.split("_")[0]  # "001"
-            if int(version) > current:
-                logger.info(f"执行迁移: {f.name}")
-                self.conn.executescript(f.read_text(encoding="utf-8"))
-                self._set_version(int(version))
+            logger.info(f"执行迁移: {f.name}")
+            self.conn.executescript(f.read_text(encoding="utf-8"))
+            self._set_version(int(version))
 
         logger.info(f"数据库就绪，当前版本: {self._current_version()}")
 
@@ -75,6 +80,25 @@ class Database:
             "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)"
         )
         self.conn.commit()
+
+    def _backup_before_migration(self) -> None:
+        """迁移前自动备份生产数据库。
+
+        development/test 使用隔离数据库，不做备份；production 只有主库文件已存在时备份。
+        """
+        if getattr(config, "memo_env", "production") != "production":
+            return
+
+        db_path = Path(config.db_path)
+        if not db_path.exists():
+            return
+
+        backup_dir = db_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_path = backup_dir / f"memo-before-migration-{timestamp}.db"
+        shutil.copy2(db_path, backup_path)
+        logger.info(f"迁移前数据库已备份: {backup_path}")
 
     def _repair_wal(self) -> None:
         """WAL 健康检查：安全 checkpoint，绝不删除数据。

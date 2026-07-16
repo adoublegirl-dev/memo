@@ -17,6 +17,8 @@ def add_todo(
     session_id: str = "",
     memory_id: str = "",
     source_agent: str = "",
+    space_id: str = "",
+    space_relation_type: str = "action",
 ) -> dict:
     """创建待办，返回创建结果。"""
     tid = new_id()
@@ -25,13 +27,23 @@ def add_todo(
 
     db.execute(
         """INSERT INTO todos (id, title, description, priority, status,
-           session_id, memory_id, source_agent, due_date, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?)""",
+           session_id, memory_id, source_agent, due_date, created_at, updated_at,
+           space_id, space_relation_type)
+           VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, NULLIF(?, ''), ?)""",
         (tid, title, description, priority, status,
-         session_id, memory_id, source_agent, due_date, now, now),
+         session_id, memory_id, source_agent, due_date, now, now,
+         space_id, space_relation_type),
     )
     # 写历史
     _log_history(tid, None, status, f"创建: {title}", source_agent)
+    if space_id:
+        db.execute(
+            """UPDATE spaces
+               SET todo_count = (SELECT COUNT(*) FROM todos WHERE space_id = ?),
+                   updated_at = ?
+               WHERE id = ?""",
+            (space_id, now, space_id),
+        )
     db.commit()
 
     return {
@@ -41,6 +53,7 @@ def add_todo(
         "status": status,
         "due_date": due_date,
         "source_agent": source_agent,
+        "space_id": space_id,
         "created": True,
     }
 
@@ -52,6 +65,7 @@ def search_todos(
     status: str = "todo+doing",
     include_done: bool = False,
     limit: int = 10,
+    space_id: str = "",
 ) -> list[dict]:
     """搜索匹配的待办。"""
     conditions = []
@@ -71,6 +85,10 @@ def search_todos(
         conditions.append("title LIKE ?")
         params.append(f"%{keyword}%")
 
+    if space_id:
+        conditions.append("space_id = ?")
+        params.append(space_id)
+
     where = " AND ".join(conditions) if conditions else "1=1"
     rows = db.fetchall(
         f"SELECT * FROM todos WHERE {where} ORDER BY "
@@ -86,6 +104,7 @@ def list_todos(
     priority: str = "",
     limit: int = 20,
     offset: int = 0,
+    space_id: str = "",
 ) -> list[dict]:
     """分页列出待办。"""
     conditions = []
@@ -99,6 +118,10 @@ def list_todos(
     if priority:
         conditions.append("priority = ?")
         params.append(priority)
+
+    if space_id:
+        conditions.append("space_id = ?")
+        params.append(space_id)
 
     where = " AND ".join(conditions)
     rows = db.fetchall(
