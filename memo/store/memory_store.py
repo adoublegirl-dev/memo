@@ -18,15 +18,27 @@ class MemoryStore:
 
     # ── 会话 ──
 
-    def create_session(self, agent_id: str = "default", title: str = "") -> Session:
+    def create_session(
+        self,
+        agent_id: str = "default",
+        title: str = "",
+        space_id: str | None = None,
+    ) -> Session:
         session_id = new_id()
         now = datetime.now().isoformat()
         db.execute(
-            "INSERT INTO sessions (id, agent_id, title, created_at) VALUES (?, ?, ?, ?)",
-            (session_id, agent_id, title, now),
+            """INSERT INTO sessions (id, agent_id, title, created_at, space_id)
+               VALUES (?, ?, ?, ?, NULLIF(?, ''))""",
+            (session_id, agent_id, title, now, space_id or ""),
         )
         db.commit()
-        return Session(id=session_id, agent_id=agent_id, title=title, created_at=now)
+        return Session(
+            id=session_id,
+            agent_id=agent_id,
+            title=title,
+            created_at=now,
+            space_id=space_id or "",
+        )
 
     def end_session(self, session_id: str) -> None:
         now = datetime.now().isoformat()

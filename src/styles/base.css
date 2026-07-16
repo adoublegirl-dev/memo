@@ -1,0 +1,19 @@
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background:
+    radial-gradient(circle at top left, rgba(184,155,94,.13), transparent 28rem),
+    radial-gradient(circle at 85% 10%, rgba(143,181,148,.16), transparent 24rem),
+    var(--color-bg);
+  color: var(--color-text-primary);
+  font-size: var(--text-base);
+  transition: background 300ms var(--ease-out), color 300ms var(--ease-out);
+}
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+::selection { background: var(--color-gold-soft); }
+a { color: inherit; text-decoration: none; }
+.muted { color: var(--color-text-secondary); }
+.tertiary { color: var(--color-text-tertiary); }

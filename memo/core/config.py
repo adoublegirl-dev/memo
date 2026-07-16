@@ -18,8 +18,24 @@ if _env_file.exists():
     load_dotenv(_env_file)
 
 
+def _memo_env() -> str:
+    """当前运行环境：production / development / test。"""
+    env = os.getenv("MEMO_ENV", "production").strip().lower()
+    return env if env in {"production", "development", "test"} else "production"
+
+
 def _resolve_db_path() -> str:
-    """解析数据库路径：env 变量优先，相对路径自动转为绝对路径。"""
+    """解析数据库路径。
+
+    production：沿用 MEMO_DB_PATH 或 data/memo.db。
+    development/test：强制使用隔离数据库，避免污染真实记忆库。
+    """
+    env = _memo_env()
+    if env == "test":
+        return str(_PROJECT_ROOT / "data" / "memo_test.db")
+    if env == "development":
+        return str(_PROJECT_ROOT / "data" / "memo_dev.db")
+
     raw = os.getenv("MEMO_DB_PATH", "")
     if raw:
         p = Path(raw)
@@ -34,6 +50,9 @@ class MemoConfig:
     """Memo 全局配置，所有字段都有合理默认值。"""
 
     # ── 数据库 ──
+    memo_env: str = field(
+        default_factory=lambda: _memo_env()
+    )
     db_path: str = field(
         default_factory=lambda: _resolve_db_path()
     )

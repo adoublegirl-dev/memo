@@ -55,8 +55,9 @@ from memo.utils.logger import logger
 # ── 创建 MCP Server ──
 server = Server("memo-mcp")
 
-# 当前活跃会话（MCP 连接的生命周期内）
+# 当前活跃会话/空间（MCP 连接的生命周期内）
 _active_session_id: str | None = None
+_active_space_id: str | None = None
 
 
 # ── 工具定义 ──
@@ -119,6 +120,10 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "来源 Agent 名称（WorkBuddy / HanaAgent / Qoder 等），用于跨 Agent 来源追溯"
                     },
+                    "space_id": {
+                        "type": "string",
+                        "description": "上下文空间 ID/名称（可选，不传则使用当前激活 Space）"
+                    },
                 }
             }
         ),
@@ -138,6 +143,16 @@ async def list_tools() -> list[Tool]:
                         "default": 5,
                         "description": "返回数量（默认 5）"
                     },
+                    "space_id": {
+                        "type": "string",
+                        "description": "上下文空间 ID/名称（可选，不传则使用当前激活 Space）"
+                    },
+                    "space_mode": {
+                        "type": "string",
+                        "enum": ["boost", "within"],
+                        "default": "boost",
+                        "description": "boost=空间内结果加权；within=仅返回空间内结果"
+                    },
                 },
                 "required": ["query"]
             }
@@ -151,6 +166,10 @@ async def list_tools() -> list[Tool]:
                     "title": {
                         "type": "string",
                         "description": "会话标题"
+                    },
+                    "space_id": {
+                        "type": "string",
+                        "description": "上下文空间 ID/名称（可选，不传则使用当前激活 Space）"
                     },
                 }
             }
@@ -289,6 +308,80 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="space_create",
+            description="创建一个 Context Space（上下文空间），用于组织个人事项、管理项目、产品项目、客户事务等长期上下文。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "空间名称"},
+                    "type": {"type": "string", "description": "空间类型，如 management/product/personal/dev_project"},
+                    "description": {"type": "string", "description": "空间描述"},
+                    "goal": {"type": "string", "description": "目标"},
+                    "aliases": {"type": "array", "items": {"type": "string"}, "description": "别名列表"},
+                },
+                "required": ["name"]
+            }
+        ),
+        Tool(
+            name="space_list",
+            description="列出 Context Space，含类型、状态、记忆数、待办数。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "include_archived": {"type": "boolean", "default": False},
+                    "type": {"type": "string", "description": "按空间类型过滤"},
+                }
+            }
+        ),
+        Tool(
+            name="space_activate",
+            description="激活一个 Space。后续 memo_remember/memo_recall/todo_add 默认关联该 Space。",
+            inputSchema={
+                "type": "object",
+                "properties": {"space_id": {"type": "string", "description": "Space ID、名称或别名"}},
+                "required": ["space_id"]
+            }
+        ),
+        Tool(
+            name="space_deactivate",
+            description="退出当前激活 Space，回到全局上下文。",
+            inputSchema={"type": "object", "properties": {}}
+        ),
+        Tool(
+            name="space_profile",
+            description="获取某个 Space 的简报：基础状态、最近记忆、关键决策、待办和特征词。",
+            inputSchema={
+                "type": "object",
+                "properties": {"space_id": {"type": "string", "description": "Space ID、名称或别名；不传则使用当前激活 Space"}}
+            }
+        ),
+        Tool(
+            name="space_recall",
+            description="在某个 Space 语境下检索记忆。支持 boost 或 within 模式。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "space_id": {"type": "string", "description": "Space ID、名称或别名；不传则使用当前激活 Space"},
+                    "query": {"type": "string", "description": "查询文本"},
+                    "top_k": {"type": "integer", "default": 5},
+                    "mode": {"type": "string", "enum": ["boost", "within"], "default": "boost"},
+                },
+                "required": ["query"]
+            }
+        ),
+        Tool(
+            name="space_detect",
+            description="分析文本可能属于哪些 Space，只返回候选，不自动切换。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "conversation": {"type": "string", "description": "待分析文本"},
+                    "top_k": {"type": "integer", "default": 3},
+                },
+                "required": ["conversation"]
+            }
+        ),
+        Tool(
             name="todo_add",
             description="创建待办。返回预览信息，用户确认后正式入库。",
             inputSchema={
@@ -384,12 +477,13 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
-    global _active_session_id
+    global _active_session_id, _active_space_id
 
     try:
         if name == "memo_start_session":
             title = arguments.get("title", "")
-            session = engine.start_session(title=title)
+            space_id = arguments.get("space_id") or _active_space_id
+            session = engine.start_session(title=title, space_id=space_id)
             _active_session_id = session.id
             return [TextContent(
                 type="text",
@@ -414,10 +508,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             memory_type = arguments.get("memory_type", "FACT")
             is_update_of = arguments.get("is_update_of")
 
+            space_id = arguments.get("space_id") or _active_space_id
             session_id = _active_session_id
             if not session_id:
                 agent_name = arguments.get("agent_name", "unknown")
-                session = engine.start_session(title="自动会话", agent_id=agent_name)
+                session = engine.start_session(title="自动会话", agent_id=agent_name, space_id=space_id)
                 _active_session_id = session.id
                 session_id = session.id
 
@@ -427,7 +522,15 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     session_id=session_id,
                     conversation=conversation,
                     auto_extract=True,
+                    space_id=space_id,
                 )
+                if result.get("memory_id") is None:
+                    reason = (result.get("gating_result") or {}).get("reason", "门控判定长期价值不足")
+                    return [TextContent(
+                        type="text",
+                        text=f"⏭️ 已跳过写入记忆：{reason}\n"
+                             f"   提取方式: {result.get('extraction_method', 'skipped')}"
+                    )]
                 return [TextContent(
                     type="text",
                     text=f"✅ 已提取并写入记忆\n"
@@ -448,6 +551,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     feature_tags=feature_tags,
                     tag_relations=tag_relations,
                     memory_type=memory_type,
+                    space_id=space_id,
                 )
                 return [TextContent(
                     type="text",
@@ -460,7 +564,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "memo_recall":
             query = arguments["query"]
             top_k = arguments.get("top_k", 5)
-            results = engine.recall(query, top_k=top_k)
+            space_id = arguments.get("space_id") or _active_space_id
+            results = engine.recall(
+                query,
+                top_k=top_k,
+                space_id=space_id,
+                space_mode=arguments.get("space_mode", "boost"),
+            )
 
             if not results:
                 return [TextContent(type="text", text="未找到相关记忆。")]
@@ -535,6 +645,61 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = _export_to_inbox(conversation, agent_name, metadata)
             return [TextContent(type="text", text=result)]
 
+        elif name == "space_create":
+            result = engine.space_create(
+                name=arguments["name"],
+                type=arguments.get("type", "general"),
+                description=arguments.get("description", ""),
+                goal=arguments.get("goal", ""),
+                aliases=arguments.get("aliases", []),
+                created_by="mcp",
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "space_list":
+            result = engine.space_list(
+                include_archived=arguments.get("include_archived", False),
+                type=arguments.get("type", ""),
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "space_activate":
+            space = engine.space_get(arguments["space_id"])
+            if not space:
+                return [TextContent(type="text", text="❌ 未找到 Space")]
+            _active_space_id = space["id"]
+            return [TextContent(type="text", text=f"✅ 已激活 Space: {space['name']} ({space['id'][:8]}...)")]
+
+        elif name == "space_deactivate":
+            _active_space_id = None
+            return [TextContent(type="text", text="已退出当前 Space，回到全局上下文")]
+
+        elif name == "space_profile":
+            sid = arguments.get("space_id") or _active_space_id
+            if not sid:
+                return [TextContent(type="text", text="请提供 space_id，或先调用 space_activate 激活一个 Space。")]
+            result = engine.space_profile(sid)
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "space_recall":
+            sid = arguments.get("space_id") or _active_space_id
+            if not sid:
+                return [TextContent(type="text", text="请提供 space_id，或先调用 space_activate 激活一个 Space。")]
+            result = engine.space_recall(
+                space_id=sid,
+                query=arguments["query"],
+                top_k=arguments.get("top_k", 5),
+                mode=arguments.get("mode", "boost"),
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
+        elif name == "space_detect":
+            result = engine.space_detect(
+                conversation=arguments["conversation"],
+                top_k=arguments.get("top_k", 3),
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
+
         elif name == "persona_ask":
             question = arguments["question"]
             result = engine.persona_ask(question)
@@ -595,6 +760,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 due_date=arguments.get("due_date", ""),
                 memory_id=arguments.get("memory_id", ""),
                 source_agent=arguments.get("agent_name", ""),
+                space_id=arguments.get("space_id") or _active_space_id or "",
             )
             return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
@@ -604,6 +770,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 status=arguments.get("status", "todo+doing"),
                 include_done=arguments.get("include_done", False),
                 limit=arguments.get("limit", 10),
+                space_id=arguments.get("space_id") or _active_space_id or "",
             )
             return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
@@ -612,6 +779,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 status=arguments.get("status", "todo+doing"),
                 priority=arguments.get("priority", ""),
                 limit=arguments.get("limit", 20),
+                space_id=arguments.get("space_id") or _active_space_id or "",
             )
             return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
