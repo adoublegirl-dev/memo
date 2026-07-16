@@ -10,6 +10,7 @@ from collections import defaultdict
 
 from memo.core.config import config
 from memo.models import RELATION_TYPE_FACTOR
+from memo.store.database import db
 from memo.store.graph_store import graph_store
 from memo.store.vector_store import vector_store
 from memo.utils.embedding import embedding_model
@@ -26,6 +27,8 @@ class GraphSearch:
         max_hops: int | None = None,
         decay_rate: float | None = None,
         current_session_id: str | None = None,
+        space_id: str | None = None,
+        space_bias: float = 0.35,
     ) -> dict[str, float]:
         """执行扩散激活检索。
 
@@ -43,12 +46,15 @@ class GraphSearch:
 
         # Step 1: 入口节点定位
         seed_tags = self._find_seed_tags(query)
-        if not seed_tags:
+        space_tag_scores = self._space_tag_priors(space_id) if space_id else {}
+        if not seed_tags and not space_tag_scores:
             logger.debug("图扩散激活: 未找到入口特征词")
             return {}
 
         activation_map: dict[str, float] = {tid: 1.0 for tid in seed_tags}
-        visited: set[str] = set(seed_tags)
+        for tid, prior in space_tag_scores.items():
+            activation_map[tid] = max(activation_map.get(tid, 0.0), min(0.85, prior * space_bias))
+        visited: set[str] = set(activation_map.keys())
 
         # Step 2: BFS 扩散激活
         for hop in range(max_hops):
@@ -112,13 +118,16 @@ class GraphSearch:
             for mention in mentions:
                 score = activation * mention.relevance_score
                 # SCB: 与当前查询来自同一 session 的记忆获得额外加成
-                if current_session_id:
+                mem = None
+                if current_session_id or space_id:
                     mem = graph_store.db.fetchone(
                         "SELECT session_id FROM memory_units WHERE id = ?",
                         (mention.memory_unit_id,),
                     )
-                    if mem and mem["session_id"] == current_session_id:
-                        score *= session_spread_boost
+                if current_session_id and mem and mem["session_id"] == current_session_id:
+                    score *= session_spread_boost
+                if space_id and self._memory_in_space(mention.memory_unit_id, space_id):
+                    score *= (1.0 + space_bias)
                 memory_scores[mention.memory_unit_id] += score
 
         # Step 4: 按分数排序
@@ -126,6 +135,28 @@ class GraphSearch:
             memory_scores.items(), key=lambda x: x[1], reverse=True
         )
         return dict(sorted_scores[:top_k])
+
+    def _space_tag_priors(self, space_id: str | None, limit: int = 20) -> dict[str, float]:
+        """从 Space 已绑定记忆抽取特征词先验，让扩散从当前空间的主题云一起启动。"""
+        if not space_id:
+            return {}
+        rows = db.fetchall(
+            """SELECT tm.tag_id, SUM(tm.relevance_score) AS score, COUNT(*) AS c
+               FROM space_memories sm
+               JOIN tag_mentions tm ON tm.memory_unit_id = sm.memory_id
+               JOIN feature_tags ft ON ft.id = tm.tag_id
+               WHERE sm.space_id = ? AND ft.is_dormant = 0
+               GROUP BY tm.tag_id
+               ORDER BY score DESC, c DESC
+               LIMIT ?""",
+            (space_id, limit),
+        )
+        max_score = max((float(r["score"] or 0) for r in rows), default=1.0)
+        return {r["tag_id"]: float(r["score"] or 0) / max_score for r in rows if r["tag_id"]}
+
+    def _memory_in_space(self, memory_id: str, space_id: str) -> bool:
+        row = db.fetchone("SELECT 1 FROM space_memories WHERE space_id = ? AND memory_id = ?", (space_id, memory_id))
+        return bool(row)
 
     def _find_seed_tags(self, query: str) -> list[str]:
         """从查询中找到种子特征词。

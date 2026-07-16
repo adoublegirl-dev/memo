@@ -155,6 +155,11 @@ class MemoryUnit:
     confidence: float = 0.8
     memory_type: MemoryType = MemoryType.FACT
     signal_level: int = 0  # 0=L0普通自动, 1=L1高价值自动, 2=L2显式手动
+    status: str = "active"  # active/wrong/expired/muted/deleted
+    user_weight: float = 1.0
+    pinned: bool = False
+    user_note: str = ""
+    updated_at: str = ""
     embedding: Any = None
     created_at: str = ""
     feature_tags: list[str] = field(default_factory=list)

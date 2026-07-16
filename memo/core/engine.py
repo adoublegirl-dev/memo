@@ -469,7 +469,7 @@ class Engine:
         # 通道②
         bm25_results = self._channel_bm25(query, top_k=20)
         # 通道③
-        graph_results = self._channel_graph(query, top_k=20, current_session_id=current_session_id)
+        graph_results = self._channel_graph(query, top_k=20, current_session_id=current_session_id, space_id=space_id)
 
         # RRF 融合
         fused = self._rrf_fuse(vec_results, bm25_results, graph_results, top_k=top_k)
@@ -488,15 +488,41 @@ class Engine:
             if space_mode == "within" and space_id and mem_id not in space_memory_ids:
                 continue
             mem = memory_store.get_memory(mem_id)
-            if mem and not mem.is_superseded:
-                # ESA 信号加权
+            if mem and not mem.is_superseded and getattr(mem, "status", "active") not in {"wrong", "muted", "deleted"}:
+                # ESA 信号加权 + 用户治理权重
                 signal_multiplier = {0: 0.7, 1: 1.0, 2: 1.5}
-                adjusted_score = score * signal_multiplier.get(mem.signal_level, 1.0)
+                status_multiplier = {"active": 1.0, "expired": 0.25}.get(getattr(mem, "status", "active"), 1.0)
+                adjusted_score = score * signal_multiplier.get(mem.signal_level, 1.0) * getattr(mem, "user_weight", 1.0) * status_multiplier
+                if getattr(mem, "pinned", False):
+                    adjusted_score *= 1.25
                 from_current_space = bool(space_id and mem_id in space_memory_ids)
                 if from_current_space and space_mode == "boost":
                     adjusted_score *= 1.1
                 # 获取关联特征词
                 tags = graph_store.get_memory_tags(mem_id)
+                explanation_reasons = []
+                if tags:
+                    explanation_reasons.append("和当前问题相关的关键词包括：" + "、".join([t.name for t in tags[:5]]))
+                if mem.signal_level >= 2:
+                    explanation_reasons.append("这是一条被明确沉淀过的重要记忆，所以更容易被想起")
+                elif mem.signal_level == 1:
+                    explanation_reasons.append("这条记忆有一定稳定性，可作为当前上下文参考")
+                else:
+                    explanation_reasons.append("这条记忆来自自动捕捉，排序时会更谨慎")
+                if getattr(mem, "pinned", False):
+                    explanation_reasons.append("你已经把它标为重要，因此会优先保留")
+                if getattr(mem, "status", "active") == "expired":
+                    explanation_reasons.append("它已被标记为过期，只会低权重参考")
+                if from_current_space:
+                    explanation_reasons.append("它属于当前 Space，和当前工作场景更接近")
+                if current_session_id and mem.session_id == current_session_id:
+                    explanation_reasons.append("它来自当前会话，时间和语境都更近")
+                user_weight = getattr(mem, "user_weight", 1.0)
+                if user_weight > 1.0:
+                    explanation_reasons.append("你提高过这条记忆的权重")
+                elif user_weight < 1.0:
+                    explanation_reasons.append("你降低过这条记忆的权重")
+
                 enriched.append({
                     "id": mem.id,
                     "title": mem.title,
@@ -508,6 +534,10 @@ class Engine:
                     "memory_type": mem.memory_type if isinstance(mem.memory_type, str) else mem.memory_type.value,
                     "confidence": mem.confidence,
                     "signal_level": mem.signal_level,
+                    "status": getattr(mem, "status", "active"),
+                    "user_weight": getattr(mem, "user_weight", 1.0),
+                    "pinned": getattr(mem, "pinned", False),
+                    "user_note": getattr(mem, "user_note", ""),
                     "feature_tags": [t.name for t in tags],
                     "session_id": mem.session_id,
                     "from_current_session": (
@@ -518,6 +548,19 @@ class Engine:
                     "from_current_space": from_current_space,
                     "space_id": space_id if from_current_space else "",
                     "valid_from": mem.valid_from,
+                    "explanation": {
+                        "summary": "这条记忆和当前问题的语义、关键词或所在空间有关，因此被优先想起。",
+                        "reasons": explanation_reasons,
+                        "participates": True,
+                        "raw_score": round(score, 4),
+                        "final_score": round(adjusted_score, 4),
+                        "signal_level": mem.signal_level,
+                        "status_multiplier": status_multiplier,
+                        "user_weight": user_weight,
+                        "pinned": getattr(mem, "pinned", False),
+                        "from_current_space": from_current_space,
+                        "from_current_session": mem.session_id == current_session_id if current_session_id else False,
+                    },
                 })
 
         enriched.sort(key=lambda x: x["score"], reverse=True)
@@ -553,11 +596,11 @@ class Engine:
             logger.debug(f"BM25 检索异常（可能是 FTS5 语法问题）: {e}")
             return {}
 
-    def _channel_graph(self, query: str, top_k: int = 20, current_session_id: str | None = None) -> dict[str, float]:
-        """通道③：图扩散激活检索。"""
+    def _channel_graph(self, query: str, top_k: int = 20, current_session_id: str | None = None, space_id: str | None = None) -> dict[str, float]:
+        """通道③：图扩散激活检索。Space 存在时，在扩散入口和记忆落点都加入软偏置。"""
         from memo.retrieval.graph_search import graph_search
 
-        return graph_search.spreading_activation(query, top_k=top_k, current_session_id=current_session_id)
+        return graph_search.spreading_activation(query, top_k=top_k, current_session_id=current_session_id, space_id=space_id)
 
     def _rrf_fuse(
         self,
@@ -723,6 +766,46 @@ class Engine:
         from memo.space.manager import space_manager
         return space_manager.bind_memory(space_id, memory_id, relation_type, relevance, created_by)
 
+    def space_unbind_memory(self, space_id: str, memory_id: str) -> dict:
+        """从上下文空间解绑记忆。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        return space_manager.unbind_memory(space_id, memory_id)
+
+    def space_archive(self, space_id: str) -> dict:
+        """归档上下文空间。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        return space_manager.archive(space_id)
+
+    def space_restore(self, space_id: str) -> dict:
+        """恢复已归档上下文空间。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        return space_manager.restore(space_id)
+
+    def space_aliases(self, space_id: str) -> list[str]:
+        """列出 Space 别名。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        return space_manager.aliases(space_id)
+
+    def space_add_alias(self, space_id: str, alias: str) -> dict:
+        """新增 Space 别名。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        space = space_manager.resolve(space_id)
+        if not space:
+            return {"error": "space not found"}
+        space_manager.add_alias(space["id"], alias)
+        return {"space_id": space["id"], "alias": alias, "added": True}
+
+    def space_remove_alias(self, space_id: str, alias: str) -> dict:
+        """删除 Space 别名。"""
+        self._ensure_init()
+        from memo.space.manager import space_manager
+        return space_manager.remove_alias(space_id, alias)
+
     def space_profile(self, space_id: str) -> dict:
         """获取空间简报。"""
         self._ensure_init()
@@ -733,6 +816,18 @@ class Engine:
         """在空间语境下检索记忆。"""
         self._ensure_init()
         return self.recall(query=query, top_k=top_k, space_id=space_id, space_mode=mode)
+
+    # ── 记忆治理 ──
+
+    def memory_govern(self, memory_id: str, action: str, **kwargs) -> dict:
+        """标记记忆状态、置顶、权重、备注等用户治理动作。"""
+        self._ensure_init()
+        return memory_store.govern_memory(memory_id=memory_id, action=action, **kwargs)
+
+    def memory_audit(self, memory_id: str, limit: int = 50) -> list[dict]:
+        """查看单条记忆治理审计日志。"""
+        self._ensure_init()
+        return memory_store.get_memory_audit(memory_id, limit=limit)
 
     # ── 待办管理 ──
 

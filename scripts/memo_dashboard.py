@@ -714,6 +714,103 @@ initGraph();
 
 
 # ── Graph Data ──
+def _memory_explanation(status: str, pinned: bool, user_weight: float, tags: list[str], memory_type: str = ""):
+    """面向用户的记忆治理/召回解释，不暴露底层算法名。"""
+    status = status or "active"
+    reasons = []
+    participates = status not in {"wrong", "muted", "deleted"}
+    if tags:
+        reasons.append("它和这些关键词相关：" + "、".join(tags[:5]))
+    if str(memory_type).upper() in {"DECISION", "PREFERENCE", "REASONING"}:
+        reasons.append("它记录的是判断、偏好或推理，比普通流水信息更适合作为参考")
+    if pinned:
+        reasons.append("你已经把它标为重要，所以系统会更优先保留它")
+    if status == "active":
+        reasons.append("它当前处于可引用状态")
+    elif status == "expired":
+        reasons.append("它已被标记为过期，仍可参考，但会被明显降权")
+    elif status == "wrong":
+        reasons.append("它已被标记为错误，默认不会再参与召回")
+    elif status == "muted":
+        reasons.append("它已被设置为不再引用，默认不会参与召回")
+    elif status == "deleted":
+        reasons.append("它已被软删除，默认不会参与召回")
+    try:
+        w = float(user_weight or 1.0)
+        if w > 1.05:
+            reasons.append("你提高过它的权重，因此它会更容易被想起")
+        elif w < 0.95 and participates:
+            reasons.append("你降低过它的权重，因此它只会谨慎参与参考")
+    except Exception:
+        w = 1.0
+    if not reasons:
+        reasons.append("它目前没有特殊治理标记，按普通长期记忆处理")
+    return {
+        "summary": "这条记忆会根据相关性、状态和你的治理操作决定是否参与回答。",
+        "reasons": reasons,
+        "participates": participates,
+        "status": status,
+        "pinned": bool(pinned),
+        "user_weight": w,
+        "suggested_actions": ["pin", "mark_wrong", "mark_expired", "mute", "delete", "restore"],
+    }
+
+
+def _list_space_classification_queue(limit: int = 50):
+    rows = db.fetchall(
+        """SELECT q.*, mu.title, mu.summary, mu.created_at AS memory_created_at
+           FROM space_classification_queue q
+           JOIN memory_units mu ON mu.id = q.memory_id
+           WHERE q.status = 'pending'
+           ORDER BY q.confidence DESC, q.created_at DESC
+           LIMIT ?""",
+        (limit,),
+    )
+    return [dict(r) for r in rows]
+
+
+def _refresh_space_classification_queue(limit: int = 100, threshold: float = 0.25):
+    """扫描近期未绑定 Space 的记忆，生成待确认归类候选。"""
+    from datetime import datetime
+    from memo.space.detector import space_detector
+    from memo.store.database import new_id
+
+    rows = db.fetchall(
+        """SELECT mu.id, mu.title, mu.summary, mu.raw_text
+           FROM memory_units mu
+           LEFT JOIN space_memories sm ON sm.memory_id = mu.id
+           WHERE sm.memory_id IS NULL
+             AND mu.is_superseded = 0
+             AND COALESCE(mu.status, 'active') NOT IN ('wrong','muted','deleted')
+           ORDER BY mu.created_at DESC
+           LIMIT ?""",
+        (limit,),
+    )
+    created = 0
+    now = datetime.now().isoformat()
+    for r in rows:
+        text = "\n".join([r["title"] or "", r["summary"] or "", (r["raw_text"] or "")[:1200]])
+        candidates = space_detector.detect(text, top_k=2)
+        for c in candidates:
+            if float(c.get("confidence", 0)) < threshold:
+                continue
+            exists = db.fetchone(
+                "SELECT id FROM space_classification_queue WHERE memory_id = ? AND suggested_space_id = ?",
+                (r["id"], c["space_id"]),
+            )
+            if exists:
+                continue
+            db.execute(
+                """INSERT INTO space_classification_queue
+                   (id, memory_id, suggested_space_id, suggested_space_name, confidence, reason, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                (new_id(), r["id"], c["space_id"], c.get("name", ""), c.get("confidence", 0), c.get("reason", ""), now, now),
+            )
+            created += 1
+    db.commit()
+    return {"created": created, "scanned": len(rows), "pending": len(_list_space_classification_queue(limit=1000))}
+
+
 def _get_graph_data():
     """获取图谱数据：节点（特征词）+ 边（关系）+ 记忆关联。"""
     from memo.store.graph_store import graph_store
@@ -783,12 +880,18 @@ def _get_graph_data():
 
     # 记忆-标签关联
     tag_memories = {}
-    for n in nodes[:30]:
+    for n in nodes[:60]:
         mentions = graph_store.get_tag_mentions(n["id"])
-        tag_memories[n["id"]] = [
-            {"id": m.memory_unit_id[:8], "score": round(m.relevance_score, 2)}
-            for m in mentions[:5]
-        ]
+        items = []
+        for m in mentions[:8]:
+            mem = db.fetchone("SELECT id, title, summary FROM memory_units WHERE id = ?", (m.memory_unit_id,))
+            items.append({
+                "id": m.memory_unit_id,
+                "title": mem["title"] if mem else m.memory_unit_id[:8],
+                "summary": mem["summary"] if mem else "",
+                "score": round(m.relevance_score, 2),
+            })
+        tag_memories[n["id"]] = items
 
     return {"nodes": nodes, "edges": edges, "tag_memories": tag_memories}
 
@@ -827,6 +930,9 @@ class MemoHandler(BaseHTTPRequestHandler):
                 self._serve_static(DASHBOARD_DIST / "index.html")
             else:
                 self._html(PAGE)
+        elif path == "/favicon.ico":
+            self.send_response(204)
+            self.end_headers()
         elif path.startswith("/assets/") and (DASHBOARD_DIST / path.lstrip("/")).exists():
             self._serve_static(DASHBOARD_DIST / path.lstrip("/"))
         elif path == "/api/stats":
@@ -854,12 +960,18 @@ class MemoHandler(BaseHTTPRequestHandler):
                 evs = a.get("evidences", "[]")
                 import json as _j
                 ev_list = _j.loads(evs) if isinstance(evs, str) else evs
+                evidence_details = []
+                for eid in ev_list[:8]:
+                    mem = db.fetchone("SELECT id, title, summary, created_at FROM memory_units WHERE id LIKE ? OR id = ?", (str(eid) + "%", str(eid)))
+                    if mem:
+                        evidence_details.append(dict(mem))
                 by_dim[d].append({
                     "id": a["id"],
                     "dimension": a["dimension"],
                     "assertion": a["assertion"],
                     "confidence": a["confidence"],
                     "evidences": ev_list,
+                    "evidence_details": evidence_details,
                     "signal_level": a["signal_level"],
                     "locked": a["locked"],
                     "is_custom": a["is_custom"],
@@ -873,34 +985,53 @@ class MemoHandler(BaseHTTPRequestHandler):
             limit = int(self._get_query_param("limit", "500"))
             offset = int(self._get_query_param("offset", "0"))
 
+            status = self._get_query_param("status", "active")
+            include_deleted = self._get_query_param("include_deleted", "false").lower() == "true"
             sql = (
                 "SELECT mu.*, s.agent_id as source_agent FROM memory_units mu"
                 " LEFT JOIN sessions s ON mu.session_id = s.id"
                 " WHERE mu.is_superseded=0"
             )
-            params = []
+            if not include_deleted:
+                sql += " AND COALESCE(mu.status, 'active') != 'deleted'"
+            if status and status != "all":
+                sql += " AND COALESCE(mu.status, 'active') = ?"
+                params = [status]
+            else:
+                params = []
             if q:
                 sql += " AND (mu.title LIKE ? OR mu.summary LIKE ? OR mu.raw_text LIKE ?)"
                 params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
             if agent:
                 sql += " AND s.agent_id = ?"
                 params.append(agent)
-            sql += " ORDER BY mu.created_at DESC LIMIT ? OFFSET ?"
+            sql += " ORDER BY COALESCE(mu.pinned,0) DESC, mu.created_at DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
             rows = db.fetchall(sql, tuple(params))
             from memo.store.graph_store import graph_store as gs
             mems = []
             for r in rows:
                 tags = gs.get_memory_tags(r["id"])
+                status_value = r["status"] if "status" in r.keys() else "active"
+                pinned_value = bool(r["pinned"]) if "pinned" in r.keys() else False
+                weight_value = r["user_weight"] if "user_weight" in r.keys() else 1.0
+                tag_names = [t.name for t in tags]
                 mems.append({
                     "id": r["id"], "session_id": r["session_id"],
                     "title": r["title"], "summary": r["summary"],
                     "memory_type": r["memory_type"], "confidence": r["confidence"],
                     "valid_from": r["valid_from"],
+                    "status": status_value,
+                    "user_weight": weight_value,
+                    "pinned": pinned_value,
+                    "user_note": r["user_note"] if "user_note" in r.keys() else "",
                     "source_agent": r["source_agent"] or "?",
-                    "feature_tags": [t.name for t in tags],
+                    "feature_tags": tag_names,
+                    "explanation": _memory_explanation(status_value, pinned_value, weight_value, tag_names, r["memory_type"]),
                 })
             self._json(mems)
+        elif path == "/api/memory/action":
+            self._handle_memory_action()
         elif path.startswith("/api/memory/"):
             mem_id = path.split("/")[-1]
             from memo.store.memory_store import memory_store
@@ -915,7 +1046,13 @@ class MemoHandler(BaseHTTPRequestHandler):
                 "summary_detail": mem.summary_detail, "raw_text": mem.raw_text,
                 "memory_type": str(mem.memory_type), "confidence": mem.confidence,
                 "valid_from": mem.valid_from, "is_superseded": mem.is_superseded,
+                "status": getattr(mem, "status", "active"),
+                "user_weight": getattr(mem, "user_weight", 1.0),
+                "pinned": getattr(mem, "pinned", False),
+                "user_note": getattr(mem, "user_note", ""),
+                "audit": memory_store.get_memory_audit(mem_id, limit=20),
                 "feature_tags": [t.name for t in tags],
+                "explanation": _memory_explanation(getattr(mem, "status", "active"), getattr(mem, "pinned", False), getattr(mem, "user_weight", 1.0), [t.name for t in tags], str(mem.memory_type)),
             })
         elif path == "/api/todos":
             from memo.todo.manager import list_todos, get_todo_stats, check_risk
@@ -929,6 +1066,9 @@ class MemoHandler(BaseHTTPRequestHandler):
             include_archived = self._get_query_param("include_archived", "false").lower() == "true"
             space_type = self._get_query_param("type", "")
             self._json(engine.space_list(include_archived=include_archived, type=space_type))
+        elif path == "/api/space/classification-queue":
+            limit = int(self._get_query_param("limit", "50"))
+            self._json(_list_space_classification_queue(limit=limit))
         elif path == "/api/space/action":
             self._handle_space_action()
         elif path.startswith("/api/space/"):
@@ -970,6 +1110,18 @@ class MemoHandler(BaseHTTPRequestHandler):
         if action == "update":
             result = engine.space_update(body.get("id", ""), **body.get("fields", {}))
             self._json(result); return
+        if action == "archive":
+            result = engine.space_archive(body.get("id", ""))
+            self._json(result); return
+        if action == "restore":
+            result = engine.space_restore(body.get("id", ""))
+            self._json(result); return
+        if action == "add_alias":
+            result = engine.space_add_alias(body.get("space_id", body.get("id", "")), body.get("alias", ""))
+            self._json(result); return
+        if action == "remove_alias":
+            result = engine.space_remove_alias(body.get("space_id", body.get("id", "")), body.get("alias", ""))
+            self._json(result); return
         if action == "detect":
             result = engine.space_detect(body.get("conversation", ""), top_k=int(body.get("top_k", 3)))
             self._json(result); return
@@ -982,7 +1134,63 @@ class MemoHandler(BaseHTTPRequestHandler):
                 created_by="dashboard",
             )
             self._json(result); return
+        if action == "unbind_memory":
+            result = engine.space_unbind_memory(
+                space_id=body.get("space_id", ""),
+                memory_id=body.get("memory_id", ""),
+            )
+            self._json(result); return
+        if action == "refresh_classification_queue":
+            self._json(_refresh_space_classification_queue(limit=int(body.get("limit", 100)), threshold=float(body.get("threshold", 0.25)))); return
+        if action in {"accept_candidate", "reject_candidate", "new_space_candidate"}:
+            self._handle_space_candidate_action(action, body); return
         self._json({"error": f"unknown action {action}"}, 400)
+
+    def _handle_space_candidate_action(self, action: str, body: dict):
+        from datetime import datetime
+        cid = body.get("id", "")
+        row = db.fetchone("SELECT * FROM space_classification_queue WHERE id = ?", (cid,))
+        if not row:
+            self._json({"error": "candidate not found"}, 404); return
+        now = datetime.now().isoformat()
+        if action == "reject_candidate":
+            db.execute("UPDATE space_classification_queue SET status='rejected', decided_by='dashboard', decided_at=?, updated_at=? WHERE id=?", (now, now, cid))
+            db.commit(); self._json({"ok": True}); return
+        if action == "accept_candidate":
+            sid = body.get("space_id") or row["suggested_space_id"]
+            result = engine.space_bind_memory(space_id=sid, memory_id=row["memory_id"], relation_type="detected", relevance=float(row["confidence"] or 0.7), created_by="classification_queue")
+            db.execute("UPDATE space_classification_queue SET status='accepted', decided_space_id=?, decided_by='dashboard', decided_at=?, updated_at=? WHERE id=?", (sid, now, now, cid))
+            db.commit(); self._json(result); return
+        if action == "new_space_candidate":
+            result = engine.space_create(name=body.get("name") or row["suggested_space_name"] or "新空间", type=body.get("type", "general"), description=body.get("description", "由自动归类确认队列创建"), created_by="classification_queue")
+            sid = result.get("id")
+            if sid:
+                engine.space_bind_memory(space_id=sid, memory_id=row["memory_id"], relation_type="detected", relevance=float(row["confidence"] or 0.7), created_by="classification_queue")
+                db.execute("UPDATE space_classification_queue SET status='new_space', decided_space_id=?, decided_by='dashboard', decided_at=?, updated_at=? WHERE id=?", (sid, now, now, cid))
+                db.commit()
+            self._json(result); return
+
+    def _handle_memory_action(self):
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        body = _j.loads(self.rfile.read(length)) if length > 0 else {}
+        memory_id = body.get("id", "") or body.get("memory_id", "")
+        action = body.get("action", "")
+        if not memory_id:
+            self._json({"error": "missing memory id"}, 400); return
+        result = engine.memory_govern(
+            memory_id=memory_id,
+            action=action,
+            actor="dashboard",
+            note=body.get("note", ""),
+            status=body.get("status"),
+            user_weight=body.get("user_weight"),
+            pinned=body.get("pinned"),
+            user_note=body.get("user_note"),
+        )
+        if result.get("error"):
+            self._json(result, 400); return
+        self._json(result)
 
     def _handle_persona_action(self):
         import json as _j
@@ -1006,6 +1214,18 @@ class MemoHandler(BaseHTTPRequestHandler):
                 db.execute("UPDATE persona_assertions SET assertion=?, updated_at=? WHERE id=?", (new_text, now, aid))
             if new_conf is not None:
                 db.execute("UPDATE persona_assertions SET confidence=?, updated_at=? WHERE id=?", (float(new_conf), now, aid))
+        elif action == "create":
+            from memo.store.database import new_id
+            dim = body.get("dimension", "preference")
+            text = body.get("assertion", "").strip()
+            if not text:
+                self._json({"error": "missing assertion"}, 400); return
+            db.execute(
+                """INSERT INTO persona_assertions
+                   (id, dimension, assertion, confidence, evidences, signal_level, locked, is_custom, created_at, updated_at, last_refreshed)
+                   VALUES (?, ?, ?, ?, '[]', 2, ?, 1, ?, ?, ?)""",
+                (new_id(), dim, text, float(body.get("confidence", 0.8)), 1 if body.get("locked", False) else 0, now, now, now),
+            )
         elif action == "refresh":
             from memo.core.engine import engine as _eng
             result = _eng.update_persona()
@@ -1025,13 +1245,33 @@ class MemoHandler(BaseHTTPRequestHandler):
         body = _j.loads(self.rfile.read(length)) if length > 0 else {}
         action = body.get("action", "")
         tid = body.get("id", "")
-        from memo.todo.manager import close_todos, reopen_todos, update_todo
+        from memo.todo.manager import add_todo, close_todos, reopen_todos, update_todo
+        if action == "create":
+            result = add_todo(
+                title=body.get("title", ""),
+                description=body.get("description", ""),
+                priority=body.get("priority", "medium"),
+                due_date=body.get("due_date", ""),
+                space_id=body.get("space_id", ""),
+                source_agent="dashboard",
+            )
+            self._json(result); return
         if action == "close":
             close_todos([tid], agent="dashboard")
         elif action == "reopen":
             reopen_todos([tid], agent="dashboard")
         elif action == "cancel":
             update_todo(tid, status="cancelled", agent="dashboard")
+        elif action == "update":
+            update_todo(
+                tid,
+                title=body.get("title", ""),
+                priority=body.get("priority", ""),
+                status=body.get("status", ""),
+                due_date=body.get("due_date", ""),
+                description=body.get("description", ""),
+                agent="dashboard",
+            )
         else:
             self._json({"error": f"unknown action {action}"}, 400); return
         self._json({"ok": True})

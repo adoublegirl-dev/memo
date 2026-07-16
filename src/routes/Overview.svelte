@@ -6,12 +6,25 @@
   import TodoCard from '../components/TodoCard.svelte';
   import { Database, MessageSquare, Share2, Activity } from '@lucide/svelte';
   let stats = null, tags = [], memories = [], todos = [];
+  let selected = null, detailLoading = false;
+  const typeLabels = { FACT:'事实', DECISION:'决策', PREFERENCE:'偏好', EVENT:'事件', REASONING:'推理' };
+  const statusLabels = { active:'可引用', expired:'已过期', wrong:'已标错', muted:'不引用', deleted:'已删除' };
   onMount(async () => {
-    [stats, tags, memories, todos] = await Promise.all([
+    const [statsData, tagsData, memoriesData, todosData] = await Promise.all([
       api.stats(), api.tags(), api.memories({ limit: 3 }), api.todos()
     ]);
-    todos = todos.todos || [];
+    stats = statsData;
+    tags = Array.isArray(tagsData) ? tagsData : [];
+    memories = Array.isArray(memoriesData) ? memoriesData : [];
+    todos = Array.isArray(todosData) ? todosData : (todosData?.todos || []);
   });
+  async function openDetail(e) {
+    const id = e.detail?.id;
+    if (!id) return;
+    detailLoading = true; selected = null;
+    try { selected = await api.memory(id); }
+    finally { detailLoading = false; }
+  }
 </script>
 
 <section class="page">
@@ -38,7 +51,7 @@
   <div class="two-col" style="margin-top:18px">
     <div>
       <div class="section-head"><h2>最近记忆</h2></div>
-      <div class="list stagger">{#each memories as m}<MemoryCard memory={m}/>{:else}<div class="empty card">暂无记忆</div>{/each}</div>
+      <div class="list stagger">{#each memories as m}<MemoryCard memory={m} on:open={openDetail}/>{:else}<div class="empty card">暂无记忆</div>{/each}</div>
     </div>
     <div>
       <div class="section-head"><h2>待办速览</h2></div>
@@ -46,3 +59,25 @@
     </div>
   </div>
 </section>
+
+{#if detailLoading || selected}
+  <div class="modal-backdrop" role="button" tabindex="0" on:click={() => !detailLoading && (selected = null)} on:keydown={(e)=>e.key==='Escape' && !detailLoading && (selected=null)}>
+    <div class="detail-modal" role="dialog" aria-modal="true" tabindex="0" on:click|stopPropagation on:keydown|stopPropagation>
+      {#if detailLoading}
+        <div class="skeleton" style="height:220px"></div>
+      {:else}
+        <div class="modal-head">
+          <div>
+            <span class="badge green">{typeLabels[String(selected.memory_type || 'FACT').toUpperCase()] || '事实'}</span>
+            <h2>{selected.title || '无标题记忆'}</h2>
+            <div class="item-meta">{statusLabels[selected.status || 'active']} · 置信度 {Math.round((selected.confidence || 0) * 100)}% · 权重 {selected.user_weight ?? 1}</div>
+          </div>
+          <button class="icon-btn" on:click={() => selected = null}>×</button>
+        </div>
+        <div class="modal-section"><h3>摘要</h3><p>{selected.summary_detail || selected.summary || '暂无摘要'}</p></div>
+        <div class="modal-section"><h3>原文</h3><div class="raw-box">{selected.raw_text || '暂无原文'}</div></div>
+        {#if selected.feature_tags?.length}<div class="modal-section"><h3>标签</h3><div class="toolbar" style="flex-wrap:wrap">{#each selected.feature_tags as tag}<span class="badge green">{tag}</span>{/each}</div></div>{/if}
+      {/if}
+    </div>
+  </div>
+{/if}

@@ -158,6 +158,23 @@ async def list_tools() -> list[Tool]:
             }
         ),
         Tool(
+            name="memory_govern",
+            description="治理单条记忆：标重要、错误、过期、静默、软删除、恢复、备注和权重。",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "记忆 ID"},
+                    "action": {"type": "string", "enum": ["pin", "unpin", "mark_wrong", "mark_expired", "mute", "delete", "restore", "update"]},
+                    "note": {"type": "string"},
+                    "user_note": {"type": "string"},
+                    "user_weight": {"type": "number"},
+                    "pinned": {"type": "boolean"},
+                    "status": {"type": "string", "enum": ["active", "wrong", "expired", "muted", "deleted"]},
+                },
+                "required": ["id", "action"]
+            }
+        ),
+        Tool(
             name="memo_start_session",
             description="开始一个新的记忆会话。后续 memo_remember 会关联到此会话。",
             inputSchema={
@@ -583,6 +600,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     f"   {r['summary'][:200]}\n\n"
                 )
             return [TextContent(type="text", text=output.strip())]
+
+        elif name == "memory_govern":
+            result = engine.memory_govern(
+                memory_id=arguments["id"],
+                action=arguments["action"],
+                actor=arguments.get("agent_name", "mcp"),
+                note=arguments.get("note", ""),
+                status=arguments.get("status"),
+                user_weight=arguments.get("user_weight"),
+                pinned=arguments.get("pinned"),
+                user_note=arguments.get("user_note"),
+            )
+            return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
         elif name == "memo_stats":
             stats = engine.stats()
