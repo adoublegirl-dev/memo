@@ -792,6 +792,18 @@ class Engine:
         from memo.persona.extractor import get_active_assertions
         return get_active_assertions(dimension)
 
+    def persona_assertion_action(self, assertion_id: str, action: str, **kwargs) -> dict[str, Any]:
+        """人格断言治理操作：编辑、锁定、删除、恢复。"""
+        self._ensure_init()
+        from memo.persona.extractor import persona_assertion_action
+        return persona_assertion_action(assertion_id, action, **kwargs)
+
+    def persona_audit(self, assertion_id: str = "", limit: int = 50) -> list[dict]:
+        """获取人格断言审计日志。"""
+        self._ensure_init()
+        from memo.persona.extractor import get_persona_audit
+        return get_persona_audit(assertion_id, limit=limit)
+
     def _run_persona_incremental(self) -> dict[str, Any]:
         """生命周期内的人格增量更新。"""
         try:

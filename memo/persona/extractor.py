@@ -56,7 +56,7 @@ def _merge_or_insert_assertion(
     """同维人格断言去重：相似则合并证据和置信度，否则新增。"""
     evidences = evidences or []
     rows = db.fetchall(
-        "SELECT * FROM persona_assertions WHERE dimension = ? AND is_superseded = 0",
+        "SELECT * FROM persona_assertions WHERE dimension = ? AND is_superseded = 0 AND locked = 0",
         (dimension,),
     )
     if rows:
@@ -483,6 +483,73 @@ def get_active_assertions(dimension: str | None = None) -> list[dict]:
                ORDER BY dimension, confidence DESC"""
         )
     return [dict(r) for r in rows]
+
+
+def get_persona_audit(assertion_id: str = "", limit: int = 50) -> list[dict[str, Any]]:
+    """获取人格断言审计日志。"""
+    if assertion_id:
+        rows = db.fetchall(
+            """SELECT * FROM persona_audit_logs
+               WHERE assertion_id = ?
+               ORDER BY created_at DESC LIMIT ?""",
+            (assertion_id, limit),
+        )
+    else:
+        rows = db.fetchall(
+            """SELECT * FROM persona_audit_logs
+               ORDER BY created_at DESC LIMIT ?""",
+            (limit,),
+        )
+    return [dict(r) for r in rows]
+
+
+def persona_assertion_action(
+    assertion_id: str,
+    action: str,
+    assertion: str = "",
+    confidence: float | None = None,
+    actor: str = "dashboard",
+    note: str = "",
+) -> dict[str, Any]:
+    """人格断言编辑 / 锁定 / 软删除 / 恢复，并写入审计日志。"""
+    row = db.fetchone("SELECT * FROM persona_assertions WHERE id = ?", (assertion_id,))
+    if not row:
+        return {"error": "not found"}
+    old = dict(row)
+    now = datetime.now().isoformat()
+    action = (action or "").strip().lower()
+
+    if action == "edit":
+        changes = []
+        if assertion and assertion != old.get("assertion"):
+            db.execute("UPDATE persona_assertions SET assertion=?, updated_at=?, last_refreshed=? WHERE id=?", (assertion, now, now, assertion_id))
+            _audit_persona(assertion_id, "edit_assertion", old.get("assertion", ""), assertion, actor, note)
+            changes.append("assertion")
+        if confidence is not None and float(confidence) != float(old.get("confidence") or 0):
+            new_conf = max(0.0, min(1.0, float(confidence)))
+            db.execute("UPDATE persona_assertions SET confidence=?, updated_at=?, last_refreshed=? WHERE id=?", (new_conf, now, now, assertion_id))
+            _audit_persona(assertion_id, "edit_confidence", str(old.get("confidence", "")), str(new_conf), actor, note)
+            changes.append("confidence")
+        db.commit()
+        return {"id": assertion_id, "updated": True, "action": "edit", "changes": changes}
+
+    if action == "lock":
+        db.execute("UPDATE persona_assertions SET locked=1, updated_at=? WHERE id=?", (now, assertion_id))
+        _audit_persona(assertion_id, "lock", str(old.get("locked", 0)), "1", actor, note or "manual lock")
+    elif action == "unlock":
+        db.execute("UPDATE persona_assertions SET locked=0, updated_at=? WHERE id=?", (now, assertion_id))
+        _audit_persona(assertion_id, "unlock", str(old.get("locked", 0)), "0", actor, note or "manual unlock")
+    elif action == "delete":
+        db.execute("UPDATE persona_assertions SET is_superseded=1, updated_at=? WHERE id=?", (now, assertion_id))
+        _audit_persona(assertion_id, "delete", "active", "superseded", actor, note or "soft delete")
+    elif action == "restore":
+        db.execute("UPDATE persona_assertions SET is_superseded=0, superseded_by=NULL, updated_at=? WHERE id=?", (now, assertion_id))
+        _audit_persona(assertion_id, "restore", "superseded", "active", actor, note or "restore soft deleted")
+    else:
+        return {"error": f"unknown action {action}"}
+
+    db.commit()
+    return {"id": assertion_id, "updated": True, "action": action}
 
 
 def get_persona_settings() -> dict[str, str]:

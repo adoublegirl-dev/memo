@@ -1,13 +1,73 @@
 """待办管理器 —— 增删改查 + 风险检测 + 历史记录。"""
 
 from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 from typing import Any
+import re
 
 from memo.store.database import db, new_id
 from memo.utils.logger import logger
 
 
 # ── 创建 ──
+
+_TODO_NOISE_RE = re.compile(r"[\s\t\r\n，。！？、；：,.!?;:（）()【】\[\]{}《》<>\"'“”‘’`~@#$%^&*_+=|\\/-]+")
+
+
+def _normalize_todo_title(title: str) -> str:
+    """待办标题归一化，用于保守本体去重。"""
+    text = (title or "").strip().lower()
+    text = re.sub(r"\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}日?", "<date>", text)
+    text = _TODO_NOISE_RE.sub("", text)
+    return text
+
+
+def _todo_title_similarity(a: str, b: str) -> float:
+    na, nb = _normalize_todo_title(a), _normalize_todo_title(b)
+    if not na or not nb:
+        return 0.0
+    if na == nb:
+        return 1.0
+    if na in nb or nb in na:
+        short, long = sorted([len(na), len(nb)])
+        if short / max(long, 1) >= 0.72:
+            return 0.94
+    return SequenceMatcher(None, na, nb).ratio()
+
+
+def find_duplicate_todo(title: str, priority: str = "medium", due_date: str = "", space_id: str = "") -> dict | None:
+    """查找未完成待办中的保守重复项。
+
+    只在同 Space（或双方都无 Space）、同优先级、同截止日期（或双方都为空）且标题高度相似时命中。
+    """
+    if not _normalize_todo_title(title):
+        return None
+    if space_id:
+        rows = db.fetchall(
+            """SELECT * FROM todos
+               WHERE status IN ('todo','doing') AND priority = ? AND COALESCE(space_id,'') = ?
+               ORDER BY updated_at DESC LIMIT 80""",
+            (priority, space_id),
+        )
+    else:
+        rows = db.fetchall(
+            """SELECT * FROM todos
+               WHERE status IN ('todo','doing') AND priority = ? AND COALESCE(space_id,'') = ''
+               ORDER BY updated_at DESC LIMIT 80""",
+            (priority,),
+        )
+    for row in rows:
+        todo = dict(row)
+        existing_due = todo.get("due_date") or ""
+        new_due = due_date or ""
+        if existing_due != new_due:
+            continue
+        sim = _todo_title_similarity(title, todo.get("title", ""))
+        if sim >= 0.92:
+            todo["duplicate_similarity"] = round(sim, 4)
+            return todo
+    return None
+
 
 def add_todo(
     title: str,
@@ -21,6 +81,28 @@ def add_todo(
     space_relation_type: str = "action",
 ) -> dict:
     """创建待办，返回创建结果。"""
+    duplicate = find_duplicate_todo(title=title, priority=priority, due_date=due_date, space_id=space_id)
+    if duplicate:
+        note = f"重复创建被跳过: {title}"
+        if description and description not in (duplicate.get("description") or ""):
+            note += f"；新描述: {description[:120]}"
+        _log_history(duplicate["id"], duplicate.get("status"), duplicate.get("status", "doing"), note, source_agent)
+        db.commit()
+        return {
+            "id": duplicate["id"],
+            "title": duplicate["title"],
+            "priority": duplicate["priority"],
+            "status": duplicate["status"],
+            "due_date": duplicate.get("due_date") or "",
+            "source_agent": duplicate.get("source_agent") or source_agent,
+            "space_id": duplicate.get("space_id") or "",
+            "created": False,
+            "duplicate": True,
+            "duplicate_reason": "active_todo_title_priority_due_space_match",
+            "duplicate_similarity": duplicate.get("duplicate_similarity", 1.0),
+            "existing_id": duplicate["id"],
+        }
+
     tid = new_id()
     now = datetime.now().isoformat()
     status = "doing"  # 直接进入进行中
