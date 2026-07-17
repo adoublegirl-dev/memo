@@ -12,7 +12,7 @@
   function edit(a) { selected = a; draft = { assertion:a.assertion, confidence:a.confidence }; }
   async function save(a) { await api.personaAction({ action:'edit', id:a.id, assertion:draft.assertion, confidence:Number(draft.confidence) }); selected=null; draft=null; await load(); }
   async function lock(a, locked) { await api.personaAction({ action:locked?'lock':'unlock', id:a.id }); await load(); }
-  async function remove(a) { if(!confirm('删除这条人格断言？')) return; await api.personaAction({ action:'delete', id:a.id }); await load(); }
+  async function remove(a) { if(!confirm('软删除这条人格断言？它不会物理删除，可通过审计记录恢复。')) return; await api.personaAction({ action:'delete', id:a.id, note:'用户在 Dashboard 软删除' }); await load(); }
   async function create() { if(!form.assertion.trim()) return; await api.personaAction({ action:'create', ...form }); form.assertion=''; active=form.dimension; await load(); }
   async function refresh() { await api.personaAction({ action:'refresh', id:'refresh' }); await load(); }
   async function sensitivity(level) { await api.personaAction({ action:'set_sensitivity', id:String(level) }); await load(); }
@@ -60,6 +60,12 @@
               <summary class="item-meta" style="cursor:pointer">查看证据来源</summary>
               <div class="list" style="margin-top:10px">
                 {#each a.evidence_details || [] as e}<div class="card card-pad"><div class="item-title">{e.title}</div><p class="muted">{e.summary}</p><div class="item-meta">{e.id.slice(0,8)} · {e.created_at?.slice(0,10) || ''}</div></div>{:else}<div class="empty">暂无可展开证据，可能是旧版短 ID 或原记忆已不存在。</div>{/each}
+              </div>
+            </details>
+            <details style="margin-top:10px">
+              <summary class="item-meta" style="cursor:pointer">查看审计记录</summary>
+              <div class="list" style="margin-top:10px">
+                {#each a.audit || [] as log}<div class="item"><div class="item-title">{log.action}</div><div class="item-meta">{log.created_at?.slice(0,19)} · {log.actor}</div><div class="item-summary">{log.old_value} → {log.new_value} {log.note ? `· ${log.note}` : ''}</div></div>{:else}<div class="empty">暂无审计记录</div>{/each}
               </div>
             </details>
           {/if}

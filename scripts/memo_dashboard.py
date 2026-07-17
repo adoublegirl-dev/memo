@@ -948,7 +948,7 @@ class MemoHandler(BaseHTTPRequestHandler):
         elif path == "/api/graph":
             self._json(_get_graph_data())
         elif path == "/api/persona":
-            from memo.persona.extractor import get_active_assertions, get_persona_settings
+            from memo.persona.extractor import get_active_assertions, get_persona_settings, get_persona_audit
             assertions = get_active_assertions()
             settings = get_persona_settings()
             # 按维度分组
@@ -976,8 +976,9 @@ class MemoHandler(BaseHTTPRequestHandler):
                     "locked": a["locked"],
                     "is_custom": a["is_custom"],
                     "updated_at": a["updated_at"],
+                    "audit": get_persona_audit(a["id"], limit=8),
                 })
-            self._json({"assertions": by_dim, "settings": settings})
+            self._json({"assertions": by_dim, "settings": settings, "audit": get_persona_audit(limit=30)})
         elif path == "/api/memories":
             # 解析查询参数
             q = self._get_query_param("q", "")
@@ -1223,30 +1224,35 @@ class MemoHandler(BaseHTTPRequestHandler):
         if not aid:
             self._json({"error": "missing id"}, 400); return
         now = __import__("datetime").datetime.now().isoformat()
-        if action == "lock":
-            db.execute("UPDATE persona_assertions SET locked=1, updated_at=? WHERE id=?", (now, aid))
-        elif action == "unlock":
-            db.execute("UPDATE persona_assertions SET locked=0, updated_at=? WHERE id=?", (now, aid))
-        elif action == "delete":
-            db.execute("UPDATE persona_assertions SET is_superseded=1, updated_at=? WHERE id=?", (now, aid))
-        elif action == "edit":
-            new_text = body.get("assertion", "")
-            new_conf = body.get("confidence")
-            if new_text:
-                db.execute("UPDATE persona_assertions SET assertion=?, updated_at=? WHERE id=?", (new_text, now, aid))
-            if new_conf is not None:
-                db.execute("UPDATE persona_assertions SET confidence=?, updated_at=? WHERE id=?", (float(new_conf), now, aid))
+        if action in {"lock", "unlock", "delete", "restore", "edit"}:
+            from memo.persona.extractor import persona_assertion_action
+            result = persona_assertion_action(
+                assertion_id=aid,
+                action=action,
+                assertion=body.get("assertion", ""),
+                confidence=body.get("confidence") if body.get("confidence") is not None else None,
+                actor="dashboard",
+                note=body.get("note", ""),
+            )
+            status = 404 if result.get("error") == "not found" else 400 if result.get("error") else 200
+            self._json(result, status); return
         elif action == "create":
             from memo.store.database import new_id
             dim = body.get("dimension", "preference")
             text = body.get("assertion", "").strip()
             if not text:
                 self._json({"error": "missing assertion"}, 400); return
+            new_assertion_id = new_id()
             db.execute(
                 """INSERT INTO persona_assertions
                    (id, dimension, assertion, confidence, evidences, signal_level, locked, is_custom, created_at, updated_at, last_refreshed)
                    VALUES (?, ?, ?, ?, '[]', 2, ?, 1, ?, ?, ?)""",
-                (new_id(), dim, text, float(body.get("confidence", 0.8)), 1 if body.get("locked", False) else 0, now, now, now),
+                (new_assertion_id, dim, text, float(body.get("confidence", 0.8)), 1 if body.get("locked", False) else 0, now, now, now),
+            )
+            db.execute(
+                """INSERT INTO persona_audit_logs (assertion_id, action, old_value, new_value, actor, note, created_at)
+                   VALUES (?, 'create', '', ?, 'dashboard', ?, ?)""",
+                (new_assertion_id, text, body.get("note", "manual create"), now),
             )
         elif action == "refresh":
             from memo.core.engine import engine as _eng
