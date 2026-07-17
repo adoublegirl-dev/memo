@@ -6,6 +6,8 @@
 
 import json
 import mimetypes
+import os
+import socket
 import sys
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -896,6 +898,11 @@ def _get_graph_data():
     return {"nodes": nodes, "edges": edges, "tag_memories": tag_memories}
 
 
+def _schema_version() -> int:
+    row = db.fetchone("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
+    return int(row["version"]) if row else 0
+
+
 # ── HTTP Server ──
 class MemoHandler(BaseHTTPRequestHandler):
     def _get_query_param(self, key: str, default: str = "") -> str:
@@ -933,6 +940,8 @@ class MemoHandler(BaseHTTPRequestHandler):
         elif path == "/favicon.ico":
             self.send_response(204)
             self.end_headers()
+        elif path == "/api/health":
+            self._json({"ok": True, "service": "memo-dashboard", "schema_version": _schema_version(), "dist": (DASHBOARD_DIST / "index.html").exists()})
         elif path.startswith("/assets/") and (DASHBOARD_DIST / path.lstrip("/")).exists():
             self._serve_static(DASHBOARD_DIST / path.lstrip("/"))
         elif path == "/api/stats":
@@ -1334,8 +1343,22 @@ class MemoHandler(BaseHTTPRequestHandler):
         pass  # 安静模式
 
 
+def _port_available(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("0.0.0.0", port))
+            return True
+        except OSError:
+            return False
+
+
 def main():
-    port = 9120
+    env_port = os.getenv("MEMO_DASHBOARD_PORT", "").strip()
+    if env_port:
+        port = int(env_port)
+    else:
+        port = 9120 if _port_available(9120) else 9121
     server = ThreadingHTTPServer(("0.0.0.0", port), MemoHandler)
     import sys; sys.stdout.write(f"\n  Memo 看板已启动 → http://localhost:{port}\n  按 Ctrl+C 停止\n"); sys.stdout.flush()
     try:
