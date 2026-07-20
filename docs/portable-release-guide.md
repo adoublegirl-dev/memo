@@ -28,11 +28,19 @@ npm run build
 .\test.bat
 ```
 
-生成 zip：
+生成普通 zip：
 
 ```bat
 python scripts\build_release.py --include-dist
 ```
+
+生成给非研发同事使用的 Windows 便携 zip，可在已经准备好 `.venv` 后加入运行环境，避免对方现场下载大量依赖：
+
+```bat
+python scripts\build_release.py --include-dist --include-venv
+```
+
+注意：`--include-venv` 只适合同系统/同架构分发，例如 Windows x64 发给 Windows x64。包会明显变大。
 
 发布包默认排除：
 
@@ -42,6 +50,8 @@ python scripts\build_release.py --include-dist
 - PID：`data/pids/*`
 - 日志：`*.log`、`logs/*`
 - `node_modules/*`
+- `.venv/*`（除非显式 `--include-venv`）
+- `install_output/*`
 - `.git/*`
 - 本地 scratch 脚本：`scripts/_*.json`、`scripts/_check_*.py`
 

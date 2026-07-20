@@ -26,6 +26,20 @@ Memo 是一个本地运行的 AI Context Space，做四件事：
 
 ## 三、安装
 
+如果安装对象是不熟悉命令行的同事，优先看这份说明：
+
+```text
+docs/non-developer-install-guide.md
+```
+
+Windows 下也可以直接双击：
+
+```text
+install.bat
+```
+
+下面是开发者/手动安装流程。
+
 ### 3.1 解压
 
 将 `Memo_V0.7.0.zip` 解压到任意目录（建议 `D:\Memo` 或 `~/Memo`）。

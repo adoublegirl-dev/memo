@@ -13,8 +13,11 @@ dist/
 !dashboard/dist/
 !dashboard/dist/**
 node_modules/
+.venv/
+install_output/
 *.egg-info/
 docs/*.docx
+docs/prototypes/
 _zip_compare/
 
 # legacy / transition docs (local only)

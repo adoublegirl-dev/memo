@@ -6,9 +6,15 @@ set ROOT=%~dp0
 set PID_DIR=%ROOT%data\pids
 if not exist "%PID_DIR%" mkdir "%PID_DIR%"
 
-REM Prefer explicit PYTHON_EXE if user configured it; otherwise use python command.
-REM Microsoft Store Python App Execution Alias works when invoked by cmd/PowerShell.
-if "%PYTHON_EXE%"=="" set "PYTHON_EXE=python"
+REM Prefer explicit PYTHON_EXE if user configured it; otherwise use bundled project .venv; finally use python command.
+REM This avoids starting services with a different Python from the one used by install.bat.
+if "%PYTHON_EXE%"=="" (
+  if exist "%ROOT%.venv\Scripts\python.exe" (
+    set "PYTHON_EXE=%ROOT%.venv\Scripts\python.exe"
+  ) else (
+    set "PYTHON_EXE=python"
+  )
+)
 "%PYTHON_EXE%" -c "import sys; print(sys.version)" >nul 2>nul
 if errorlevel 1 (
   echo ERROR: Python is not usable. Set PYTHON_EXE to a real python.exe or enable Python App Execution Alias.

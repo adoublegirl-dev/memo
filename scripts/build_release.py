@@ -23,6 +23,9 @@ EXCLUDES = [
     "logs/*",
     "node_modules/*",
     "dashboard/node_modules/*",
+    ".venv/*",
+    "install_output/*",
+    "docs/prototypes/*",
     "__pycache__/*",
     "*.pyc",
     "*.log",
@@ -56,6 +59,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="", help="输出 zip 路径，默认 dist/Memo-release-时间戳.zip")
     parser.add_argument("--include-dist", action="store_true", help="包含 dashboard/dist 构建产物")
+    parser.add_argument("--include-venv", action="store_true", help="包含 .venv 便携运行环境（仅适合同系统分发，包会很大）")
     args = parser.parse_args()
 
     for item in INCLUDES_REQUIRED:
@@ -63,7 +67,12 @@ def main() -> int:
             print(f"缺少必要文件: {item}")
             return 1
 
-    output = Path(args.output) if args.output else PROJECT_ROOT / "dist" / f"Memo-release-{datetime.now():%Y%m%d-%H%M%S}.zip"
+    if args.output:
+        output = Path(args.output)
+        if not output.is_absolute():
+            output = PROJECT_ROOT / output
+    else:
+        output = PROJECT_ROOT / "dist" / f"Memo-release-{datetime.now():%Y%m%d-%H%M%S}.zip"
     output.parent.mkdir(parents=True, exist_ok=True)
 
     count = 0
@@ -74,7 +83,9 @@ def main() -> int:
             relative = rel(path)
             if relative == rel(output):
                 continue
-            if excluded(relative):
+            if relative.startswith(".venv/") and args.include_venv:
+                pass
+            elif excluded(relative):
                 continue
             if relative.startswith("dashboard/dist/") and not args.include_dist:
                 continue
