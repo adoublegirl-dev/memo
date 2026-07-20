@@ -1,6 +1,9 @@
 openai>=1.0
 numpy>=1.26
 jieba>=0.42
+# Windows 上 torch 2.9.x 存在 c10.dll / WinError 1114 风险，先固定到 2.8.x
+# 见 PyTorch issue: https://github.com/pytorch/pytorch/issues/166628
+torch==2.8.0
 sentence-transformers>=2.7
 python-dotenv>=1.0
 pydantic>=2.0
