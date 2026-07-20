@@ -136,17 +136,18 @@ def ask_agent() -> str:
     print("\n你主要使用哪个 Agent？")
     print("  1. HanaAgent")
     print("  2. WorkBuddy")
-    print("  3. Claude Desktop")
-    print("  4. Cursor")
-    print("  5. 全部配置")
+    print("  3. Qoder / QoderWork")
+    print("  4. Claude Desktop")
+    print("  5. Cursor")
+    print("  6. 全部配置")
     print("  0. 暂不配置，只生成配置文件")
     ans = input("请输入数字后回车，默认 1：").strip() or "1"
-    return {"1": "hana", "2": "workbuddy", "3": "claude", "4": "cursor", "5": "all", "0": "none"}.get(ans, "hana")
+    return {"1": "hana", "2": "workbuddy", "3": "qoder", "4": "claude", "5": "cursor", "6": "all", "0": "none"}.get(ans, "hana")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Memo 普通用户一键安装器")
-    parser.add_argument("--target", choices=["hana", "workbuddy", "claude", "cursor", "all", "none"], default="")
+    parser.add_argument("--target", choices=["hana", "workbuddy", "qoder", "claude", "cursor", "all", "none"], default="")
     parser.add_argument("--api-key", default="", help="可选：直接写入 .env 的 LLM_API_KEY")
     parser.add_argument("--use-mirror", action="store_true", help="使用国内 pip/HuggingFace 镜像")
     parser.add_argument("--skip-deps", action="store_true", help="跳过依赖安装，适合已打包 .venv 的发布包")
@@ -192,6 +193,7 @@ def main() -> int:
     print("  3. 浏览器打开 http://localhost:9120 查看看板")
     print("  4. 重启你的 Agent，让 MCP 配置生效")
     print("  5. HanaAgent 用户如未自动导入 MCP，请复制 install_output/hanaagent_mcp_ready_to_paste.json 到设置页")
+    print("  6. Qoder 用户如未自动导入 MCP，请复制 install_output/qoder_mcp_ready_to_paste.json 到设置页")
     return 0
 
 

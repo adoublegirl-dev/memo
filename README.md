@@ -108,7 +108,7 @@ python scripts/memo_watcher.py     # 守护进程（Bridge inbox 监控 + 人格
 |-------|-------------|
 | **WorkBuddy** | `~/.workbuddy/mcp.json` |
 | **HanaAgent** | 设置 → MCP 连接器 |
-| **QoderWork** | 设置 → MCP |
+| **QoderWork** | 设置 → MCP；也可用 `install_output/qoder_mcp_ready_to_paste.json` 手动导入 |
 | **Claude Desktop** | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | **Cursor** | `.cursor/mcp.json` |
 
@@ -120,7 +120,7 @@ python scripts/memo_watcher.py     # 守护进程（Bridge inbox 监控 + 人格
 |-------|---------|
 | **WorkBuddy** | `~/.workbuddy/skills/memo/SKILL.md` |
 | **HanaAgent** | `~/.hanako/skills/memo/SKILL.md` |
-| **QoderWork** | Skills 市场导入 |
+| **QoderWork** | Skills 市场导入；若本地存在 `~/.qoder` / `~/.qoderwork`，安装器会尝试复制到对应 skills 目录 |
 
 安装后 Agent 会：
 - **每轮对话前**自动检索相关记忆
