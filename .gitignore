@@ -8,6 +8,7 @@ data/memo_test.db*
 data/memo_dev.db*
 data/backups/
 *.log
+*.backup-before-*
 dist/
 !dashboard/dist/
 !dashboard/dist/**
