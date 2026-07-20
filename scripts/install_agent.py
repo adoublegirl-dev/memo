@@ -107,6 +107,10 @@ def write_generated_files() -> list[dict]:
     hana_file = OUTPUT_DIR / "hanaagent_mcp_ready_to_paste.json"
     hana_file.write_text(json.dumps({"memo": mcp_server_config()}, ensure_ascii=False, indent=2), encoding="utf-8")
     files.append({"path": str(hana_file), "description": "HanaAgent 设置页可粘贴的 memo 连接器配置"})
+
+    qoder_file = OUTPUT_DIR / "qoder_mcp_ready_to_paste.json"
+    qoder_file.write_text(json.dumps(full_mcp_config(), ensure_ascii=False, indent=2), encoding="utf-8")
+    files.append({"path": str(qoder_file), "description": "Qoder / QoderWork 可粘贴的 MCP 配置"})
     return files
 
 
@@ -125,6 +129,35 @@ def install_workbuddy(dry_run: bool = False) -> list[dict]:
     ]
 
 
+def install_qoder(dry_run: bool = False) -> list[dict]:
+    """兼容 Qoder / QoderWork。
+
+    Qoder 系列的 MCP 配置入口在不同版本里可能不同，所以这里采用保守策略：
+    1. 始终生成 install_output/qoder_mcp_ready_to_paste.json；
+    2. 若常见本地目录已存在，则自动写入对应 mcp.json 并复制 Skill；
+    3. 若目录不存在，不强行创建一堆未知目录，避免污染用户环境。
+    """
+    home = Path.home()
+    candidates = [
+        (home / ".qoder", "Qoder"),
+        (home / ".qoderwork", "QoderWork"),
+    ]
+    results: list[dict] = []
+    wrote = False
+    for base, label in candidates:
+        if base.exists():
+            results.append({"detected": label, "path": str(base)})
+            results.append(merge_mcp(base / "mcp.json", dry_run=dry_run))
+            results.append(copy_skill(base / "skills", dry_run=dry_run))
+            wrote = True
+    if not wrote:
+        results.append({
+            "manual": True,
+            "message": "未发现 ~/.qoder 或 ~/.qoderwork，已生成 install_output/qoder_mcp_ready_to_paste.json，请在 Qoder 设置页手动导入。",
+        })
+    return results
+
+
 def install_claude(dry_run: bool = False) -> list[dict]:
     appdata = os.getenv("APPDATA")
     if not appdata:
@@ -141,13 +174,15 @@ def install_target(target: str, dry_run: bool = False) -> list[dict]:
         return install_hana(dry_run)
     if target == "workbuddy":
         return install_workbuddy(dry_run)
+    if target == "qoder":
+        return install_qoder(dry_run)
     if target == "claude":
         return install_claude(dry_run)
     if target == "cursor":
         return install_cursor_project(dry_run)
     if target == "all":
         results: list[dict] = []
-        for item in ["hana", "workbuddy", "claude", "cursor"]:
+        for item in ["hana", "workbuddy", "qoder", "claude", "cursor"]:
             results.append({"target": item})
             results.extend(install_target(item, dry_run))
         return results
@@ -158,17 +193,18 @@ def choose_target() -> str:
     print("\n请选择要配置的 Agent：")
     print("  1. HanaAgent（推荐：复制 Skill，并生成 MCP 设置页可粘贴配置）")
     print("  2. WorkBuddy（自动写 ~/.workbuddy/mcp.json + Skill）")
-    print("  3. Claude Desktop（自动写 Claude 配置）")
-    print("  4. Cursor 当前项目（自动写 .cursor/mcp.json）")
-    print("  5. 全部生成/安装")
+    print("  3. Qoder / QoderWork（自动探测常见目录；否则生成可粘贴配置）")
+    print("  4. Claude Desktop（自动写 Claude 配置）")
+    print("  5. Cursor 当前项目（自动写 .cursor/mcp.json）")
+    print("  6. 全部生成/安装")
     print("  0. 只生成配置文件，不写入任何 Agent")
     ans = input("请输入数字后回车：").strip()
-    return {"1": "hana", "2": "workbuddy", "3": "claude", "4": "cursor", "5": "all", "0": "none"}.get(ans, "hana")
+    return {"1": "hana", "2": "workbuddy", "3": "qoder", "4": "claude", "5": "cursor", "6": "all", "0": "none"}.get(ans, "hana")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Memo Agent 配置安装器")
-    parser.add_argument("--target", choices=["hana", "workbuddy", "claude", "cursor", "all", "none"], default="")
+    parser.add_argument("--target", choices=["hana", "workbuddy", "qoder", "claude", "cursor", "all", "none"], default="")
     parser.add_argument("--dry-run", action="store_true", help="只预览，不写文件")
     parser.add_argument("--json", action="store_true", help="输出 JSON 结果")
     args = parser.parse_args()
@@ -186,7 +222,7 @@ def main() -> int:
         print("\nMemo Agent 配置结果：")
         for item in results:
             print("- " + json.dumps(item, ensure_ascii=False))
-        print("\n提示：HanaAgent 的 MCP 连接器如不能自动写入，请打开 install_output/hanaagent_mcp_ready_to_paste.json 复制到设置页。")
+        print("\n提示：HanaAgent 请打开 install_output/hanaagent_mcp_ready_to_paste.json 复制到设置页；Qoder 请打开 install_output/qoder_mcp_ready_to_paste.json 复制到设置页。")
     return 0
 
 

@@ -156,7 +156,24 @@ install_output/hanaagent_mcp_ready_to_paste.json
 
 ---
 
-### 方式 C：Claude Desktop
+### 方式 C：Qoder / QoderWork
+
+安装器会兼容 Qoder / QoderWork：
+
+```text
+1. 双击 install_agent.bat
+2. 选择 Qoder / QoderWork
+3. 如果电脑上存在 ~/.qoder 或 ~/.qoderwork，安装器会尝试自动写 mcp.json 并复制 Skill
+4. 如果没有识别到目录，请打开 install_output/qoder_mcp_ready_to_paste.json
+5. 到 Qoder 的 MCP 设置页手动导入或粘贴配置
+6. 重启 Qoder
+```
+
+因为 Qoder 不同版本的配置入口可能不同，所以安装器不会强行创建未知目录。找不到自动路径时，使用 `qoder_mcp_ready_to_paste.json` 是最稳的方式。
+
+---
+
+### 方式 D：Claude Desktop
 
 安装器会自动写入 Claude Desktop 的配置文件。
 
@@ -164,7 +181,7 @@ install_output/hanaagent_mcp_ready_to_paste.json
 
 ---
 
-### 方式 D：Cursor
+### 方式 E：Cursor
 
 安装器会在当前 Memo 项目里生成：
 
@@ -410,5 +427,6 @@ data/memo.db
 安装完成后，把 .env 里的 LLM_API_KEY 改成你的 Key。
 然后双击 start_all.bat。
 如果你用 HanaAgent，按 install_output/hanaagent_mcp_ready_to_paste.json 里的配置添加 MCP。
+如果你用 Qoder，按 install_output/qoder_mcp_ready_to_paste.json 里的配置添加 MCP。
 遇到问题直接截图发我，不用自己改代码。
 ```
