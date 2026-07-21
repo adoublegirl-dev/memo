@@ -76,6 +76,27 @@ def test_space_candidate_from_session_requires_manual_accept():
     assert any(r["id"] == memory_id for r in space_results)
 
 
+def test_space_candidate_uses_memory_title_for_generic_auto_session_display():
+    engine.init()
+    session = engine.start_session(title="自动同步会话")
+    engine.remember(
+        session_id=session.id,
+        raw_text="候选展示名修复需要把自动同步会话替换为更具体的记忆标题。",
+        title="候选展示名修复",
+        summary="自动同步会话应该显示具体内容标题",
+        feature_tags=["候选展示名", "自动同步会话"],
+    )
+
+    engine.space_candidate_scan(limit=30, min_memories=1)
+    candidates = engine.space_candidate_list(limit=50)
+    target = next(c for c in candidates if c["candidate_name"] == "候选展示名修复")
+    assert "来自会话《自动同步会话》" not in target["reason"]
+    assert "来自会话《候选展示名修复》" in target["reason"]
+    detail = engine.space_candidate_get(target["id"])
+    assert detail["source_sessions"][0]["display_title"] == "候选展示名修复"
+    assert detail["source_sessions"][0]["original_title"] == "自动同步会话"
+
+
 def test_source_session_backfill_from_legacy_sessions():
     engine.init()
     session = engine.start_session(title="来源会话索引测试")

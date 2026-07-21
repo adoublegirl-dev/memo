@@ -114,17 +114,39 @@ def _session_tags(memory_ids: list[str], limit: int = 8) -> list[str]:
     return [r["name"] for r in rows]
 
 
-def _derive_name(session: dict, memories: list[dict], tags: list[str]) -> str:
+GENERIC_SESSION_TITLES = {"", "自动会话", "自动同步会话", "自动导入会话", "未命名会话", "新会话"}
+
+
+def _is_generic_session_title(title: str) -> bool:
+    title = (title or "").strip()
+    return title in GENERIC_SESSION_TITLES or title.startswith("Bridge-")
+
+
+def _session_display_title(session: dict, memories: list[dict], tags: list[str] | None = None) -> str:
+    """给历史/自动导入会话生成可读标题。
+
+    很多旧数据的 sessions.title 只是“自动同步会话”，真正可读的信息在记忆标题/摘要里。
+    该函数只影响候选展示，不修改 sessions 原始标题。
+    """
     title = (session.get("title") or "").strip()
-    if title and title not in {"自动会话", "自动同步会话"} and not title.startswith("Bridge-"):
+    if title and not _is_generic_session_title(title):
         return title[:48]
     for m in memories:
         mt = (m.get("title") or "").strip()
-        if mt:
+        if mt and not _is_generic_session_title(mt):
             return mt[:48]
+    for m in memories:
+        text = (m.get("summary") or m.get("summary_detail") or m.get("raw_text") or "").strip()
+        text = _compact(text, 48)
+        if text:
+            return text
     if tags:
         return " / ".join(tags[:3])[:48]
     return f"{session.get('agent_id') or '会话'} · {str(session.get('created_at') or '')[:10]}"
+
+
+def _derive_name(session: dict, memories: list[dict], tags: list[str]) -> str:
+    return _session_display_title(session, memories, tags)
 
 
 def _description(memories: list[dict], tags: list[str]) -> str:
@@ -282,7 +304,8 @@ class SpaceCandidateManager:
             key = _candidate_key(name)
             aliases = _uniq([name] + tags[:6])
             confidence = min(0.92, 0.48 + len(memories) * 0.04 + len(todos) * 0.08 + len(tags) * 0.02)
-            reason = f"来自会话《{session.get('title') or session.get('id', '')[:8]}》，包含 {len(memories)} 条记忆"
+            display_title = _session_display_title(session, memories, tags)
+            reason = f"来自会话《{display_title}》，包含 {len(memories)} 条记忆"
             if todos:
                 reason += f"、{len(todos)} 个待办"
             if tags:
@@ -357,6 +380,45 @@ class SpaceCandidateManager:
             suggestions = _merge_suggestions(r["id"], r["candidate_name"], tags)
             db.execute("UPDATE space_candidates SET merge_suggestions=?, updated_at=? WHERE id=?", (_dumps(suggestions), datetime.now().isoformat(), r["id"]))
         db.commit()
+
+    def refresh_display_titles(self, limit: int = 500) -> dict:
+        """刷新旧候选的来源展示名。
+
+        只更新 space_candidates.reason 的展示文案，不修改 sessions、memory_units、权重字段。
+        """
+        rows = db.fetchall(
+            "SELECT * FROM space_candidates WHERE status='pending' ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        )
+        updated = 0
+        now = datetime.now().isoformat()
+        for row in rows:
+            data = self._row_to_dict(row, include_sources=False)
+            session_ids = data.get("source_session_ids") or []
+            if not session_ids:
+                continue
+            sid = session_ids[0]
+            session_row = db.fetchone("SELECT * FROM sessions WHERE id=?", (sid,))
+            if not session_row:
+                continue
+            memories = _session_memories(sid, limit=18)
+            todos = _session_todos(sid)
+            memory_ids = [m["id"] for m in memories]
+            tags = _session_tags(memory_ids)
+            display_title = _session_display_title(dict(session_row), memories, tags)
+            reason = f"来自会话《{display_title}》，包含 {len(memories)} 条记忆"
+            if todos:
+                reason += f"、{len(todos)} 个待办"
+            if tags:
+                reason += "；主要线索：" + "、".join(tags[:5])
+            if "名称由摘要轻量优化" in (data.get("reason") or ""):
+                reason += "；名称由摘要轻量优化（未读取原文）"
+            if reason != data.get("reason"):
+                db.execute("UPDATE space_candidates SET reason=?, updated_at=? WHERE id=?", (reason, now, data["id"]))
+                self._audit(data["id"], "display_title_refreshed", data.get("reason", ""), reason, "system", "刷新自动同步会话的展示标题")
+                updated += 1
+        db.commit()
+        return {"checked": len(rows), "updated": updated}
 
     def list(self, status: str = "pending", limit: int = 50) -> list[dict]:
         if status == "all":
@@ -543,8 +605,12 @@ class SpaceCandidateManager:
             if not row:
                 continue
             memories = _session_memories(sid, limit=8)
+            session = dict(row)
+            tags = _session_tags([m["id"] for m in memories])
             out.append({
-                **dict(row),
+                **session,
+                "display_title": _session_display_title(session, memories, tags),
+                "original_title": session.get("title", ""),
                 "memories": [
                     {
                         "id": m["id"],

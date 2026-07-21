@@ -983,6 +983,12 @@ class Engine:
         from memo.space.candidates import space_candidate_manager
         return space_candidate_manager.ignore(candidate_id, note=note, actor=actor)
 
+    def space_candidate_refresh_display_titles(self, limit: int = 500) -> dict:
+        """刷新候选项目里的来源会话展示名，不修改记忆本体。"""
+        self._ensure_init()
+        from memo.space.candidates import space_candidate_manager
+        return space_candidate_manager.refresh_display_titles(limit=limit)
+
     # ── 来源会话层 ──
 
     def source_session_backfill(self, limit: int = 200) -> dict:

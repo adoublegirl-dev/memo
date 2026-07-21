@@ -1215,6 +1215,9 @@ class MemoHandler(BaseHTTPRequestHandler):
         if action == "backfill_source_sessions":
             limit = min(int(body.get("limit", 200)), 1000)
             self._json(engine.source_session_backfill(limit=limit)); return
+        if action == "refresh_project_candidate_display_titles":
+            limit = min(int(body.get("limit", 500)), 1000)
+            self._json(engine.space_candidate_refresh_display_titles(limit=limit)); return
         if action == "merge_project_candidates":
             result = engine.space_candidate_merge_many(
                 candidate_ids=body.get("ids", []) or body.get("candidate_ids", []),
