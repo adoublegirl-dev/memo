@@ -305,7 +305,7 @@ class SpaceCandidateManager:
             aliases = _uniq([name] + tags[:6])
             confidence = min(0.92, 0.48 + len(memories) * 0.04 + len(todos) * 0.08 + len(tags) * 0.02)
             display_title = _session_display_title(session, memories, tags)
-            reason = f"来自会话《{display_title}》，包含 {len(memories)} 条记忆"
+            reason = f"根据历史会话内容识别：{display_title}；来源包含 {len(memories)} 条记忆"
             if todos:
                 reason += f"、{len(todos)} 个待办"
             if tags:
@@ -406,7 +406,7 @@ class SpaceCandidateManager:
             memory_ids = [m["id"] for m in memories]
             tags = _session_tags(memory_ids)
             display_title = _session_display_title(dict(session_row), memories, tags)
-            reason = f"来自会话《{display_title}》，包含 {len(memories)} 条记忆"
+            reason = f"根据历史会话内容识别：{display_title}；来源包含 {len(memories)} 条记忆"
             if todos:
                 reason += f"、{len(todos)} 个待办"
             if tags:

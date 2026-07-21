@@ -1133,7 +1133,13 @@ class MemoHandler(BaseHTTPRequestHandler):
         elif path == "/api/persona/action":
             self._handle_persona_action()
         elif path == "/api/governance":
-            self._json(engine.governance_overview(limit=int(self._get_query_param("limit", "50"))))
+            self._json(engine.governance_overview(
+                limit=int(self._get_query_param("limit", "50")),
+                page=int(self._get_query_param("page", "1")),
+                page_size=int(self._get_query_param("page_size", "50")),
+                q=self._get_query_param("q", ""),
+                tab=self._get_query_param("tab", "source_groups"),
+            ))
         elif path == "/api/memory/link":
             self._handle_memory_link()
         else:
@@ -1210,8 +1216,22 @@ class MemoHandler(BaseHTTPRequestHandler):
     def _handle_project_candidate_body(self, action: str, body: dict):
         cid = body.get("id", "") or body.get("candidate_id", "")
         if action == "scan_project_candidates":
-            limit = min(int(body.get("limit", 30)), 50)
-            self._json(engine.space_candidate_scan(limit=limit, min_memories=int(body.get("min_memories", 1)), use_llm=bool(body.get("use_llm", False)))); return
+            min_memories = int(body.get("min_memories", 1))
+            use_llm = bool(body.get("use_llm", False))
+            if bool(body.get("full_scan", False)):
+                total = {"scanned": 0, "created": 0, "updated": 0, "pending": 0, "remaining_sessions": 0, "batches": 0}
+                for _ in range(200):
+                    r = engine.space_candidate_scan(limit=100, min_memories=min_memories, use_llm=use_llm)
+                    total["batches"] += 1
+                    for k in ["scanned", "created", "updated"]:
+                        total[k] += int(r.get(k) or 0)
+                    total["pending"] = int(r.get("pending") or total["pending"])
+                    total["remaining_sessions"] = int(r.get("remaining_sessions") or 0)
+                    if int(r.get("remaining_sessions") or 0) <= 0 or int(r.get("scanned") or 0) <= 0:
+                        break
+                self._json(total); return
+            limit = min(int(body.get("limit", 30)), 100)
+            self._json(engine.space_candidate_scan(limit=limit, min_memories=min_memories, use_llm=use_llm)); return
         if action == "backfill_source_sessions":
             limit = min(int(body.get("limit", 200)), 1000)
             self._json(engine.source_session_backfill(limit=limit)); return
