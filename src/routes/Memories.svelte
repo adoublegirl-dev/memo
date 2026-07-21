@@ -87,26 +87,32 @@
 <section class="page">
   <h1 class="page-title">记忆管理</h1>
   <p class="page-subtitle">搜索、检查、标重要、纠错、过期、静默或软删除具体长期记忆。去重、合并链和输入事件请到“治理审计”。</p>
-  <div class="toolbar" style="margin-top:24px;flex-wrap:wrap">
-    <input class="input" style="width:min(520px,100%)" bind:value={q} on:keydown={(e)=>e.key==='Enter'&&search()} placeholder="搜索标题、摘要或原文"/>
-    <select class="input" bind:value={status} on:change={search}>
-      <option value="active">可引用</option><option value="expired">已过期</option><option value="wrong">已标错</option><option value="muted">不引用</option><option value="deleted">已删除</option><option value="all">全部</option>
-    </select>
-    <select class="input" style="width:110px" bind:value={pageSize} on:change={search}>
-      <option value="50">50 / 页</option>
-      <option value="100">100 / 页</option>
-      <option value="200">200 / 页</option>
-    </select>
-    <button class="btn primary" class:loading={loading} disabled={loading} on:click={search}>{loading ? '搜索中' : '搜索'}</button>
-  </div>
-  <div class="grid cols-4" style="margin-top:18px">
+  <div class="grid cols-4" style="margin-top:22px">
     <div class="card stat-card"><div><strong>{breakdown?.library_total ?? '—'}</strong><span>记忆库总量</span></div></div>
     <div class="card stat-card"><div><strong>{breakdown?.active_available ?? '—'}</strong><span>可引用且未替代</span></div></div>
     <div class="card stat-card"><div><strong>{breakdown?.muted_available ?? '—'}</strong><span>不引用但保留</span></div></div>
     <div class="card stat-card"><div><strong>{breakdown?.superseded ?? '—'}</strong><span>已被替代</span></div></div>
   </div>
   <div class="hint-card" style="margin-top:12px">总览里的“记忆”是全库总量；本页默认展示“可引用且未被替代”的记忆。因此当前筛选 {total} 条，可能小于记忆库总量。</div>
-  <div class="item-meta" style="margin-top:10px">当前筛选共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
+  <div class="card card-pad" style="margin-top:18px">
+    <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div class="toolbar" style="gap:8px;flex-wrap:wrap">
+        <input class="input" style="width:min(520px,100%)" bind:value={q} on:keydown={(e)=>e.key==='Enter'&&search()} placeholder="搜索标题、摘要或原文"/>
+        <select class="input" bind:value={status} on:change={search}>
+          <option value="active">可引用</option><option value="expired">已过期</option><option value="wrong">已标错</option><option value="muted">不引用</option><option value="deleted">已删除</option><option value="all">全部</option>
+        </select>
+      </div>
+      <div class="toolbar" style="gap:8px">
+        <select class="input" style="width:110px" bind:value={pageSize} on:change={search}>
+          <option value="50">50 / 页</option>
+          <option value="100">100 / 页</option>
+          <option value="200">200 / 页</option>
+        </select>
+        <button class="btn primary" class:loading={loading} disabled={loading} on:click={search}>{loading ? '搜索中' : '搜索'}</button>
+      </div>
+    </div>
+    <div class="item-meta" style="margin-top:12px">当前筛选共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
+  </div>
 
   {#if toast}
     <div class="toast-card">
