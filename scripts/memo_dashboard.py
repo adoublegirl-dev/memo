@@ -1054,7 +1054,25 @@ class MemoHandler(BaseHTTPRequestHandler):
                     "explanation": _memory_explanation(status_value, pinned_value, weight_value, tag_names, r["memory_type"]),
                 })
             if include_total:
-                self._json({"items": mems, "total": total, "limit": limit, "offset": offset})
+                status_rows = db.fetchall(
+                    """SELECT COALESCE(status,'active') AS status, COALESCE(is_superseded,0) AS is_superseded, COUNT(*) AS c
+                       FROM memory_units
+                       GROUP BY COALESCE(status,'active'), COALESCE(is_superseded,0)"""
+                )
+                breakdown = {"library_total": 0, "active_available": 0, "muted_available": 0, "superseded": 0, "by_status": {}}
+                for sr in status_rows:
+                    c = int(sr["c"] or 0)
+                    st = sr["status"] or "active"
+                    sup = int(sr["is_superseded"] or 0)
+                    breakdown["library_total"] += c
+                    breakdown["by_status"][st] = breakdown["by_status"].get(st, 0) + c
+                    if sup:
+                        breakdown["superseded"] += c
+                    elif st == "active":
+                        breakdown["active_available"] += c
+                    elif st == "muted":
+                        breakdown["muted_available"] += c
+                self._json({"items": mems, "total": total, "limit": limit, "offset": offset, "breakdown": breakdown})
             else:
                 self._json(mems)
         elif path == "/api/memory/action":

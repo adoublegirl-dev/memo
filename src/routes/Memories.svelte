@@ -3,7 +3,7 @@
   import { api } from '../lib/api.js';
   import MemoryCard from '../components/MemoryCard.svelte';
   let q = '', status = 'active', memories = [], loading = false, error = '';
-  let page = 1, pageSize = '50', total = 0;
+  let page = 1, pageSize = '50', total = 0, breakdown = null;
   let selected = null, detailLoading = false, actionBusy = false, toast = null;
   const statusLabels = { active:'可引用', expired:'已过期', wrong:'已标错', muted:'不引用', deleted:'已删除' };
   const typeLabels = { FACT:'事实', DECISION:'决策', PREFERENCE:'偏好', EVENT:'事件', REASONING:'推理' };
@@ -16,6 +16,7 @@
       const data = await api.memories({ q, status, limit, offset: (page - 1) * limit, include_total: true });
       memories = data.items || [];
       total = data.total || 0;
+      breakdown = data.breakdown || null;
     }
     catch(e) { error = e.message; }
     finally { loading = false; }
@@ -98,7 +99,14 @@
     </select>
     <button class="btn primary" class:loading={loading} disabled={loading} on:click={search}>{loading ? '搜索中' : '搜索'}</button>
   </div>
-  <div class="item-meta" style="margin-top:10px">共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
+  <div class="grid cols-4" style="margin-top:18px">
+    <div class="card stat-card"><div><strong>{breakdown?.library_total ?? '—'}</strong><span>记忆库总量</span></div></div>
+    <div class="card stat-card"><div><strong>{breakdown?.active_available ?? '—'}</strong><span>可引用且未替代</span></div></div>
+    <div class="card stat-card"><div><strong>{breakdown?.muted_available ?? '—'}</strong><span>不引用但保留</span></div></div>
+    <div class="card stat-card"><div><strong>{breakdown?.superseded ?? '—'}</strong><span>已被替代</span></div></div>
+  </div>
+  <div class="hint-card" style="margin-top:12px">总览里的“记忆”是全库总量；本页默认展示“可引用且未被替代”的记忆。因此当前筛选 {total} 条，可能小于记忆库总量。</div>
+  <div class="item-meta" style="margin-top:10px">当前筛选共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
 
   {#if toast}
     <div class="toast-card">
