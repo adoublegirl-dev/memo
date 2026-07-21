@@ -76,6 +76,28 @@ def test_space_candidate_from_session_requires_manual_accept():
     assert any(r["id"] == memory_id for r in space_results)
 
 
+def test_source_session_backfill_from_legacy_sessions():
+    engine.init()
+    session = engine.start_session(title="来源会话索引测试")
+    memory_id = engine.remember(
+        session_id=session.id,
+        raw_text="source_sessions 只建立来源索引，不替代 sessions，也不改变记忆内容。",
+        title="来源会话索引记忆",
+        summary="验证 source_sessions 与 memory 映射",
+        feature_tags=["source_sessions", "来源索引"],
+    )
+
+    result = engine.source_session_backfill(limit=50)
+    assert result["scanned"] >= 1
+    source = engine.source_session_get(session.id)
+    assert source
+    assert source["legacy_session_id"] == session.id
+    assert source["source_type"] == "memo_session"
+    assert any(m["id"] == memory_id for m in source["memories"])
+    stats = engine.source_session_stats()
+    assert stats["total"] >= 1
+
+
 def test_space_candidate_accept_does_not_change_memory_weights():
     engine.init()
     session = engine.start_session(title="候选权重边界测试会话")

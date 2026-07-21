@@ -85,13 +85,24 @@ docs/project-organization-final-plan.md
 
 目标：避免把“自动同步会话”和真实 Agent 会话混为一谈。
 
-建议新增：
+已完成基础层：
 
 ```text
 source_sessions
 source_session_memories
-source_session_todos（可选）
+source_session_todos
 ```
+
+当前实现边界：
+
+- [x] 新增 additive migration `016_source_sessions.sql`。
+- [x] 新增 `memo/space/source_sessions.py` 基础 Manager。
+- [x] 支持从现有 `memo.sessions` 渐进 backfill 来源索引。
+- [x] Space Candidate 扫描时旁路建立 source session 索引。
+- [x] Dashboard 增加“更新来源索引”入口和“不改权重”提示。
+- [x] 增加 source session 基础回归测试。
+- [ ] 导入/同步链路直接写入真实外部 `source_sessions`，减少对 legacy `sessions` 的依赖。
+- [ ] 设计 `space_candidates.source_session_ids` 从 legacy `sessions.id` 到真实 `source_sessions.id` 的兼容迁移。
 
 原则：
 

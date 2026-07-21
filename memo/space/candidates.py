@@ -14,6 +14,7 @@ from memo.core.config import config
 from memo.dedupe.normalizer import normalize_conversation
 from memo.store.database import db, json_encode, new_id
 from memo.space.manager import space_manager
+from memo.space.source_sessions import source_session_manager
 from memo.utils.llm import llm_client
 from memo.utils.logger import logger
 
@@ -264,6 +265,9 @@ class SpaceCandidateManager:
             scanned += 1
             memory_ids = [m["id"] for m in memories]
             todos = _session_todos(session["id"])
+            # 建立来源层兼容映射：不改变候选表字段含义，仍以 memo.sessions.id 作为当前 candidate source_session_ids。
+            # source_sessions 作为旁路索引，给后续真实来源会话治理铺底。
+            source_session_manager.ensure_from_session(session, memories=memories, todos=todos, commit=False)
             tags = _session_tags(memory_ids)
             name = _derive_name(session, memories, tags)
             desc = _description(memories, tags)
@@ -552,6 +556,7 @@ class SpaceCandidateManager:
                     for m in memories
                 ],
                 "todos": _session_todos(sid),
+                "source_session": source_session_manager.get(sid),
             })
         return out
 
