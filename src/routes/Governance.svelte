@@ -59,7 +59,12 @@
   }
 
   function fmtTime(s) { return s ? String(s).slice(0, 19).replace('T', ' ') : ''; }
-  function countOf(tab) { return overview?.counts?.[tab] ?? 0; }
+  function countOf(tab) {
+    const total = overview?.counts?.[tab];
+    if (typeof total === 'number') return total;
+    const filtered = overview?.filtered_counts?.[tab];
+    return typeof filtered === 'number' ? filtered : 0;
+  }
   onMount(load);
 </script>
 
@@ -75,10 +80,10 @@
   {#if error}<div class="card card-pad" style="color:var(--color-danger);margin-top:16px">{error}</div>{/if}
 
   <div class="grid cols-4" style="margin-top:22px">
-    <div class="card stat-card"><Layers3 size={20}/><div><strong>{countOf('source_groups')}</strong><span>同源组总数</span></div></div>
-    <div class="card stat-card"><ShieldCheck size={20}/><div><strong>{countOf('dedupe_records')}</strong><span>去重记录总数</span></div></div>
-    <div class="card stat-card"><GitMerge size={20}/><div><strong>{countOf('memory_links')}</strong><span>合并链总数</span></div></div>
-    <div class="card stat-card"><Inbox size={20}/><div><strong>{countOf('ingestion_events')}</strong><span>输入事件总数</span></div></div>
+    <div class="card stat-card"><Layers3 size={20}/><div><strong>{loading && !overview ? '—' : countOf('source_groups')}</strong><span>同源组总数</span></div></div>
+    <div class="card stat-card"><ShieldCheck size={20}/><div><strong>{loading && !overview ? '—' : countOf('dedupe_records')}</strong><span>去重记录总数</span></div></div>
+    <div class="card stat-card"><GitMerge size={20}/><div><strong>{loading && !overview ? '—' : countOf('memory_links')}</strong><span>合并链总数</span></div></div>
+    <div class="card stat-card"><Inbox size={20}/><div><strong>{loading && !overview ? '—' : countOf('ingestion_events')}</strong><span>输入事件总数</span></div></div>
   </div>
 
   <div class="card card-pad" style="margin-top:18px">
@@ -98,7 +103,7 @@
         <button class="btn" disabled={loading} on:click={search}>搜索</button>
       </div>
     </div>
-    <div class="item-meta" style="margin-top:12px">当前：{currentLabel} · 匹配 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
+    <div class="item-meta" style="margin-top:12px">当前：{currentLabel} · 总数 {countOf(activeTab)} 条 · 当前搜索匹配 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
   </div>
 
   {#if loading}
