@@ -941,6 +941,48 @@ class Engine:
         self._ensure_init()
         return self.recall(query=query, top_k=top_k, space_id=space_id, space_mode=mode)
 
+    def space_candidate_scan(self, limit: int = 80, min_memories: int = 1, use_llm: bool = False) -> dict:
+        """从历史会话扫描候选 Space。只生成候选，不自动创建正式 Space。"""
+        self._ensure_init()
+        from memo.space.candidates import space_candidate_manager
+        return space_candidate_manager.scan(limit=limit, min_memories=min_memories, use_llm=use_llm)
+
+    def space_candidate_list(self, status: str = "pending", limit: int = 50) -> list[dict]:
+        """列出候选 Space。"""
+        self._ensure_init()
+        from memo.space.candidates import space_candidate_manager
+        return space_candidate_manager.list(status=status, limit=limit)
+
+    def space_candidate_get(self, candidate_id: str) -> dict | None:
+        """获取候选 Space 详情与来源证据。"""
+        self._ensure_init()
+        from memo.space.candidates import space_candidate_manager
+        return space_candidate_manager.get(candidate_id)
+
+    def space_candidate_accept(self, candidate_id: str, **kwargs) -> dict:
+        """手动确认候选为新 Space。"""
+        self._ensure_init()
+        from memo.space.candidates import space_candidate_manager
+        return space_candidate_manager.accept(candidate_id, **kwargs)
+
+    def space_candidate_merge_to_space(self, candidate_id: str, space_id: str, actor: str = "dashboard") -> dict:
+        """手动将候选合并到已有 Space。"""
+        self._ensure_init()
+        from memo.space.candidates import space_candidate_manager
+        return space_candidate_manager.merge_to_space(candidate_id, space_id=space_id, actor=actor)
+
+    def space_candidate_merge_many(self, candidate_ids: list[str], name: str, type: str = "project", description: str = "", actor: str = "dashboard") -> dict:
+        """手动将多个候选合并为一个新 Space。"""
+        self._ensure_init()
+        from memo.space.candidates import space_candidate_manager
+        return space_candidate_manager.merge_many(candidate_ids=candidate_ids, name=name, type=type, description=description, actor=actor)
+
+    def space_candidate_ignore(self, candidate_id: str, note: str = "", actor: str = "dashboard") -> dict:
+        """忽略候选 Space。"""
+        self._ensure_init()
+        from memo.space.candidates import space_candidate_manager
+        return space_candidate_manager.ignore(candidate_id, note=note, actor=actor)
+
     # ── 记忆治理 ──
 
     def memory_govern(self, memory_id: str, action: str, **kwargs) -> dict:

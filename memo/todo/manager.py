@@ -12,6 +12,26 @@ from memo.utils.logger import logger
 # ── 创建 ──
 
 _TODO_NOISE_RE = re.compile(r"[\s\t\r\n，。！？、；：,.!?;:（）()【】\[\]{}《》<>\"'“”‘’`~@#$%^&*_+=|\\/-]+")
+_TODO_DUE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
+
+
+def _normalize_due_date(due_date: str | None) -> str:
+    """校验并标准化待办时间。
+
+    空值表示无截止时间；非空必须精确到分钟，格式为 HTML datetime-local
+    使用的 ``YYYY-MM-DDTHH:MM``。不再接受随意文本或仅日期，避免同一天多个
+    日程无法区分。
+    """
+    value = (due_date or "").strip()
+    if not value:
+        return ""
+    if not _TODO_DUE_RE.match(value):
+        raise ValueError("截止时间格式不正确，请使用 YYYY-MM-DDTHH:MM，并至少精确到分钟")
+    try:
+        datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("截止时间不是有效日期时间，请重新选择") from exc
+    return value
 
 
 def _normalize_todo_title(title: str) -> str:
@@ -81,6 +101,10 @@ def add_todo(
     space_relation_type: str = "action",
 ) -> dict:
     """创建待办，返回创建结果。"""
+    try:
+        due_date = _normalize_due_date(due_date)
+    except ValueError as exc:
+        return {"error": str(exc)}
     duplicate = find_duplicate_todo(title=title, priority=priority, due_date=due_date, space_id=space_id)
     if duplicate:
         note = f"重复创建被跳过: {title}"
@@ -291,11 +315,11 @@ def reopen_todos(ids: list[str], agent: str = "") -> list[dict]:
 
 def update_todo(
     todo_id: str,
-    title: str = "",
-    priority: str = "",
-    status: str = "",
-    due_date: str = "",
-    description: str = "",
+    title: str | None = None,
+    priority: str | None = None,
+    status: str | None = None,
+    due_date: str | None = None,
+    description: str | None = None,
     agent: str = "",
 ) -> dict:
     """更新待办字段。"""
@@ -306,18 +330,24 @@ def update_todo(
     now = datetime.now().isoformat()
     old_status = todo["status"]
 
-    if title:
+    if title is not None:
         db.execute("UPDATE todos SET title=?, updated_at=? WHERE id=?", (title, now, todo_id))
-    if priority:
+    if priority is not None:
         db.execute("UPDATE todos SET priority=?, updated_at=? WHERE id=?", (priority, now, todo_id))
-    if status and status != old_status:
+    if status is not None and status != old_status:
         db.execute("UPDATE todos SET status=?, updated_at=? WHERE id=?", (status, now, todo_id))
         if status == "done":
             db.execute("UPDATE todos SET completed_at=? WHERE id=?", (now, todo_id))
+        elif old_status == "done":
+            db.execute("UPDATE todos SET completed_at=NULL, reopened_at=? WHERE id=?", (now, todo_id))
         _log_history(todo_id, old_status, status, "", agent)
-    if due_date:
+    if due_date is not None:
+        try:
+            due_date = _normalize_due_date(due_date)
+        except ValueError as exc:
+            return {"error": str(exc)}
         db.execute("UPDATE todos SET due_date=?, updated_at=? WHERE id=?", (due_date, now, todo_id))
-    if description:
+    if description is not None:
         db.execute("UPDATE todos SET description=?, updated_at=? WHERE id=?", (description, now, todo_id))
 
     db.commit()

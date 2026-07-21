@@ -41,10 +41,19 @@
 .badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 4px 10px; font-size: var(--text-xs); color: var(--color-text-secondary); background: var(--color-surface-hover); border: 1px solid var(--color-border); }
 .badge.gold { background: var(--color-gold-soft); color: var(--color-warning); border-color: color-mix(in srgb, var(--color-gold) 25%, var(--color-border)); }
 .badge.green { background: var(--color-green-soft); color: var(--color-success); border-color: color-mix(in srgb, var(--color-green) 25%, var(--color-border)); }
+.badge.danger-soft { background: color-mix(in srgb, var(--color-danger) 12%, var(--color-surface)); color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 26%, var(--color-border)); }
 .list { display: grid; gap: 10px; }
 .item { padding: 15px 16px; border-radius: 18px; border: 1px solid var(--color-border); background: var(--color-surface); transition: all 180ms var(--ease-out); }
 .item.muted-memory { opacity: .72; border-style: dashed; }
 .item:hover { transform: translateX(2px); border-color: var(--color-border-hover); }
+.item.risk-todo { background: linear-gradient(135deg, color-mix(in srgb, var(--color-danger) 10%, var(--color-surface)), var(--color-surface)); border-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border)); box-shadow: 0 10px 28px color-mix(in srgb, var(--color-danger) 8%, transparent); }
+.item.risk-todo.critical-risk { background: linear-gradient(135deg, color-mix(in srgb, var(--color-danger) 15%, var(--color-surface)), color-mix(in srgb, var(--color-danger) 5%, var(--color-surface))); border-color: color-mix(in srgb, var(--color-danger) 42%, var(--color-border)); }
+.todo-main { display:flex; align-items:flex-start; justify-content:space-between; gap:14px; }
+.todo-content { min-width:0; flex:1; }
+.todo-title-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.todo-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.risk-summary { border-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border)); background: linear-gradient(135deg, color-mix(in srgb, var(--color-danger) 8%, var(--color-surface)), var(--color-surface)); }
+.risk-mini { margin: -4px 0 10px; padding: 9px 12px; border:1px solid color-mix(in srgb, var(--color-danger) 24%, var(--color-border)); color:var(--color-danger); background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface)); border-radius:14px; font-size:var(--text-sm); }
 .item-title { font-weight: 650; letter-spacing: -.015em; }
 .title-link { border:0; background:transparent; padding:0; color:var(--color-text-primary); font:inherit; font-weight:650; letter-spacing:-.015em; cursor:pointer; text-align:left; }
 .title-link:hover { color: var(--color-accent); text-decoration: underline; text-underline-offset: 4px; }
@@ -62,9 +71,12 @@
 .inline-loading { position:absolute; right:12px; top:12px; font-size:12px; color:var(--color-text-secondary); background:var(--color-surface); border:1px solid var(--color-border); border-radius:999px; padding:3px 8px; }
 .modal-backdrop { position:fixed; inset:0; z-index:9998; background:rgba(15,23,42,.38); backdrop-filter:blur(12px); display:grid; place-items:center; padding:32px; animation: page-in 160ms var(--ease-out); }
 .detail-modal { width:min(880px, 100%); max-height:min(86vh, 860px); overflow:auto; background:var(--color-surface); border:1px solid var(--color-border); border-radius:26px; box-shadow:var(--shadow-lg); padding:22px; }
+.detail-modal.wide-modal { width:min(1040px, 100%); }
 .modal-head { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; border-bottom:1px solid var(--color-border); padding-bottom:16px; margin-bottom:16px; }
 .modal-head h2 { margin:10px 0 0; letter-spacing:-.03em; }
 .modal-section { margin-top:18px; }
 .modal-section h3 { font-size:15px; margin:0 0 8px; color:var(--color-text-secondary); }
 .raw-box { white-space:pre-wrap; line-height:1.7; color:var(--color-text-secondary); background:var(--color-bg); border:1px solid var(--color-border); border-radius:16px; padding:14px; max-height:260px; overflow:auto; }
+.raw-box pre { white-space:pre-wrap; margin:10px 0 0; font-family:var(--font-mono); font-size:12px; color:var(--color-text); }
+.raw-box summary { cursor:pointer; color:var(--color-accent); margin-top:8px; }
 @media (max-width: 900px) { .shell { grid-template-columns: 1fr; } .sidebar { display:none; } .two-col { grid-template-columns: 1fr; } .topbar { padding: 0 18px; } .page { padding: 24px 18px; } }

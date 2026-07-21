@@ -407,7 +407,7 @@ async def list_tools() -> list[Tool]:
                     "title": {"type": "string", "description": "待办标题"},
                     "description": {"type": "string", "description": "详细描述"},
                     "priority": {"type": "string", "enum": ["high", "medium", "low"], "description": "优先级"},
-                    "due_date": {"type": "string", "description": "截止日期，如 2026-07-18"},
+                    "due_date": {"type": "string", "description": "截止时间，格式 YYYY-MM-DDTHH:MM，例如 2026-07-18T14:30；必须至少精确到分钟"},
                     "memory_id": {"type": "string", "description": "关联记忆 ID"},
                     "agent_name": {"type": "string", "description": "来源 Agent"},
                 },
@@ -475,7 +475,7 @@ async def list_tools() -> list[Tool]:
                     "title": {"type": "string"},
                     "priority": {"type": "string", "enum": ["high", "medium", "low"]},
                     "status": {"type": "string"},
-                    "due_date": {"type": "string"},
+                    "due_date": {"type": "string", "description": "截止时间，格式 YYYY-MM-DDTHH:MM，例如 2026-07-18T14:30；必须至少精确到分钟"},
                     "description": {"type": "string"},
                     "agent_name": {"type": "string"},
                 },
@@ -831,14 +831,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 
         elif name == "todo_update":
+            fields = {"agent": arguments.get("agent_name", "")}
+            for key in ["title", "priority", "status", "due_date", "description"]:
+                if key in arguments:
+                    fields[key] = arguments.get(key)
             result = engine.todo_update(
                 todo_id=arguments["id"],
-                title=arguments.get("title", ""),
-                priority=arguments.get("priority", ""),
-                status=arguments.get("status", ""),
-                due_date=arguments.get("due_date", ""),
-                description=arguments.get("description", ""),
-                agent=arguments.get("agent_name", ""),
+                **fields,
             )
             return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False, indent=2))]
 

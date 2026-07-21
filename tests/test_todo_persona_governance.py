@@ -14,14 +14,14 @@ def test_add_todo_returns_existing_for_conservative_duplicate():
         title="优化 Memo 记忆治理页面",
         description="按 source group 聚合展示",
         priority="medium",
-        due_date="2026-07-22",
+        due_date="2026-07-22T10:30",
         source_agent="test",
     )
     second = add_todo(
         title="优化Memo记忆治理页面",
         description="重复创建应该被跳过",
         priority="medium",
-        due_date="2026-07-22",
+        due_date="2026-07-22T10:30",
         source_agent="test",
     )
 
@@ -31,6 +31,18 @@ def test_add_todo_returns_existing_for_conservative_duplicate():
     assert second["existing_id"] == first["id"]
     history = get_todo_history(first["id"])
     assert any("重复创建被跳过" in h["note"] for h in history)
+
+
+def test_todo_due_date_requires_minute_precision():
+    engine.init()
+    invalid = add_todo(
+        title="错误时间格式待办",
+        priority="medium",
+        due_date="2026-07-22",
+        source_agent="test",
+    )
+    assert "error" in invalid
+    assert "精确到分钟" in invalid["error"]
 
 
 def test_persona_edit_lock_delete_restore_are_audited_and_locked_is_protected():
