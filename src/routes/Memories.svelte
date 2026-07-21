@@ -3,16 +3,26 @@
   import { api } from '../lib/api.js';
   import MemoryCard from '../components/MemoryCard.svelte';
   let q = '', status = 'active', memories = [], loading = false, error = '';
+  let page = 1, pageSize = '50', total = 0;
   let selected = null, detailLoading = false, actionBusy = false, toast = null;
   const statusLabels = { active:'可引用', expired:'已过期', wrong:'已标错', muted:'不引用', deleted:'已删除' };
   const typeLabels = { FACT:'事实', DECISION:'决策', PREFERENCE:'偏好', EVENT:'事件', REASONING:'推理' };
+  $: totalPages = Math.max(1, Math.ceil(total / Number(pageSize || 50)));
 
   async function load() {
     loading = true; error='';
-    try { memories = await api.memories({ q, status, limit: 100 }); }
+    try {
+      const limit = Number(pageSize || 50);
+      const data = await api.memories({ q, status, limit, offset: (page - 1) * limit, include_total: true });
+      memories = data.items || [];
+      total = data.total || 0;
+    }
     catch(e) { error = e.message; }
     finally { loading = false; }
   }
+
+  async function search() { page = 1; await load(); }
+  async function gotoPage(next) { page = Math.min(Math.max(1, next), totalPages); await load(); }
 
   async function openDetail(e) {
     const id = e.detail?.id;
@@ -74,15 +84,21 @@
   onMount(load);
 </script>
 <section class="page">
-  <h1 class="page-title">记忆治理</h1>
-  <p class="page-subtitle">搜索、检查、标重要、纠错、过期、静默或软删除长期记忆。点击标题可查看完整详情。</p>
+  <h1 class="page-title">记忆管理</h1>
+  <p class="page-subtitle">搜索、检查、标重要、纠错、过期、静默或软删除具体长期记忆。去重、合并链和输入事件请到“治理审计”。</p>
   <div class="toolbar" style="margin-top:24px;flex-wrap:wrap">
-    <input class="input" style="width:min(520px,100%)" bind:value={q} on:keydown={(e)=>e.key==='Enter'&&load()} placeholder="搜索标题、摘要或原文"/>
-    <select class="input" bind:value={status} on:change={load}>
+    <input class="input" style="width:min(520px,100%)" bind:value={q} on:keydown={(e)=>e.key==='Enter'&&search()} placeholder="搜索标题、摘要或原文"/>
+    <select class="input" bind:value={status} on:change={search}>
       <option value="active">可引用</option><option value="expired">已过期</option><option value="wrong">已标错</option><option value="muted">不引用</option><option value="deleted">已删除</option><option value="all">全部</option>
     </select>
-    <button class="btn primary" class:loading={loading} disabled={loading} on:click={load}>{loading ? '搜索中' : '搜索'}</button>
+    <select class="input" style="width:110px" bind:value={pageSize} on:change={search}>
+      <option value="50">50 / 页</option>
+      <option value="100">100 / 页</option>
+      <option value="200">200 / 页</option>
+    </select>
+    <button class="btn primary" class:loading={loading} disabled={loading} on:click={search}>{loading ? '搜索中' : '搜索'}</button>
   </div>
+  <div class="item-meta" style="margin-top:10px">共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
 
   {#if toast}
     <div class="toast-card">
@@ -101,6 +117,11 @@
         <div class="empty card">暂无匹配记忆</div>
       {/each}
     {/if}
+  </div>
+  <div class="toolbar" style="justify-content:flex-end;margin-top:18px">
+    <button class="btn" disabled={loading || page <= 1} on:click={() => gotoPage(page - 1)}>上一页</button>
+    <span class="item-meta">第 {page} / {totalPages} 页，每页 {pageSize} 条，共 {total} 条</span>
+    <button class="btn" disabled={loading || page >= totalPages} on:click={() => gotoPage(page + 1)}>下一页</button>
   </div>
 </section>
 

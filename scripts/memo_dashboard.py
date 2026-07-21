@@ -1003,30 +1003,35 @@ class MemoHandler(BaseHTTPRequestHandler):
             agent = self._get_query_param("agent", "")
             limit = int(self._get_query_param("limit", "500"))
             offset = int(self._get_query_param("offset", "0"))
+            include_total = self._get_query_param("include_total", "false").lower() == "true"
 
             status = self._get_query_param("status", "active")
             include_deleted = self._get_query_param("include_deleted", "false").lower() == "true"
-            sql = (
-                "SELECT mu.*, s.agent_id as source_agent FROM memory_units mu"
-                " LEFT JOIN sessions s ON mu.session_id = s.id"
-                " WHERE mu.is_superseded=0"
-            )
+            base_from = " FROM memory_units mu LEFT JOIN sessions s ON mu.session_id = s.id WHERE mu.is_superseded=0"
+            sql = "SELECT mu.*, s.agent_id as source_agent" + base_from
+            count_sql = "SELECT COUNT(*) AS c" + base_from
+            params = []
             if not include_deleted:
                 sql += " AND COALESCE(mu.status, 'active') != 'deleted'"
+                count_sql += " AND COALESCE(mu.status, 'active') != 'deleted'"
             if status and status != "all":
                 sql += " AND COALESCE(mu.status, 'active') = ?"
-                params = [status]
-            else:
-                params = []
+                count_sql += " AND COALESCE(mu.status, 'active') = ?"
+                params.append(status)
             if q:
                 sql += " AND (mu.title LIKE ? OR mu.summary LIKE ? OR mu.raw_text LIKE ?)"
+                count_sql += " AND (mu.title LIKE ? OR mu.summary LIKE ? OR mu.raw_text LIKE ?)"
                 params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
             if agent:
                 sql += " AND s.agent_id = ?"
+                count_sql += " AND s.agent_id = ?"
                 params.append(agent)
+            total = None
+            if include_total:
+                total_row = db.fetchone(count_sql, tuple(params))
+                total = int(total_row["c"] if total_row else 0)
             sql += " ORDER BY COALESCE(mu.pinned,0) DESC, mu.created_at DESC LIMIT ? OFFSET ?"
-            params.extend([limit, offset])
-            rows = db.fetchall(sql, tuple(params))
+            rows = db.fetchall(sql, tuple(params + [limit, offset]))
             from memo.store.graph_store import graph_store as gs
             mems = []
             for r in rows:
@@ -1048,7 +1053,10 @@ class MemoHandler(BaseHTTPRequestHandler):
                     "feature_tags": tag_names,
                     "explanation": _memory_explanation(status_value, pinned_value, weight_value, tag_names, r["memory_type"]),
                 })
-            self._json(mems)
+            if include_total:
+                self._json({"items": mems, "total": total, "limit": limit, "offset": offset})
+            else:
+                self._json(mems)
         elif path == "/api/memory/action":
             self._handle_memory_action()
         elif path.startswith("/api/memory/"):

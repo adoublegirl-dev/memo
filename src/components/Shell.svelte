@@ -6,8 +6,8 @@
   const nav = [
     ['/', LayoutDashboard, '总览'],
     ['/graph', Share2, '图谱'],
-    ['/memories', Brain, '记忆'],
-    ['/governance', ShieldCheck, '治理'],
+    ['/memories', Brain, '记忆管理'],
+    ['/governance', ShieldCheck, '治理审计'],
     ['/spaces', Layers, '空间'],
     ['/persona', Fingerprint, '人格'],
     ['/todos', CheckCircle2, '待办'],

@@ -1054,7 +1054,14 @@ class Engine:
         q = (q or "").strip()
         tab = tab or "source_groups"
 
-        counts = {
+        total_counts = {
+            "source_groups": self._governance_source_groups_count(q=""),
+            "dedupe_records": self._governance_table_count("memory_dedupe_records", q="", fields=["source_agent", "fact_key", "action_key", "entity_key", "decision", "reason"]),
+            "memory_links": self._governance_table_count("memory_links", q="", fields=["source_memory_id", "target_memory_id", "relation_type", "reason", "created_by"]),
+            "ingestion_events": self._governance_table_count("ingestion_events", q="", fields=["source_type", "source_agent", "source_session_id", "status", "reason"]),
+            "governed_memories": self._governance_table_count("memory_units", q="", fields=["title", "summary", "memory_type", "status"], extra_where="status IN ('wrong','expired','muted','deleted')"),
+        }
+        filtered_counts = {
             "source_groups": self._governance_source_groups_count(q=q),
             "dedupe_records": self._governance_table_count("memory_dedupe_records", q=q, fields=["source_agent", "fact_key", "action_key", "entity_key", "decision", "reason"]),
             "memory_links": self._governance_table_count("memory_links", q=q, fields=["source_memory_id", "target_memory_id", "relation_type", "reason", "created_by"]),
@@ -1066,7 +1073,8 @@ class Engine:
             "page_size": page_size,
             "q": q,
             "tab": tab,
-            "counts": counts,
+            "counts": total_counts,
+            "filtered_counts": filtered_counts,
             "dedupe_records": [],
             "ingestion_events": [],
             "memory_links": [],
