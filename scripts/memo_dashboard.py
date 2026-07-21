@@ -1088,6 +1088,17 @@ class MemoHandler(BaseHTTPRequestHandler):
         elif path == "/api/space/classification-queue":
             limit = int(self._get_query_param("limit", "50"))
             self._json(_list_space_classification_queue(limit=limit))
+        elif path == "/api/source-sessions":
+            limit = int(self._get_query_param("limit", "50"))
+            source_type = self._get_query_param("source_type", "")
+            source_agent = self._get_query_param("source_agent", "")
+            self._json({"stats": engine.source_session_stats(), "items": engine.source_session_list(limit=limit, source_type=source_type, source_agent=source_agent)})
+        elif path.startswith("/api/source-session/"):
+            source_id = path.split("/")[-1]
+            result = engine.source_session_get(source_id)
+            if not result:
+                self._json({"error": "source session not found"}, 404); return
+            self._json(result)
         elif path == "/api/space/candidates":
             status = self._get_query_param("status", "pending")
             limit = int(self._get_query_param("limit", "50"))
@@ -1201,6 +1212,9 @@ class MemoHandler(BaseHTTPRequestHandler):
         if action == "scan_project_candidates":
             limit = min(int(body.get("limit", 30)), 50)
             self._json(engine.space_candidate_scan(limit=limit, min_memories=int(body.get("min_memories", 1)), use_llm=bool(body.get("use_llm", False)))); return
+        if action == "backfill_source_sessions":
+            limit = min(int(body.get("limit", 200)), 1000)
+            self._json(engine.source_session_backfill(limit=limit)); return
         if action == "merge_project_candidates":
             result = engine.space_candidate_merge_many(
                 candidate_ids=body.get("ids", []) or body.get("candidate_ids", []),

@@ -5,6 +5,7 @@
   import MemoryCard from '../components/MemoryCard.svelte';
   let spaces = [], selected = null, profile = null, includeArchived = false, queue = [];
   let projectCandidates = [], candidateDetail = null, candidateLoading = false;
+  let sourceSessionStats = null;
   let selectedCandidateIds = [], useLlmCandidateNaming = false;
   let form = { name: '', type: 'management', description: '' };
   let edit = { name:'', type:'', description:'', goal:'', current_state:'', next_action:'', priority:'medium' };
@@ -23,6 +24,8 @@
       spaces = await api.spaces({ include_archived: includeArchived });
       queue = await api.spaceClassificationQueue({ limit: 30 });
       projectCandidates = await api.spaceCandidates({ limit: 30 });
+      const sourceSessions = await api.sourceSessions({ limit: 1 });
+      sourceSessionStats = sourceSessions.stats;
       if (!selected && spaces[0]) await select(spaces[0], false);
     } finally { loading = false; }
   }
@@ -50,6 +53,14 @@
   async function rejectCandidate(c) { await withOp(`reject:${c.id}`, async()=>{ await api.spaceAction({ action:'reject_candidate', id:c.id }); queue = await api.spaceClassificationQueue({ limit: 30 }); notice='已标记为不是这个 Space。'; }); }
   async function newSpaceCandidate(c) { const name = prompt('新 Space 名称', c.suggested_space_name || c.title || '新空间'); if(!name) return; await withOp(`new:${c.id}`, async()=>{ await api.spaceAction({ action:'new_space_candidate', id:c.id, name }); selected=null; await load(); notice='已新建 Space 并绑定记忆。'; }); }
 
+  async function backfillSourceSessions() {
+    await withOp('backfill-source-sessions', async()=>{
+      const r = await api.spaceCandidateAction({ action:'backfill_source_sessions', limit:200 });
+      const sourceSessions = await api.sourceSessions({ limit:1 });
+      sourceSessionStats = sourceSessions.stats;
+      notice = `来源会话索引已更新：本次处理 ${r.created || 0} 个，剩余 ${r.remaining || 0} 个。此操作只建立来源索引，不改变记忆权重。`;
+    });
+  }
   async function scanProjectCandidates() {
     await withOp('scan-project-candidates', async()=>{
       const r = await api.spaceCandidateAction({ action:'scan_project_candidates', limit:30, min_memories:1, use_llm:useLlmCandidateNaming });
@@ -63,6 +74,7 @@
     finally { candidateLoading = false; }
   }
   async function acceptProjectCandidate(c) {
+    if(!confirm(`确认候选「${c.candidate_name}」为新 Space？\n\n这只会建立 Space 绑定和来源索引，不会改变记忆权重、置顶、重要性或原文。`)) return;
     const name = prompt('确认为新 Space，名称为：', c.candidate_name || '新项目');
     if(!name) return;
     await withOp(`accept-project:${c.id}`, async()=>{
@@ -72,7 +84,7 @@
   }
   async function mergeProjectCandidateToSelected(c) {
     if(!selected) { alert('请先在右侧选择要合并到的 Space。'); return; }
-    if(!confirm(`把候选「${c.candidate_name}」合并到当前 Space「${selected.name}」？\n这会绑定来源会话、记忆和待办，但不会删除原始数据。`)) return;
+    if(!confirm(`把候选「${c.candidate_name}」合并到当前 Space「${selected.name}」？\n这会绑定来源会话、记忆和待办，但不会删除原始数据，也不会改变记忆权重、置顶或重要性。`)) return;
     await withOp(`merge-project:${c.id}`, async()=>{
       await api.spaceCandidateAction({ action:'merge_project_candidate_to_space', id:c.id, space_id:selected.id });
       candidateDetail = null; await load(); await select(selected, false); notice='候选项目已合并到当前 Space。';
@@ -91,6 +103,7 @@
   async function mergeSelectedCandidates() {
     if(selectedCandidateIds.length < 2) { alert('请至少选择两个候选项目。'); return; }
     const sample = projectCandidates.find(c => c.id === selectedCandidateIds[0]);
+    if(!confirm(`将选中的 ${selectedCandidateIds.length} 个候选合并为新 Space？\n\n这只会建立 Space 绑定和来源索引，不会改变任何记忆权重。`)) return;
     const name = prompt('合并为新 Space，名称为：', sample?.candidate_name || '合并项目');
     if(!name) return;
     await withOp('merge-selected-projects', async()=>{
@@ -129,7 +142,8 @@
         </div>
       {/if}
 
-      <div class="section-head" style="margin-top:22px"><div><h2>项目整理候选</h2><p class="item-meta">基于历史会话自动发现候选项目；系统只提示，确认/合并/忽略都由你手动决定。</p></div><div class="toolbar" style="flex-wrap:wrap;justify-content:flex-end"><label class="item-meta" style="display:flex;gap:6px;align-items:center"><input type="checkbox" bind:checked={useLlmCandidateNaming}/>用摘要轻量优化命名</label><button class="btn" class:loading={busy('merge-selected-projects')} disabled={!!op || selectedCandidateIds.length < 2} on:click={mergeSelectedCandidates}>合并选中 {selectedCandidateIds.length || ''}</button><button class="btn" class:loading={busy('scan-project-candidates')} disabled={!!op} on:click={scanProjectCandidates}>{busy('scan-project-candidates')?'扫描中':'扫描历史会话'}</button></div></div>
+      <div class="section-head" style="margin-top:22px"><div><h2>项目整理候选</h2><p class="item-meta">基于历史会话自动发现候选项目；系统只提示，确认/合并/忽略都由你手动决定。</p></div><div class="toolbar" style="flex-wrap:wrap;justify-content:flex-end"><label class="item-meta" style="display:flex;gap:6px;align-items:center"><input type="checkbox" bind:checked={useLlmCandidateNaming}/>用摘要轻量优化命名</label><button class="btn" class:loading={busy('backfill-source-sessions')} disabled={!!op} on:click={backfillSourceSessions}>更新来源索引</button><button class="btn" class:loading={busy('merge-selected-projects')} disabled={!!op || selectedCandidateIds.length < 2} on:click={mergeSelectedCandidates}>合并选中 {selectedCandidateIds.length || ''}</button><button class="btn" class:loading={busy('scan-project-candidates')} disabled={!!op} on:click={scanProjectCandidates}>{busy('scan-project-candidates')?'扫描中':'扫描历史会话'}</button></div></div>
+      <div class="hint-card" style="margin:10px 0 12px">确认候选只会建立 Space 绑定和来源索引，不会修改记忆权重、置顶、重要性、原文或赫布关系。{#if sourceSessionStats} 来源索引：{sourceSessionStats.total || 0} 个，未映射内部会话 {sourceSessionStats.unmapped_sessions || 0} 个。{/if}</div>
       <div class="list">
         {#each projectCandidates as c}
           <div class="item">
@@ -222,6 +236,7 @@
         <button class="icon-btn" disabled={!!op} on:click={() => candidateDetail = null}>×</button>
       </div>
       <div class="modal-section"><h3>为什么推荐</h3><div class="raw-box" style="white-space:pre-line">{candidateDetail.reason}\n\n{candidateDetail.description}</div></div>
+      <div class="hint-card">边界说明：确认或合并这个候选，只会绑定来源会话、记忆和待办到 Space；不会改变 memory_units.signal_level / user_weight / pinned，也不会重写记忆原文。</div>
       {#if candidateDetail.suggested_aliases?.length}<div class="modal-section"><h3>建议别名 / 关键词</h3><div style="display:flex;gap:6px;flex-wrap:wrap">{#each candidateDetail.suggested_aliases as a}<span class="badge green">{a}</span>{/each}</div></div>{/if}
       {#if candidateDetail.merge_suggestions?.length}<div class="modal-section"><h3>可能合并对象</h3>{#each candidateDetail.merge_suggestions as s}<div class="hint-card" style="margin-top:8px">{s.name} · {pct(s.similarity)}% · {s.reason}</div>{/each}</div>{/if}
       <div class="modal-section"><h3>来源会话原始证据</h3>

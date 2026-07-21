@@ -24,6 +24,8 @@ export const api = {
   spaceClassificationQueue: (params = {}) => request(`/api/space/classification-queue?${new URLSearchParams(params)}`),
   spaceCandidates: (params = {}) => request(`/api/space/candidates?${new URLSearchParams(params)}`),
   spaceCandidate: (id) => request(`/api/space/candidate/${encodeURIComponent(id)}`),
+  sourceSessions: (params = {}) => request(`/api/source-sessions?${new URLSearchParams(params)}`),
+  sourceSession: (id) => request(`/api/source-session/${encodeURIComponent(id)}`),
   spaceCandidateAction: (body) => request('/api/space/candidate/action', { method: 'POST', body: JSON.stringify(body) }),
   spaceAction: (body) => request('/api/space/action', { method: 'POST', body: JSON.stringify(body) }),
   personaAction: (body) => request('/api/persona/action', { method: 'POST', body: JSON.stringify(body) }),

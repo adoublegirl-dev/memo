@@ -983,6 +983,32 @@ class Engine:
         from memo.space.candidates import space_candidate_manager
         return space_candidate_manager.ignore(candidate_id, note=note, actor=actor)
 
+    # ── 来源会话层 ──
+
+    def source_session_backfill(self, limit: int = 200) -> dict:
+        """渐进式为既有 memo.sessions 建立 source_sessions 来源索引。"""
+        self._ensure_init()
+        from memo.space.source_sessions import source_session_manager
+        return source_session_manager.backfill_from_sessions(limit=limit)
+
+    def source_session_list(self, limit: int = 50, source_type: str = "", source_agent: str = "") -> list[dict]:
+        """列出来源会话。"""
+        self._ensure_init()
+        from memo.space.source_sessions import source_session_manager
+        return source_session_manager.list(limit=limit, source_type=source_type, source_agent=source_agent)
+
+    def source_session_get(self, source_session_id: str) -> dict | None:
+        """查看来源会话详情。"""
+        self._ensure_init()
+        from memo.space.source_sessions import source_session_manager
+        return source_session_manager.get(source_session_id)
+
+    def source_session_stats(self) -> dict:
+        """来源会话统计。"""
+        self._ensure_init()
+        from memo.space.source_sessions import source_session_manager
+        return source_session_manager.stats()
+
     # ── 记忆治理 ──
 
     def memory_govern(self, memory_id: str, action: str, **kwargs) -> dict:

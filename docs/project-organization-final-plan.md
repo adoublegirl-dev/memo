@@ -151,7 +151,7 @@ space_candidate_audit_logs
 
 ## 4. 目标版本：source_sessions 来源层
 
-当前方案仍基于 `sessions`。下一阶段建议新增 `source_sessions`，形成更清晰的来源治理架构。
+当前方案已新增 `source_sessions` 基础来源索引层，但 Space Candidate 的 `source_session_ids` 字段仍保持 legacy `sessions.id` 兼容语义。下一阶段应让导入/同步链路直接写真实外部来源，并设计候选字段语义迁移。
 
 目标链路：
 
@@ -302,10 +302,12 @@ SELECT COUNT(*) FROM spaces;
 
 ### P1：source_sessions 来源层
 
-1. 新增 migration。
-2. 让导入/同步链路写 `source_sessions`。
-3. 增加 source → memory/todo 映射。
-4. Dashboard 显示真实来源会话。
+1. 已新增 migration `016_source_sessions.sql`。
+2. 已增加 source → memory/todo 映射。
+3. 已支持从 legacy `sessions` 渐进 backfill。
+4. 已在 Space 候选扫描时旁路建立 source session 索引。
+5. 下一步让导入/同步链路直接写 `source_sessions`。
+6. 下一步完善 Dashboard 的真实来源会话展示。
 
 ### P2：候选质量优化
 
