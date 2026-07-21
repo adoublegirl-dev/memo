@@ -56,9 +56,11 @@
   async function backfillSourceSessions() {
     await withOp('backfill-source-sessions', async()=>{
       const r = await api.spaceCandidateAction({ action:'backfill_source_sessions', limit:200 });
+      const t = await api.spaceCandidateAction({ action:'refresh_project_candidate_display_titles', limit:500 });
       const sourceSessions = await api.sourceSessions({ limit:1 });
       sourceSessionStats = sourceSessions.stats;
-      notice = `来源会话索引已更新：本次处理 ${r.created || 0} 个，剩余 ${r.remaining || 0} 个。此操作只建立来源索引，不改变记忆权重。`;
+      projectCandidates = await api.spaceCandidates({ limit:30 });
+      notice = `来源会话索引已更新：本次处理 ${r.created || 0} 个，剩余 ${r.remaining || 0} 个；刷新候选展示名 ${t.updated || 0} 条。此操作只建立来源索引，不改变记忆权重。`;
     });
   }
   async function scanProjectCandidates() {
@@ -243,8 +245,8 @@
         <div class="list">
           {#each candidateDetail.source_sessions || [] as s}
             <div class="item">
-              <div class="item-title">{s.title || `会话 ${shortId(s.id)}`}</div>
-              <div class="item-meta">{s.agent_id} · {s.created_at} · {s.memories?.length || 0} 条记忆片段</div>
+              <div class="item-title">{s.display_title || s.title || `会话 ${shortId(s.id)}`}</div>
+              <div class="item-meta">原始会话名：{s.original_title || s.title || '未命名'} · {s.agent_id} · {s.created_at} · {s.memories?.length || 0} 条记忆片段</div>
               {#each s.memories || [] as m}
                 <div class="raw-box" style="margin-top:10px">
                   <strong>{m.title || '未命名记忆'}</strong>
