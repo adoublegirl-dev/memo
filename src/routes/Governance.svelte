@@ -9,34 +9,29 @@
   let openGroup = '';
   let activeTab = 'source_groups';
   let page = 1;
-  let pageSize = 50;
+  let pageSize = '50';
   let q = '';
 
   const typeLabels = { FACT:'事实', DECISION:'决策', PREFERENCE:'偏好', EVENT:'事件', REASONING:'推理' };
   const statusLabels = { active:'可引用', expired:'已过期', wrong:'已标错', muted:'已合并/静默', deleted:'已删除' };
   const tabs = [
-    { id:'source_groups', label:'同源输入分组', icon:Layers3 },
-    { id:'dedupe_records', label:'去重记录', icon:ShieldCheck },
-    { id:'memory_links', label:'合并链', icon:GitMerge },
-    { id:'ingestion_events', label:'输入事件', icon:Inbox },
-    { id:'governed_memories', label:'已治理记忆', icon:RefreshCcw },
+    { id:'source_groups', label:'同源输入分组' },
+    { id:'dedupe_records', label:'去重记录' },
+    { id:'memory_links', label:'合并链' },
+    { id:'ingestion_events', label:'输入事件' },
+    { id:'governed_memories', label:'已治理记忆' },
   ];
 
-  $: total = overview?.counts?.[activeTab] || 0;
-  $: totalPages = Math.max(1, Math.ceil(total / pageSize));
+  $: currentPageSize = Number(pageSize || 50);
+  $: total = overview?.filtered_counts?.[activeTab] ?? overview?.counts?.[activeTab] ?? 0;
+  $: totalPages = Math.max(1, Math.ceil(total / currentPageSize));
+  $: currentLabel = tabs.find(t => t.id === activeTab)?.label || '治理记录';
 
   async function load() {
     loading = true; error = '';
-    try { overview = await api.governance({ tab: activeTab, page, page_size: pageSize, q }); }
+    try { overview = await api.governance({ tab: activeTab, page, page_size: currentPageSize, q }); }
     catch (e) { error = e.message; }
     finally { loading = false; }
-  }
-
-  async function switchTab(tab) {
-    activeTab = tab;
-    page = 1;
-    openGroup = '';
-    await load();
   }
 
   async function search() {
@@ -71,8 +66,8 @@
 <section class="page">
   <div class="page-head-row">
     <div>
-      <h1 class="page-title">记忆治理总控</h1>
-      <p class="page-subtitle">这里是重复来源、去重事件、合并链和治理状态的审计台。数据支持分页查看，默认每页 50 条；全量记忆检索请到“记忆”页面。</p>
+      <h1 class="page-title">治理审计</h1>
+      <p class="page-subtitle">查看同源输入分组、去重记录、合并链和输入事件。这里是治理账本；具体记忆的搜索、标错、过期、静默和软删除请到“记忆管理”。</p>
     </div>
     <button class="btn primary" class:loading={loading} disabled={loading} on:click={load}><RefreshCcw size={16}/> 刷新</button>
   </div>
@@ -80,21 +75,21 @@
   {#if error}<div class="card card-pad" style="color:var(--color-danger);margin-top:16px">{error}</div>{/if}
 
   <div class="grid cols-4" style="margin-top:22px">
-    <div class="card stat-card"><Layers3 size={20}/><div><strong>{countOf('source_groups')}</strong><span>同源组</span></div></div>
-    <div class="card stat-card"><ShieldCheck size={20}/><div><strong>{countOf('dedupe_records')}</strong><span>去重记录</span></div></div>
-    <div class="card stat-card"><GitMerge size={20}/><div><strong>{countOf('memory_links')}</strong><span>合并链</span></div></div>
-    <div class="card stat-card"><Inbox size={20}/><div><strong>{countOf('ingestion_events')}</strong><span>输入事件</span></div></div>
+    <div class="card stat-card"><Layers3 size={20}/><div><strong>{countOf('source_groups')}</strong><span>同源组总数</span></div></div>
+    <div class="card stat-card"><ShieldCheck size={20}/><div><strong>{countOf('dedupe_records')}</strong><span>去重记录总数</span></div></div>
+    <div class="card stat-card"><GitMerge size={20}/><div><strong>{countOf('memory_links')}</strong><span>合并链总数</span></div></div>
+    <div class="card stat-card"><Inbox size={20}/><div><strong>{countOf('ingestion_events')}</strong><span>输入事件总数</span></div></div>
   </div>
 
   <div class="card card-pad" style="margin-top:18px">
     <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
       <div class="toolbar" style="gap:8px;flex-wrap:wrap">
-        {#each tabs as t}
-          <button class="btn" class:primary={activeTab === t.id} disabled={loading} on:click={() => switchTab(t.id)}><svelte:component this={t.icon} size={15}/> {t.label} <span class="badge">{countOf(t.id)}</span></button>
-        {/each}
+        <select class="input" style="width:180px" bind:value={activeTab} on:change={search}>
+          {#each tabs as t}<option value={t.id}>{t.label}</option>{/each}
+        </select>
+        <div style="position:relative"><Search size={15} style="position:absolute;left:10px;top:10px;color:var(--text-muted)"/><input class="input" style="padding-left:32px;width:300px" bind:value={q} on:keydown={(e)=>{ if(e.key==='Enter') search(); }} placeholder="搜索治理记录" /></div>
       </div>
       <div class="toolbar" style="gap:8px">
-        <div style="position:relative"><Search size={15} style="position:absolute;left:10px;top:10px;color:var(--text-muted)"/><input class="input" style="padding-left:32px;width:260px" bind:value={q} on:keydown={(e)=>{ if(e.key==='Enter') search(); }} placeholder="搜索治理记录" /></div>
         <select class="input" style="width:110px" bind:value={pageSize} on:change={search}>
           <option value="50">50 / 页</option>
           <option value="100">100 / 页</option>
@@ -103,7 +98,7 @@
         <button class="btn" disabled={loading} on:click={search}>搜索</button>
       </div>
     </div>
-    <div class="item-meta" style="margin-top:12px">当前：{tabs.find(t => t.id === activeTab)?.label} · 共 {total} 条 · 第 {page} / {totalPages} 页</div>
+    <div class="item-meta" style="margin-top:12px">当前：{currentLabel} · 匹配 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
   </div>
 
   {#if loading}
@@ -182,7 +177,7 @@
 
   <div class="toolbar" style="justify-content:flex-end;margin-top:18px">
     <button class="btn" disabled={loading || page <= 1} on:click={() => gotoPage(page - 1)}>上一页</button>
-    <span class="item-meta">第 {page} / {totalPages} 页，每页 {pageSize} 条，共 {total} 条</span>
+    <span class="item-meta">第 {page} / {totalPages} 页，每页 {pageSize} 条，匹配 {total} 条</span>
     <button class="btn" disabled={loading || page >= totalPages} on:click={() => gotoPage(page + 1)}>下一页</button>
   </div>
 </section>
