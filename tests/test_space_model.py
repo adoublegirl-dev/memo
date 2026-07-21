@@ -47,3 +47,59 @@ def test_space_detect_by_name():
     assert candidates
     assert candidates[0]["space_id"] == space["id"]
     assert candidates[0]["confidence"] >= 0.4
+
+
+def test_space_candidate_from_session_requires_manual_accept():
+    engine.init()
+    session = engine.start_session(title="候选项目整理测试会话")
+    memory_id = engine.remember(
+        session_id=session.id,
+        raw_text="候选项目整理需要基于历史会话生成 Space Candidate，并由用户查看来源证据后手动确认。",
+        title="候选项目整理方案",
+        summary="基于会话生成候选项目，并保留人工确认边界",
+        feature_tags=["候选项目", "历史会话", "人工确认"],
+    )
+
+    scan = engine.space_candidate_scan(limit=20, min_memories=1)
+    assert scan["scanned"] >= 1
+    candidates = engine.space_candidate_list(limit=20)
+    target = next(c for c in candidates if c["candidate_name"] == "候选项目整理测试会话")
+    detail = engine.space_candidate_get(target["id"])
+    assert detail["status"] == "pending"
+    assert detail["source_sessions"]
+    assert any(m["id"] == memory_id for m in detail["source_memories"])
+
+    accepted = engine.space_candidate_accept(target["id"], name="候选项目整理正式空间", type="management")
+    assert accepted["candidate_status"] == "accepted"
+    space_results = engine.space_recall(accepted["id"], "人工确认", top_k=3, mode="within")
+    assert any(r["id"] == memory_id for r in space_results)
+
+
+def test_space_candidate_merge_many():
+    engine.init()
+    s1 = engine.start_session(title="候选合并 A")
+    m1 = engine.remember(
+        session_id=s1.id,
+        raw_text="候选合并功能需要把多个候选项目由用户手动合并为一个正式空间。",
+        title="候选合并 A 记忆",
+        summary="多个候选项目可手动合并为一个正式空间",
+        feature_tags=["候选合并", "手动确认"],
+    )
+    s2 = engine.start_session(title="候选合并 B")
+    m2 = engine.remember(
+        session_id=s2.id,
+        raw_text="多候选合并仍然需要保留来源证据，并绑定所有相关记忆。",
+        title="候选合并 B 记忆",
+        summary="多候选合并需要保留来源证据并绑定记忆",
+        feature_tags=["候选合并", "来源证据"],
+    )
+
+    engine.space_candidate_scan(limit=20, min_memories=1)
+    candidates = engine.space_candidate_list(limit=50)
+    ids = [c["id"] for c in candidates if c["candidate_name"] in {"候选合并 A", "候选合并 B"}]
+    assert len(ids) == 2
+    merged = engine.space_candidate_merge_many(ids, name="候选合并正式空间", type="management")
+    assert merged["candidate_status"] == "merged"
+    results = engine.space_recall(merged["id"], "候选合并", top_k=5, mode="within")
+    result_ids = {r["id"] for r in results}
+    assert {m1, m2}.issubset(result_ids)

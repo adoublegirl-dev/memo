@@ -777,6 +777,15 @@ def _refresh_space_classification_queue(limit: int = 100, threshold: float = 0.2
     from memo.space.detector import space_detector
     from memo.store.database import new_id
 
+    active_spaces = db.fetchone("SELECT COUNT(*) AS c FROM spaces WHERE status != 'archived'")
+    if not active_spaces or int(active_spaces["c"] or 0) == 0:
+        return {
+            "created": 0,
+            "scanned": 0,
+            "pending": len(_list_space_classification_queue(limit=1000)),
+            "reason": "暂无可归入的活跃 Space。请先创建或恢复一个 Space，再扫描近期记忆。",
+        }
+
     rows = db.fetchall(
         """SELECT mu.id, mu.title, mu.summary, mu.raw_text
            FROM memory_units mu
@@ -1079,6 +1088,18 @@ class MemoHandler(BaseHTTPRequestHandler):
         elif path == "/api/space/classification-queue":
             limit = int(self._get_query_param("limit", "50"))
             self._json(_list_space_classification_queue(limit=limit))
+        elif path == "/api/space/candidates":
+            status = self._get_query_param("status", "pending")
+            limit = int(self._get_query_param("limit", "50"))
+            self._json(engine.space_candidate_list(status=status, limit=limit))
+        elif path == "/api/space/candidate/action":
+            self._handle_project_candidate_action()
+        elif path.startswith("/api/space/candidate/"):
+            cid = path.split("/")[-1]
+            result = engine.space_candidate_get(cid)
+            if not result:
+                self._json({"error": "candidate not found"}, 404); return
+            self._json(result)
         elif path == "/api/space/action":
             self._handle_space_action()
         elif path.startswith("/api/space/"):
@@ -1160,9 +1181,53 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._json(result); return
         if action == "refresh_classification_queue":
             self._json(_refresh_space_classification_queue(limit=int(body.get("limit", 100)), threshold=float(body.get("threshold", 0.25)))); return
+        if action == "scan_project_candidates":
+            limit = min(int(body.get("limit", 30)), 50)
+            self._json(engine.space_candidate_scan(limit=limit, min_memories=int(body.get("min_memories", 1)), use_llm=bool(body.get("use_llm", False)))); return
+        if action in {"accept_project_candidate", "merge_project_candidate_to_space", "merge_project_candidates", "ignore_project_candidate"}:
+            self._handle_project_candidate_body(action, body); return
         if action in {"accept_candidate", "reject_candidate", "new_space_candidate"}:
             self._handle_space_candidate_action(action, body); return
         self._json({"error": f"unknown action {action}"}, 400)
+
+    def _handle_project_candidate_action(self):
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        body = _j.loads(self.rfile.read(length)) if length > 0 else {}
+        self._handle_project_candidate_body(body.get("action", ""), body)
+
+    def _handle_project_candidate_body(self, action: str, body: dict):
+        cid = body.get("id", "") or body.get("candidate_id", "")
+        if action == "scan_project_candidates":
+            limit = min(int(body.get("limit", 30)), 50)
+            self._json(engine.space_candidate_scan(limit=limit, min_memories=int(body.get("min_memories", 1)), use_llm=bool(body.get("use_llm", False)))); return
+        if action == "merge_project_candidates":
+            result = engine.space_candidate_merge_many(
+                candidate_ids=body.get("ids", []) or body.get("candidate_ids", []),
+                name=body.get("name", ""),
+                type=body.get("type", "project"),
+                description=body.get("description", ""),
+                actor="dashboard",
+            )
+            self._json(result, 400 if result.get("error") else 200); return
+        if not cid:
+            self._json({"error": "missing candidate id"}, 400); return
+        if action == "accept_project_candidate":
+            result = engine.space_candidate_accept(
+                cid,
+                name=body.get("name", ""),
+                type=body.get("type", "project"),
+                description=body.get("description", ""),
+                actor="dashboard",
+            )
+            self._json(result, 400 if result.get("error") else 200); return
+        if action == "merge_project_candidate_to_space":
+            result = engine.space_candidate_merge_to_space(cid, space_id=body.get("space_id", ""), actor="dashboard")
+            self._json(result, 400 if result.get("error") else 200); return
+        if action == "ignore_project_candidate":
+            result = engine.space_candidate_ignore(cid, note=body.get("note", ""), actor="dashboard")
+            self._json(result, 400 if result.get("error") else 200); return
+        self._json({"error": f"unknown project candidate action {action}"}, 400)
 
     def _handle_space_candidate_action(self, action: str, body: dict):
         from datetime import datetime
@@ -1292,7 +1357,7 @@ class MemoHandler(BaseHTTPRequestHandler):
                 space_id=body.get("space_id", ""),
                 source_agent="dashboard",
             )
-            self._json(result); return
+            self._json(result, 400 if result.get("error") else 200); return
         if action == "close":
             close_todos([tid], agent="dashboard")
         elif action == "reopen":
@@ -1300,15 +1365,17 @@ class MemoHandler(BaseHTTPRequestHandler):
         elif action == "cancel":
             update_todo(tid, status="cancelled", agent="dashboard")
         elif action == "update":
-            update_todo(
+            result = update_todo(
                 tid,
-                title=body.get("title", ""),
-                priority=body.get("priority", ""),
-                status=body.get("status", ""),
-                due_date=body.get("due_date", ""),
-                description=body.get("description", ""),
+                title=body.get("title") if "title" in body else None,
+                priority=body.get("priority") if "priority" in body else None,
+                status=body.get("status") if "status" in body else None,
+                due_date=body.get("due_date") if "due_date" in body else None,
+                description=body.get("description") if "description" in body else None,
                 agent="dashboard",
             )
+            if result.get("error"):
+                self._json(result, 400); return
         else:
             self._json({"error": f"unknown action {action}"}, 400); return
         self._json({"ok": True})
