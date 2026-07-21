@@ -1,6 +1,7 @@
 """Context Space 基础闭环测试。"""
 
 from memo.core.engine import engine
+from memo.store.database import db
 
 
 def test_space_create_bind_recall_and_todo():
@@ -73,6 +74,29 @@ def test_space_candidate_from_session_requires_manual_accept():
     assert accepted["candidate_status"] == "accepted"
     space_results = engine.space_recall(accepted["id"], "人工确认", top_k=3, mode="within")
     assert any(r["id"] == memory_id for r in space_results)
+
+
+def test_space_candidate_accept_does_not_change_memory_weights():
+    engine.init()
+    session = engine.start_session(title="候选权重边界测试会话")
+    memory_id = engine.remember(
+        session_id=session.id,
+        raw_text="候选项目整理只能建立 Space 归属映射，不能改变记忆权重、置顶或信号等级。",
+        title="候选权重边界记忆",
+        summary="确认 Space Candidate 不触碰记忆权重字段",
+        feature_tags=["候选权重边界", "Space Candidate", "不改权重"],
+    )
+    engine.memory_govern(memory_id, "pin", user_weight=1.7, user_note="权重边界测试")
+    before = dict(db.fetchone("SELECT signal_level, user_weight, pinned, status FROM memory_units WHERE id=?", (memory_id,)))
+
+    engine.space_candidate_scan(limit=30, min_memories=1)
+    candidates = engine.space_candidate_list(limit=50)
+    target = next(c for c in candidates if c["candidate_name"] == "候选权重边界测试会话")
+    accepted = engine.space_candidate_accept(target["id"], name="候选权重边界正式空间", type="management")
+    assert accepted["candidate_status"] == "accepted"
+
+    after = dict(db.fetchone("SELECT signal_level, user_weight, pinned, status FROM memory_units WHERE id=?", (memory_id,)))
+    assert after == before
 
 
 def test_space_candidate_merge_many():
