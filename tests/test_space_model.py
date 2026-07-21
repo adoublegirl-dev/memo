@@ -91,7 +91,7 @@ def test_space_candidate_uses_memory_title_for_generic_auto_session_display():
     candidates = engine.space_candidate_list(limit=50)
     target = next(c for c in candidates if c["candidate_name"] == "候选展示名修复")
     assert "来自会话《自动同步会话》" not in target["reason"]
-    assert "来自会话《候选展示名修复》" in target["reason"]
+    assert "根据历史会话内容识别：候选展示名修复" in target["reason"]
     detail = engine.space_candidate_get(target["id"])
     assert detail["source_sessions"][0]["display_title"] == "候选展示名修复"
     assert detail["source_sessions"][0]["original_title"] == "自动同步会话"
@@ -140,6 +140,31 @@ def test_space_candidate_accept_does_not_change_memory_weights():
 
     after = dict(db.fetchone("SELECT signal_level, user_weight, pinned, status FROM memory_units WHERE id=?", (memory_id,)))
     assert after == before
+
+
+def test_governance_overview_supports_pagination_and_search():
+    engine.init()
+    s1 = engine.start_session(title="治理分页测试一")
+    engine.remember(
+        session_id=s1.id,
+        raw_text="治理分页测试重复原文，用于形成同源输入分组。",
+        title="治理分页测试主记忆",
+        summary="验证治理页分页查询",
+        feature_tags=["治理分页"],
+    )
+    s2 = engine.start_session(title="治理分页测试二")
+    engine.remember(
+        session_id=s2.id,
+        raw_text="治理分页测试重复原文，用于形成同源输入分组。",
+        title="治理分页测试副记忆",
+        summary="验证治理页分页查询",
+        feature_tags=["治理分页"],
+    )
+
+    result = engine.governance_overview(tab="source_groups", page=1, page_size=50, q="治理分页测试")
+    assert result["page_size"] == 50
+    assert result["counts"]["source_groups"] >= 1
+    assert any("治理分页测试" in g["normalized_preview"] or "治理分页测试" in g["canonical_title"] for g in result["source_groups"])
 
 
 def test_space_candidate_merge_many():

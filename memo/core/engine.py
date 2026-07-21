@@ -1045,22 +1045,77 @@ class Engine:
         self._ensure_init()
         return memory_store.get_memory_links(memory_id, limit=limit)
 
-    def governance_overview(self, limit: int = 50) -> dict[str, Any]:
-        """记忆治理概览：去重、导入事件、合并链、审计。"""
+    def governance_overview(self, limit: int = 50, page: int = 1, page_size: int = 50, q: str = "", tab: str = "all") -> dict[str, Any]:
+        """记忆治理分页视图：去重、导入事件、合并链、同源组。"""
         self._ensure_init()
-        from memo.dedupe.ingestion import recent_ingestion_events
-        dedupe = db.fetchall("SELECT * FROM memory_dedupe_records ORDER BY created_at DESC LIMIT ?", (limit,))
-        links = db.fetchall("SELECT * FROM memory_links ORDER BY created_at DESC LIMIT ?", (limit,))
-        governed = db.fetchall("SELECT id,title,status,updated_at FROM memory_units WHERE status IN ('wrong','expired','muted','deleted') ORDER BY updated_at DESC LIMIT ?", (limit,))
-        return {
-            "dedupe_records": [dict(r) for r in dedupe],
-            "ingestion_events": recent_ingestion_events(limit=limit),
-            "memory_links": [dict(r) for r in links],
-            "governed_memories": [dict(r) for r in governed],
-            "source_groups": self._governance_source_groups(limit=limit),
-        }
+        page_size = max(1, min(int(page_size or limit or 50), 200))
+        page = max(1, int(page or 1))
+        offset = (page - 1) * page_size
+        q = (q or "").strip()
+        tab = tab or "source_groups"
 
-    def _governance_source_groups(self, limit: int = 50) -> list[dict[str, Any]]:
+        counts = {
+            "source_groups": self._governance_source_groups_count(q=q),
+            "dedupe_records": self._governance_table_count("memory_dedupe_records", q=q, fields=["source_agent", "fact_key", "action_key", "entity_key", "decision", "reason"]),
+            "memory_links": self._governance_table_count("memory_links", q=q, fields=["source_memory_id", "target_memory_id", "relation_type", "reason", "created_by"]),
+            "ingestion_events": self._governance_table_count("ingestion_events", q=q, fields=["source_type", "source_agent", "source_session_id", "status", "reason"]),
+            "governed_memories": self._governance_table_count("memory_units", q=q, fields=["title", "summary", "memory_type", "status"], extra_where="status IN ('wrong','expired','muted','deleted')"),
+        }
+        result = {
+            "page": page,
+            "page_size": page_size,
+            "q": q,
+            "tab": tab,
+            "counts": counts,
+            "dedupe_records": [],
+            "ingestion_events": [],
+            "memory_links": [],
+            "governed_memories": [],
+            "source_groups": [],
+        }
+        if tab == "all":
+            result["source_groups"] = self._governance_source_groups(limit=limit, offset=0, q=q)
+            result["dedupe_records"] = self._governance_table_page("memory_dedupe_records", q=q, fields=["source_agent", "fact_key", "action_key", "entity_key", "decision", "reason"], order_by="created_at DESC", limit=limit, offset=0)
+            result["memory_links"] = self._governance_table_page("memory_links", q=q, fields=["source_memory_id", "target_memory_id", "relation_type", "reason", "created_by"], order_by="created_at DESC", limit=limit, offset=0)
+            result["ingestion_events"] = self._governance_table_page("ingestion_events", q=q, fields=["source_type", "source_agent", "source_session_id", "status", "reason"], order_by="created_at DESC", limit=limit, offset=0)
+            result["governed_memories"] = self._governance_table_page("memory_units", q=q, fields=["title", "summary", "memory_type", "status"], extra_where="status IN ('wrong','expired','muted','deleted')", columns="id,title,status,memory_type,summary,updated_at", order_by="updated_at DESC", limit=limit, offset=0)
+        elif tab == "dedupe_records":
+            result["dedupe_records"] = self._governance_table_page("memory_dedupe_records", q=q, fields=["source_agent", "fact_key", "action_key", "entity_key", "decision", "reason"], order_by="created_at DESC", limit=page_size, offset=offset)
+        elif tab == "memory_links":
+            result["memory_links"] = self._governance_table_page("memory_links", q=q, fields=["source_memory_id", "target_memory_id", "relation_type", "reason", "created_by"], order_by="created_at DESC", limit=page_size, offset=offset)
+        elif tab == "ingestion_events":
+            result["ingestion_events"] = self._governance_table_page("ingestion_events", q=q, fields=["source_type", "source_agent", "source_session_id", "status", "reason"], order_by="created_at DESC", limit=page_size, offset=offset)
+        elif tab == "governed_memories":
+            result["governed_memories"] = self._governance_table_page("memory_units", q=q, fields=["title", "summary", "memory_type", "status"], extra_where="status IN ('wrong','expired','muted','deleted')", columns="id,title,status,memory_type,summary,updated_at", order_by="updated_at DESC", limit=page_size, offset=offset)
+        else:
+            result["tab"] = "source_groups"
+            result["source_groups"] = self._governance_source_groups(limit=page_size, offset=offset, q=q)
+        return result
+
+    def _governance_where(self, q: str = "", fields: list[str] | None = None, extra_where: str = "") -> tuple[str, tuple]:
+        where = []
+        params: list[Any] = []
+        if extra_where:
+            where.append(f"({extra_where})")
+        if q and fields:
+            where.append("(" + " OR ".join([f"COALESCE({f}, '') LIKE ?" for f in fields]) + ")")
+            params.extend([f"%{q}%"] * len(fields))
+        return (" WHERE " + " AND ".join(where) if where else "", tuple(params))
+
+    def _governance_table_count(self, table: str, q: str = "", fields: list[str] | None = None, extra_where: str = "") -> int:
+        where, params = self._governance_where(q=q, fields=fields, extra_where=extra_where)
+        row = db.fetchone(f"SELECT COUNT(*) AS c FROM {table}{where}", params)
+        return int(row["c"] if row else 0)
+
+    def _governance_table_page(self, table: str, q: str = "", fields: list[str] | None = None, extra_where: str = "", columns: str = "*", order_by: str = "created_at DESC", limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        where, params = self._governance_where(q=q, fields=fields, extra_where=extra_where)
+        rows = db.fetchall(f"SELECT {columns} FROM {table}{where} ORDER BY {order_by} LIMIT ? OFFSET ?", params + (limit, offset))
+        return [dict(r) for r in rows]
+
+    def _governance_source_groups_count(self, q: str = "") -> int:
+        return len(self._governance_source_groups(limit=1_000_000, offset=0, q=q))
+
+    def _governance_source_groups(self, limit: int = 50, offset: int = 0, q: str = "") -> list[dict[str, Any]]:
         """按同源输入聚合记忆，用于治理页避免 raw_text 相同的多条记忆平铺。"""
         from memo.dedupe.normalizer import normalize_conversation, stable_hash
 
@@ -1069,7 +1124,7 @@ class Engine:
                FROM memory_units
                WHERE raw_text IS NOT NULL AND trim(raw_text) != '' AND COALESCE(status,'active') != 'deleted'
                ORDER BY created_at DESC
-               LIMIT 2000"""
+               LIMIT 20000"""
         )
         groups: dict[str, dict[str, Any]] = {}
         for r in rows:
@@ -1107,8 +1162,16 @@ class Engine:
             g["created_at_max"] = max((m.get("created_at") or "") for m in members)
             result.append(g)
 
+        if q:
+            q_lower = q.lower()
+            result = [
+                g for g in result
+                if q_lower in (g.get("canonical_title") or "").lower()
+                or q_lower in (g.get("normalized_preview") or "").lower()
+                or any(q_lower in (m.get("title") or "").lower() or q_lower in (m.get("summary") or "").lower() for m in g.get("members", []))
+            ]
         result.sort(key=lambda g: (g["count"], g["created_at_max"]), reverse=True)
-        return result[:limit]
+        return result[offset:offset + limit]
 
     # ── 待办管理 ──
 

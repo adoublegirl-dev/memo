@@ -5,6 +5,7 @@
   import MemoryCard from '../components/MemoryCard.svelte';
   let spaces = [], selected = null, profile = null, includeArchived = false, queue = [];
   let projectCandidates = [], candidateDetail = null, candidateLoading = false;
+  let projectCandidateVisibleLimit = 30;
   let sourceSessionStats = null;
   let selectedCandidateIds = [], useLlmCandidateNaming = false;
   let form = { name: '', type: 'management', description: '' };
@@ -23,7 +24,7 @@
     try {
       spaces = await api.spaces({ include_archived: includeArchived });
       queue = await api.spaceClassificationQueue({ limit: 30 });
-      projectCandidates = await api.spaceCandidates({ limit: 30 });
+      projectCandidates = await api.spaceCandidates({ limit: 1000 });
       const sourceSessions = await api.sourceSessions({ limit: 1 });
       sourceSessionStats = sourceSessions.stats;
       if (!selected && spaces[0]) await select(spaces[0], false);
@@ -59,15 +60,16 @@
       const t = await api.spaceCandidateAction({ action:'refresh_project_candidate_display_titles', limit:500 });
       const sourceSessions = await api.sourceSessions({ limit:1 });
       sourceSessionStats = sourceSessions.stats;
-      projectCandidates = await api.spaceCandidates({ limit:30 });
+      projectCandidates = await api.spaceCandidates({ limit:1000 });
       notice = `来源会话索引已更新：本次处理 ${r.created || 0} 个，剩余 ${r.remaining || 0} 个；刷新候选展示名 ${t.updated || 0} 条。此操作只建立来源索引，不改变记忆权重。`;
     });
   }
   async function scanProjectCandidates() {
     await withOp('scan-project-candidates', async()=>{
-      const r = await api.spaceCandidateAction({ action:'scan_project_candidates', limit:30, min_memories:1, use_llm:useLlmCandidateNaming });
-      projectCandidates = await api.spaceCandidates({ limit:30 });
-      notice = `项目整理扫描完成：本次检查 ${r.scanned || 0} 个会话，新增 ${r.created || 0} 个候选，更新 ${r.updated || 0} 个。剩余未扫描 ${r.remaining_sessions || 0} 个，可继续点击扫描下一批。`;
+      const r = await api.spaceCandidateAction({ action:'scan_project_candidates', full_scan:true, min_memories:1, use_llm:useLlmCandidateNaming });
+      projectCandidates = await api.spaceCandidates({ limit:1000 });
+      projectCandidateVisibleLimit = 30;
+      notice = `项目整理全量扫描完成：共检查 ${r.scanned || 0} 个会话，新增 ${r.created || 0} 个候选，更新 ${r.updated || 0} 个。当前待处理候选 ${projectCandidates.length} 个，默认展示前 30 个，可在列表底部继续展开。`;
     });
   }
   async function openCandidate(c) {
@@ -96,7 +98,7 @@
     if(!confirm(`忽略候选「${c.candidate_name}」？它不会创建 Space，也不会绑定数据。`)) return;
     await withOp(`ignore-project:${c.id}`, async()=>{
       await api.spaceCandidateAction({ action:'ignore_project_candidate', id:c.id, note:'用户在项目整理队列中忽略' });
-      candidateDetail = null; projectCandidates = await api.spaceCandidates({ limit:30 }); selectedCandidateIds = selectedCandidateIds.filter(id => id !== c.id); notice='已忽略这个候选项目。';
+      candidateDetail = null; projectCandidates = await api.spaceCandidates({ limit:1000 }); selectedCandidateIds = selectedCandidateIds.filter(id => id !== c.id); notice='已忽略这个候选项目。';
     });
   }
   function toggleCandidate(id) {
@@ -147,7 +149,7 @@
       <div class="section-head" style="margin-top:22px"><div><h2>项目整理候选</h2><p class="item-meta">基于历史会话自动发现候选项目；系统只提示，确认/合并/忽略都由你手动决定。</p></div><div class="toolbar" style="flex-wrap:wrap;justify-content:flex-end"><label class="item-meta" style="display:flex;gap:6px;align-items:center"><input type="checkbox" bind:checked={useLlmCandidateNaming}/>用摘要轻量优化命名</label><button class="btn" class:loading={busy('backfill-source-sessions')} disabled={!!op} on:click={backfillSourceSessions}>更新来源索引</button><button class="btn" class:loading={busy('merge-selected-projects')} disabled={!!op || selectedCandidateIds.length < 2} on:click={mergeSelectedCandidates}>合并选中 {selectedCandidateIds.length || ''}</button><button class="btn" class:loading={busy('scan-project-candidates')} disabled={!!op} on:click={scanProjectCandidates}>{busy('scan-project-candidates')?'扫描中':'扫描历史会话'}</button></div></div>
       <div class="hint-card" style="margin:10px 0 12px">确认候选只会建立 Space 绑定和来源索引，不会修改记忆权重、置顶、重要性、原文或赫布关系。{#if sourceSessionStats} 来源索引：{sourceSessionStats.total || 0} 个，未映射内部会话 {sourceSessionStats.unmapped_sessions || 0} 个。{/if}</div>
       <div class="list">
-        {#each projectCandidates as c}
+        {#each projectCandidates.slice(0, projectCandidateVisibleLimit) as c}
           <div class="item">
             <div class="toolbar" style="justify-content:space-between;align-items:flex-start">
               <label class="item-meta" style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" checked={selectedCandidateIds.includes(c.id)} on:change={() => toggleCandidate(c.id)} />选择</label>
@@ -171,6 +173,9 @@
         {:else}
           <div class="empty card">暂无候选项目。点击“扫描历史会话”后，系统会先生成候选，不会自动创建正式 Space。</div>
         {/each}
+        {#if projectCandidates.length > projectCandidateVisibleLimit}
+          <button class="btn" style="width:100%;justify-content:center" on:click={() => projectCandidateVisibleLimit = Math.min(projectCandidateVisibleLimit + 30, projectCandidates.length)}>查看更多：再显示 30 条（已显示 {projectCandidateVisibleLimit} / {projectCandidates.length}）</button>
+        {/if}
       </div>
 
       <div class="section-head" style="margin-top:22px"><h2>自动归类确认队列</h2><button class="btn" class:loading={busy('scan')} disabled={!!op} on:click={refreshQueue}>{busy('scan')?'扫描中':'扫描近期记忆'}</button></div>
