@@ -50,6 +50,81 @@ def full_mcp_config() -> dict:
     return {"mcpServers": {"memo": mcp_server_config()}}
 
 
+def build_next_steps_guide(hana_file: Path, qoder_file: Path, generic_file: Path) -> str:
+    return f"""# 下一步：让 Agent 连接 Memo
+
+安装器已经把 Memo 的连接配置准备好了。你需要做的是：让你常用的 Agent 知道如何连接 Memo。
+
+## 如果你使用 HanaAgent
+
+HanaAgent 通常需要在软件设置里手动添加 MCP 连接器。
+
+1. 打开 HanaAgent。
+2. 进入设置页。
+3. 找到 MCP / 连接器 / 工具连接相关设置。
+4. 打开这个文件：
+
+```text
+{hana_file}
+```
+
+5. 复制文件里的全部内容。
+6. 粘贴到 HanaAgent 的 MCP 连接器配置里。
+7. 保存设置。
+8. 重启 HanaAgent。
+
+完成后，HanaAgent 就可以调用 Memo 的记忆、待办、人格和项目工具。
+
+## 如果你使用 Qoder / QoderWork
+
+安装器会尝试自动配置 Qoder。如果自动配置成功，通常只需要重启 Qoder。
+
+如果重启后没有看到 Memo 工具，请手动导入：
+
+1. 打开 Qoder / QoderWork。
+2. 进入设置页。
+3. 找到 MCP 配置。
+4. 打开这个文件：
+
+```text
+{qoder_file}
+```
+
+5. 复制文件里的全部内容。
+6. 粘贴到 Qoder 的 MCP 配置里。
+7. 保存并重启 Qoder。
+
+## 如果你使用其他 Agent
+
+可使用通用配置文件：
+
+```text
+{generic_file}
+```
+
+原则是把其中的 `mcpServers.memo` 配置加入你的 Agent MCP 配置中。
+
+## 如果已经自动配置过
+
+如果安装器输出里显示类似：
+
+```text
+written: true
+backup: xxx.bak-时间
+```
+
+说明它已经帮你写入配置。你一般只需要：
+
+```text
+重启对应 Agent
+```
+
+## 注意
+
+安装器只会更新 memo 这一项 MCP 配置，不会删除你原来配置的其他 MCP 工具。
+"""
+
+
 def backup_file(path: Path) -> Path | None:
     if not path.exists():
         return None
@@ -111,6 +186,10 @@ def write_generated_files() -> list[dict]:
     qoder_file = OUTPUT_DIR / "qoder_mcp_ready_to_paste.json"
     qoder_file.write_text(json.dumps(full_mcp_config(), ensure_ascii=False, indent=2), encoding="utf-8")
     files.append({"path": str(qoder_file), "description": "Qoder / QoderWork 可粘贴的 MCP 配置"})
+
+    guide_file = OUTPUT_DIR / "下一步-如何让Agent连接Memo.md"
+    guide_file.write_text(build_next_steps_guide(hana_file, qoder_file, mcp_file), encoding="utf-8")
+    files.append({"path": str(guide_file), "description": "安装后下一步操作说明，适合普通用户照着做"})
     return files
 
 
@@ -222,7 +301,11 @@ def main() -> int:
         print("\nMemo Agent 配置结果：")
         for item in results:
             print("- " + json.dumps(item, ensure_ascii=False))
-        print("\n提示：HanaAgent 请打开 install_output/hanaagent_mcp_ready_to_paste.json 复制到设置页；Qoder 请打开 install_output/qoder_mcp_ready_to_paste.json 复制到设置页。")
+        print("\n下一步怎么做：")
+        print("1. 如果输出里出现 written: true，说明对应 Agent 已经自动写入配置，一般只需要重启那个 Agent。")
+        print("2. HanaAgent 通常需要手动粘贴 MCP 配置。请打开 install_output/下一步-如何让Agent连接Memo.md，按里面步骤操作。")
+        print("3. 如果 Qoder 重启后没有看到 Memo 工具，也打开上面的说明文件，按 Qoder 部分手动导入。")
+        print("说明文件路径：install_output/下一步-如何让Agent连接Memo.md")
     return 0
 
 
