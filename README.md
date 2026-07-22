@@ -34,7 +34,7 @@ full_install.bat
 
 它会自动判断新装、升级或修复：已有的 `.env`、`data/` 不会覆盖；缺少的依赖会补齐；MCP 只更新 memo 这一项。
 
-安装过程中会先检查 `.env` 是否已有 `LLM_API_KEY`：已有则跳过；没有则提供 DeepSeek / OpenAI / 自定义 OpenAI-compatible 模型选择、Key 输入和连接测试。用户也可以跳过，之后手动编辑 `.env` 配置。安装完成后，终端会提示到对应 Agent 中配置并启用 MCP，并给出 `install_output/` 下可复制的 ready-to-paste 配置文件。
+安装过程中会先检查 `.env` 是否已有 `LLM_API_KEY`：已有则跳过；没有则提供 DeepSeek / OpenAI / 自定义 OpenAI-compatible 模型选择、Key 输入和连接测试。默认推荐 `deepseek-v4-flash`，其次可选 `deepseek-v4-pro`；记忆写入、总结和治理会持续消耗 token，普通用户建议优先使用便宜模型。用户也可以跳过，之后手动编辑 `.env` 配置。安装完成后，终端会提示到对应 Agent 中配置并启用 MCP，并给出 `install_output/` 下可复制的 ready-to-paste 配置文件。
 
 旧版一键安装器仍可使用：
 
