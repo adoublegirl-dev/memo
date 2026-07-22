@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Memo Desktop Companion</title>
+    <link rel="stylesheet" href="./companion.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <div class="ambient ambient-a"></div>
+        <div class="ambient ambient-b"></div>
+
+        <header class="topbar">
+          <div class="brand" data-drag-region>
+            <div class="avatar" aria-hidden="true">
+              <span class="avatar-core">M</span>
+            </div>
+            <div>
+              <div class="eyebrow">Memo Companion</div>
+              <h1>Memo助手</h1>
+            </div>
+          </div>
+          <div class="top-actions">
+            <div class="help-wrap">
+              <button class="icon-button help-button" id="helpBtn" title="提醒策略">?</button>
+              <div class="help-popover" role="tooltip">
+                默认安静运行，只在风险待办、项目候选等重要变化时提醒。
+              </div>
+            </div>
+            <button class="icon-button settings-button" id="settingsBtn" title="设置">⚙</button>
+            <button class="icon-button" id="hideBtn" title="隐藏">×</button>
+          </div>
+        </header>
+
+        <section class="status-card" id="statusCard">
+          <div class="status-dot" id="statusDot"></div>
+          <div>
+            <div class="status-text" id="statusText">正在连接 Memo…</div>
+            <div class="status-sub" id="checkedAt">请稍候</div>
+          </div>
+        </section>
+
+        <section class="metrics">
+          <button class="metric metric-primary" data-route="todos">
+            <span class="metric-label">今日待办</span>
+            <strong id="todayTodos">--</strong>
+            <span class="metric-hint">点开处理</span>
+          </button>
+          <button class="metric metric-risk" data-route="todos">
+            <span class="metric-label">风险待办</span>
+            <strong id="riskTodos">--</strong>
+            <span class="metric-hint">优先关注</span>
+          </button>
+          <button class="metric" data-route="spaces">
+            <span class="metric-label">项目候选</span>
+            <strong id="pendingCandidates">--</strong>
+            <span class="metric-hint">等待整理</span>
+          </button>
+          <button class="metric" data-route="memories">
+            <span class="metric-label">最近记忆</span>
+            <strong id="recentMemories">--</strong>
+            <span class="metric-hint">快速回看</span>
+          </button>
+        </section>
+
+        <section class="quick-actions">
+          <button id="openDashboardBtn" class="primary-action">打开 Memo</button>
+          <button id="refreshBtn" class="secondary-action">刷新</button>
+        </section>
+
+        <section class="settings-panel" id="settingsMenu" aria-label="设置面板">
+          <div class="settings-panel-title">服务设置</div>
+          <div class="settings-grid">
+            <button id="startBtn">启动服务</button>
+            <button id="restartBtn">重启服务</button>
+            <button id="stopBtn" class="danger-menu-item">停止服务</button>
+          </div>
+          <label class="settings-toggle">
+            <span>开机自动启动助手</span>
+            <input id="loginToggle" type="checkbox" />
+          </label>
+        </section>
+      </section>
+    </main>
+
+    <script src="./companion.js"></script>
+  </body>
+</html>

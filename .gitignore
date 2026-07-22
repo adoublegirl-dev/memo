@@ -15,6 +15,7 @@ dist/
 node_modules/
 .venv/
 install_output/
+release/
 *.egg-info/
 docs/*.docx
 docs/prototypes/
