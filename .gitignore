@@ -27,3 +27,7 @@ docs/V0.4.0-*
 
 # legacy
 memo-project/
+
+# local/internal docs and agent config
+docs/*.md
+.cursor/

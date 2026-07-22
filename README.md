@@ -26,16 +26,25 @@ Memo 是一个本地运行的 AI Context Space，做四件事：
 
 ## 三、安装
 
-如果安装对象是不熟悉命令行的同事，优先看这份说明：
+如果安装对象是不熟悉命令行的同事，Windows 下推荐直接双击全量安装器/升级器：
 
 ```text
-docs/non-developer-install-guide.md
+full_install.bat
 ```
 
-Windows 下也可以直接双击：
+它会自动判断新装、升级或修复：已有的 `.env`、`data/` 不会覆盖；缺少的依赖会补齐；MCP 只更新 memo 这一项。
+
+旧版一键安装器仍可使用：
 
 ```text
 install.bat
+```
+
+如果只是想检查环境，不做写入：
+
+```bash
+python scripts/install_doctor.py
+python scripts/install_doctor.py --json
 ```
 
 下面是开发者/手动安装流程。
@@ -113,11 +122,7 @@ npm run desktop:pack   # 生成免安装目录，用于本地检查
 npm run desktop:dist   # 生成 Windows 安装包 / portable exe
 ```
 
-建议先启动 Memo 服务，再启动桌面助手。详细方案见：
-
-```text
-docs/desktop-companion-plan.md
-```
+建议先启动 Memo 服务，再启动桌面助手。
 
 ---
 
