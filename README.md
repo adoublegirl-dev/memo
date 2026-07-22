@@ -34,6 +34,8 @@ full_install.bat
 
 它会自动判断新装、升级或修复：已有的 `.env`、`data/` 不会覆盖；缺少的依赖会补齐；MCP 只更新 memo 这一项。
 
+安装过程中会先检查 `.env` 是否已有 `LLM_API_KEY`：已有则跳过；没有则提供 DeepSeek / OpenAI / 自定义 OpenAI-compatible 模型选择、Key 输入和连接测试。用户也可以跳过，之后手动编辑 `.env` 配置。安装完成后，终端会提示到对应 Agent 中配置并启用 MCP，并给出 `install_output/` 下可复制的 ready-to-paste 配置文件。
+
 旧版一键安装器仍可使用：
 
 ```text
@@ -55,7 +57,7 @@ python scripts/install_doctor.py --json
 
 ### 3.2 配置
 
-编辑 `.env` 文件：
+如果你跳过了安装器里的 Key 配置，也可以稍后手动编辑 `.env` 文件：
 
 ```
 LLM_API_KEY=sk-your-deepseek-key

@@ -7,15 +7,42 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV = PROJECT_ROOT / ".venv"
 VENV_PY = VENV / "Scripts" / "python.exe"
+PLACEHOLDER_KEYS = {"", "sk-your-key-here", "your-api-key", "填写你的key", "请填写"}
+
+LLM_PRESETS = {
+    "1": {
+        "label": "DeepSeek Chat（推荐，便宜，适合记忆提取）",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-chat",
+    },
+    "2": {
+        "label": "DeepSeek Reasoner（更强推理，成本更高）",
+        "base_url": "https://api.deepseek.com/v1",
+        "model": "deepseek-reasoner",
+    },
+    "3": {
+        "label": "OpenAI GPT-4o mini",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+    },
+    "4": {
+        "label": "OpenAI GPT-4.1 mini",
+        "base_url": "https://api.openai.com/v1",
+        "model": "gpt-4.1-mini",
+    },
+}
 
 
 def run(cmd: list[str], *, env: dict | None = None, dry_run: bool = False) -> int:
@@ -47,21 +74,150 @@ def find_base_python() -> str:
     return candidates[0][1][0]
 
 
-def ensure_env(api_key: str = "", dry_run: bool = False) -> None:
+def parse_env_text(text: str) -> dict[str, str]:
+    data: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        k, v = stripped.split("=", 1)
+        data[k.strip()] = v.strip()
+    return data
+
+
+def has_valid_key(env_values: dict[str, str]) -> bool:
+    key = (env_values.get("LLM_API_KEY") or "").strip()
+    return bool(key) and key.lower() not in PLACEHOLDER_KEYS and not key.startswith("sk-your")
+
+
+def upsert_env_text(text: str, updates: dict[str, str]) -> str:
+    lines = text.splitlines()
+    seen = set()
+    out = []
+    for line in lines:
+        if "=" in line and not line.strip().startswith("#"):
+            k = line.split("=", 1)[0].strip()
+            if k in updates:
+                out.append(f"{k}={updates[k]}")
+                seen.add(k)
+                continue
+        out.append(line)
+    if updates:
+        if out and out[-1].strip():
+            out.append("")
+        for k, v in updates.items():
+            if k not in seen:
+                out.append(f"{k}={v}")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def choose_llm_config() -> dict[str, str] | None:
+    print("\n可选：配置 LLM API Key")
+    print("Memo 没有 Key 也能安装，但记忆提取/总结会降级。你也可以先跳过，之后编辑 .env。")
+    print("\n请选择模型供应商：")
+    for key, preset in LLM_PRESETS.items():
+        print(f"  {key}. {preset['label']}")
+    print("  5. 自定义 OpenAI-compatible 接口")
+    print("  0. 跳过，稍后自己在 .env 配置")
+    ans = input("请输入数字后回车，默认 1：").strip() or "1"
+    if ans == "0":
+        return None
+    if ans == "5":
+        base_url = input("请输入 Base URL，例如 https://api.example.com/v1：").strip()
+        model = input("请输入模型名，例如 qwen-plus / gpt-4o-mini：").strip()
+        if not base_url or not model:
+            print("Base URL 或模型名为空，已跳过 Key 配置。")
+            return None
+    else:
+        preset = LLM_PRESETS.get(ans, LLM_PRESETS["1"])
+        base_url = preset["base_url"]
+        model = preset["model"]
+        print(f"已选择：{preset['label']}")
+    api_key = input("请输入 API Key（输入为空则跳过）：").strip()
+    if not api_key:
+        return None
+    return {"LLM_API_KEY": api_key, "LLM_BASE_URL": base_url, "MEMO_EXTRACTION_MODEL": model, "MEMO_GATING_MODEL": model}
+
+
+def test_llm_connection(base_url: str, api_key: str, model: str, timeout: int = 20) -> tuple[bool, str]:
+    url = base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 3,
+        "temperature": 0,
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read(2048).decode("utf-8", errors="ignore")
+            if 200 <= resp.status < 300:
+                return True, "连接测试通过"
+            return False, f"HTTP {resp.status}: {body[:300]}"
+    except urllib.error.HTTPError as e:
+        body = e.read(1024).decode("utf-8", errors="ignore")
+        return False, f"HTTP {e.code}: {body[:300]}"
+    except Exception as e:
+        return False, str(e)
+
+
+def ensure_env(api_key: str = "", dry_run: bool = False, skip_key_config: bool = False) -> None:
     env_path = PROJECT_ROOT / ".env"
     example = PROJECT_ROOT / ".env.example"
     if env_path.exists():
-        print("✓ .env 已存在，不覆盖")
-        return
-    print("准备创建 .env")
-    text = example.read_text(encoding="utf-8") if example.exists() else "MEMO_DB_PATH=data/memo.db\n"
+        text = env_path.read_text(encoding="utf-8")
+        values = parse_env_text(text)
+        if has_valid_key(values):
+            print("✓ .env 已存在且检测到 API Key，跳过 Key 配置")
+            return
+        print("✓ .env 已存在，但未检测到有效 API Key")
+    else:
+        print("准备创建 .env")
+        text = example.read_text(encoding="utf-8") if example.exists() else "MEMO_DB_PATH=data/memo.db\n"
+        values = parse_env_text(text)
+
+    updates: dict[str, str] = {}
     if api_key:
-        text = text.replace("LLM_API_KEY=sk-your-key-here", f"LLM_API_KEY={api_key}")
+        updates["LLM_API_KEY"] = api_key
+    elif not skip_key_config and not dry_run:
+        chosen = choose_llm_config()
+        if chosen:
+            while True:
+                ok, msg = test_llm_connection(chosen["LLM_BASE_URL"], chosen["LLM_API_KEY"], chosen["MEMO_EXTRACTION_MODEL"])
+                if ok:
+                    print(f"✓ {msg}")
+                    updates.update(chosen)
+                    break
+                print("\n连接测试失败：")
+                print(f"  {msg}")
+                print("你可以：1 重试输入  2 跳过，稍后在 .env 配置")
+                retry = input("请输入 1 或 2，默认 1：").strip() or "1"
+                if retry == "2":
+                    break
+                chosen = choose_llm_config()
+                if not chosen:
+                    break
+    else:
+        print("已跳过 API Key 配置。之后可编辑 .env 填写 LLM_API_KEY。")
+
+    if updates:
+        text = upsert_env_text(text, updates)
+    elif "LLM_API_KEY" not in values:
+        text = upsert_env_text(text, {"LLM_API_KEY": "sk-your-key-here"})
+
     if dry_run:
         print("dry-run：跳过写入 .env")
         return
     env_path.write_text(text, encoding="utf-8")
-    print("✓ 已创建 .env。若还没填 API Key，请稍后打开 .env 填写。")
+    if updates:
+        print("✓ 已写入 .env 并保存模型配置")
+    else:
+        print("✓ 已创建/保留 .env。后续可打开 .env 填写 LLM_API_KEY。")
 
 
 def ensure_venv(dry_run: bool = False) -> None:
@@ -145,10 +301,33 @@ def ask_agent() -> str:
     return {"1": "hana", "2": "workbuddy", "3": "qoder", "4": "claude", "5": "cursor", "6": "all", "0": "none"}.get(ans, "hana")
 
 
+def print_completion(target: str) -> None:
+    print("\n" + "=" * 64)
+    print("安装完成")
+    print("=" * 64)
+    print("Memo 本体已经安装成功。")
+    print("\n下一步：")
+    print("  1. 双击 start_all.bat 启动 Memo，或打开桌面伴侣启动服务")
+    print("  2. 浏览器打开 http://localhost:9120 查看看板")
+    print("  3. 在你使用的 Agent 中配置并启用 MCP")
+    print("\n配置文件位置：")
+    print("  - 通用 MCP 配置：install_output/memo_mcp_config.generated.json")
+    print("  - HanaAgent 粘贴用：install_output/hanaagent_mcp_ready_to_paste.json")
+    print("  - Qoder 粘贴用：install_output/qoder_mcp_ready_to_paste.json")
+    print("  - Agent 提示词：install_output/memo_agent_prompt.generated.md")
+    if target in {"workbuddy", "claude", "cursor", "qoder", "all"}:
+        print("\n部分 Agent 已尝试自动写入配置；如果 Agent 里没看到 Memo MCP，请复制上面的 ready-to-paste 配置手动启用。")
+    else:
+        print("\nHanaAgent 通常需要到设置页手动粘贴 MCP JSON，并启用 Memo MCP。")
+    print("\n如果刚才跳过了 API Key：")
+    print(f"  请稍后编辑 {PROJECT_ROOT / '.env'}，填写 LLM_API_KEY / LLM_BASE_URL / 模型名。")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Memo 普通用户一键安装器")
     parser.add_argument("--target", choices=["hana", "workbuddy", "qoder", "claude", "cursor", "all", "none"], default="")
     parser.add_argument("--api-key", default="", help="可选：直接写入 .env 的 LLM_API_KEY")
+    parser.add_argument("--skip-key-config", action="store_true", help="跳过交互式 API Key 配置")
     parser.add_argument("--use-mirror", action="store_true", help="使用国内 pip/HuggingFace 镜像")
     parser.add_argument("--skip-deps", action="store_true", help="跳过依赖安装，适合已打包 .venv 的发布包")
     parser.add_argument("--dry-run", action="store_true", help="只预演，不创建环境、不安装依赖")
@@ -167,7 +346,7 @@ def main() -> int:
     target = args.target or ("none" if args.dry_run else ask_agent())
 
     try:
-        ensure_env(args.api_key, dry_run=args.dry_run)
+        ensure_env(args.api_key, dry_run=args.dry_run, skip_key_config=args.skip_key_config)
         ensure_venv(dry_run=args.dry_run)
         # 先生成/写入 Agent 配置。即使后续依赖或数据库初始化失败，用户也能拿到 install_output 里的 MCP 配置。
         configure_agent(target, dry_run=args.dry_run)
@@ -184,16 +363,7 @@ def main() -> int:
         print("请把这段窗口内容截图发给维护者。")
         return 1
 
-    print("\n" + "=" * 64)
-    print("安装完成")
-    print("=" * 64)
-    print("下一步：")
-    print("  1. 如果 .env 里还没填 API Key，请先填写 LLM_API_KEY")
-    print("  2. 双击 start_all.bat 启动 Memo")
-    print("  3. 浏览器打开 http://localhost:9120 查看看板")
-    print("  4. 重启你的 Agent，让 MCP 配置生效")
-    print("  5. HanaAgent 用户如未自动导入 MCP，请复制 install_output/hanaagent_mcp_ready_to_paste.json 到设置页")
-    print("  6. Qoder 用户如未自动导入 MCP，请复制 install_output/qoder_mcp_ready_to_paste.json 到设置页")
+    print_completion(target)
     return 0
 
 
