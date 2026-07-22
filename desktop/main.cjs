@@ -21,12 +21,27 @@ function isPackagedResourceRoot(candidate) {
     || normalized.includes(`${path.sep}resources${path.sep}app${path.sep}`.toLowerCase());
 }
 
+function commonExternalMemoRoots() {
+  const roots = [];
+  const home = app.getPath('home');
+  const execRoot = path.parse(path.dirname(process.execPath || process.cwd())).root;
+  const cwdRoot = path.parse(process.cwd()).root;
+  for (const driveRoot of new Set([execRoot, cwdRoot, 'C:\\', 'D:\\', 'E:\\'].filter(Boolean))) {
+    roots.push(path.join(driveRoot, 'memo'));
+    roots.push(path.join(driveRoot, 'Memo'));
+  }
+  roots.push(path.join(home, 'memo'));
+  roots.push(path.join(home, 'Memo'));
+  return roots;
+}
+
 function resolveMemoRoot() {
   const candidates = [
     process.env.MEMO_ROOT,
     ...(!app.isPackaged ? [path.resolve(__dirname, '..')] : []),
     process.cwd(),
     ...candidateAncestors(path.dirname(process.execPath || ''), 8),
+    ...(app.isPackaged ? commonExternalMemoRoots() : []),
   ].filter(Boolean);
 
   for (const candidate of candidates) {
