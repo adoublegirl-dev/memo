@@ -1,27 +1,49 @@
 const { app, BrowserWindow, Menu, Tray, nativeImage, Notification, ipcMain, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const { spawn } = require('child_process');
+
+function candidateAncestors(startPath, maxDepth = 6) {
+  const result = [];
+  let current = path.resolve(startPath || process.cwd());
+  for (let i = 0; i < maxDepth; i += 1) {
+    result.push(current);
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return result;
+}
+
+function isPackagedResourceRoot(candidate) {
+  const normalized = path.normalize(candidate).toLowerCase();
+  return normalized.endsWith(path.normalize('resources/app').toLowerCase())
+    || normalized.includes(`${path.sep}resources${path.sep}app${path.sep}`.toLowerCase());
+}
 
 function resolveMemoRoot() {
   const candidates = [
     process.env.MEMO_ROOT,
-    path.resolve(__dirname, '..'),
-    path.resolve(process.resourcesPath || '', 'app'),
-    path.dirname(process.execPath || ''),
+    ...(!app.isPackaged ? [path.resolve(__dirname, '..')] : []),
+    process.cwd(),
+    ...candidateAncestors(path.dirname(process.execPath || ''), 8),
   ].filter(Boolean);
 
   for (const candidate of candidates) {
     try {
+      if (app.isPackaged && isPackagedResourceRoot(candidate)) continue;
       const startScript = path.join(candidate, 'start_all.bat');
       const memoDir = path.join(candidate, 'memo');
-      if (require('fs').existsSync(startScript) && require('fs').existsSync(memoDir)) {
+      if (fs.existsSync(startScript) && fs.existsSync(memoDir)) {
         return candidate;
       }
     } catch (_) {
       // ignore invalid candidate
     }
   }
-  return path.resolve(__dirname, '..');
+
+  // 打包版找不到外部 Memo 根目录时，不回退到 resources/app，避免在安装包内部生成 data/.env。
+  return app.isPackaged ? process.cwd() : path.resolve(__dirname, '..');
 }
 
 const ROOT = resolveMemoRoot();
