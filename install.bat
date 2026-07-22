@@ -31,4 +31,13 @@ if exist ".venv\Scripts\python.exe" (
 )
 
 echo.
+echo 是否同时安装 Memo Desktop Companion 桌面助手？
+echo 它可以作为桌面软件启动 Memo 服务，并提供待办/项目候选提醒。
+echo.
+choice /C YN /N /M "安装桌面助手？[Y/N] "
+if errorlevel 2 goto skip_desktop
+if errorlevel 1 call "%~dp0desktop_install.bat"
+
+:skip_desktop
+echo.
 pause

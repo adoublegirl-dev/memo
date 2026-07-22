@@ -3,10 +3,17 @@
   "version": "0.9.0-alpha",
   "private": true,
   "type": "module",
+  "productName": "Memo Desktop Companion",
+  "description": "Memo desktop launcher and reminder companion.",
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 4173"
+    "preview": "vite preview --host 127.0.0.1 --port 4173",
+    "desktop": "electron desktop/main.cjs",
+    "desktop:dev": "electron desktop/main.cjs",
+    "desktop:pack": "electron-builder --dir",
+    "desktop:dist": "electron-builder --win"
   },
   "dependencies": {
     "@lucide/svelte": "^1.24.0",
@@ -16,5 +23,57 @@
     "d3-zoom": "latest",
     "svelte": "latest",
     "vite": "latest"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.memo.desktop-companion",
+    "productName": "Memo Desktop Companion",
+    "asar": false,
+    "directories": {
+      "output": "release/desktop"
+    },
+    "files": [
+      "desktop/**/*",
+      "memo/**/*",
+      "scripts/**/*",
+      "dashboard/dist/**/*",
+      "start_all.bat",
+      "stop_all.bat",
+      "upgrade.bat",
+      "install.bat",
+      "requirements.txt",
+      "pyproject.toml",
+      "README.md",
+      "CHANGELOG.md",
+      "AGENT_PROMPT.md",
+      "mcp_config.example.json",
+      "package.json",
+      "!**/.env",
+      "!data/**/*",
+      "!logs/**/*",
+      "!**/*.log",
+      "!**/__pycache__/**/*",
+      "!**/*.pyc",
+      "!node_modules/.cache/**/*"
+    ],
+    "win": {
+      "icon": "desktop/assets/memo-companion.ico",
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false,
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Memo Desktop Companion"
+    }
   }
 }

@@ -83,6 +83,42 @@ python scripts/memo_dashboard.py   # 看板 (http://localhost:9120)
 python scripts/memo_watcher.py     # 守护进程（Bridge inbox 监控 + 人格刷新）
 ```
 
+### 3.6 启动桌面助手（实验性）
+
+Memo Desktop Companion 是 Electron 桌面常驻入口，用于待办提醒、项目候选提醒和快速打开 Memo。
+
+```bash
+npm install
+npm run desktop:dev
+```
+
+Windows 也可以直接双击：
+
+```text
+desktop.bat
+```
+
+首次给其他用户安装桌面助手时，可运行：
+
+```text
+desktop_install.bat
+```
+
+桌面助手现在同时承担 Memo Launcher 职责：启动后会检测 Memo 后端服务；如服务未启动，会尝试拉起 `start_all.bat`，也可在窗口里手动启动、停止、重启服务。
+
+如需生成 Windows 桌面软件：
+
+```bash
+npm run desktop:pack   # 生成免安装目录，用于本地检查
+npm run desktop:dist   # 生成 Windows 安装包 / portable exe
+```
+
+建议先启动 Memo 服务，再启动桌面助手。详细方案见：
+
+```text
+docs/desktop-companion-plan.md
+```
+
 ---
 
 ## 四、接入 Agent
