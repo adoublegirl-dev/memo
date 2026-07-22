@@ -23,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.install_doctor import build_report  # noqa: E402
+from scripts.easy_install import ensure_env as ensure_llm_env  # noqa: E402
 
 
 def stamp() -> str:
@@ -50,19 +51,8 @@ def find_base_python() -> list[str]:
     raise RuntimeError("未找到 Python。请先安装 Python 3.11 或更高版本。")
 
 
-def ensure_env(api_key: str = "", dry_run: bool = False) -> None:
-    env_path = PROJECT_ROOT / ".env"
-    if env_path.exists():
-        print("✓ .env 已存在，不覆盖")
-        return
-    example = PROJECT_ROOT / ".env.example"
-    text = example.read_text(encoding="utf-8") if example.exists() else "MEMO_DB_PATH=data/memo.db\n"
-    if api_key:
-        text = text.replace("LLM_API_KEY=sk-your-key-here", f"LLM_API_KEY={api_key}")
-    print("准备创建 .env")
-    if not dry_run:
-        env_path.write_text(text, encoding="utf-8")
-    print("✓ .env 已准备")
+def ensure_env(api_key: str = "", dry_run: bool = False, skip_key_config: bool = False) -> None:
+    ensure_llm_env(api_key=api_key, dry_run=dry_run, skip_key_config=skip_key_config)
 
 
 def ensure_venv(dry_run: bool = False) -> None:
@@ -102,11 +92,12 @@ def init_or_migrate_database(dry_run: bool = False) -> None:
 
 
 def configure_agent(target: str, dry_run: bool = False) -> None:
+    python = VENV_PY if VENV_PY.exists() else Path(sys.executable)
     if target == "none":
         print("✓ 跳过 Agent MCP 写入，只保留生成配置")
-        run([str(VENV_PY), "scripts/install_agent.py", "--target", "none"] + (["--dry-run"] if dry_run else []), dry_run=False)
+        run([str(python), "scripts/install_agent.py", "--target", "none"] + (["--dry-run"] if dry_run else []), dry_run=False)
         return
-    cmd = [str(VENV_PY), "scripts/install_agent.py", "--target", target]
+    cmd = [str(python), "scripts/install_agent.py", "--target", target]
     if dry_run:
         cmd.append("--dry-run")
     run(cmd, dry_run=False)
@@ -165,6 +156,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=["auto", "install", "upgrade", "repair", "doctor"], default="auto")
     parser.add_argument("--target", choices=["hana", "workbuddy", "qoder", "claude", "cursor", "all", "none"], default="")
     parser.add_argument("--api-key", default="")
+    parser.add_argument("--skip-key-config", action="store_true", help="跳过交互式 API Key 配置")
     parser.add_argument("--use-mirror", action="store_true")
     parser.add_argument("--skip-python-deps", action="store_true")
     parser.add_argument("--skip-desktop", action="store_true")
@@ -194,7 +186,7 @@ def main() -> int:
     target = "none" if args.skip_mcp else (args.target or ("none" if args.dry_run else choose_target()))
 
     try:
-        ensure_env(args.api_key, dry_run=args.dry_run)
+        ensure_env(args.api_key, dry_run=args.dry_run, skip_key_config=args.skip_key_config)
         ensure_venv(dry_run=args.dry_run)
 
         if mode in {"upgrade", "repair"}:
@@ -230,11 +222,12 @@ def main() -> int:
     print("Memo 安装/升级预演完成" if args.dry_run else "Memo 安装/升级完成")
     print("=" * 64)
     print("下一步：")
-    print("  1. 启动 Memo 服务：start_all.bat")
-    print("  2. 启动桌面助手：desktop.bat")
-    print("  3. 打开看板：http://localhost:9120")
-    print("  4. 重启 Agent，让 MCP 配置生效")
-    print("  5. 若需要桌面软件 exe：npm run desktop:pack 或 npm run desktop:dist")
+    print("  1. 启动 Memo 服务：start_all.bat，或用桌面助手启动服务")
+    print("  2. 打开看板：http://localhost:9120")
+    print("  3. 到对应 Agent 中配置并启用 MCP，然后重启 Agent")
+    print("  4. 配置文件在 install_output/，HanaAgent/Qoder 用户可复制 ready-to-paste JSON")
+    print("  5. 如果刚才跳过 API Key，可稍后编辑 .env 填写 LLM_API_KEY / LLM_BASE_URL / 模型名")
+    print("  6. 若需要桌面软件 exe：npm run desktop:pack 或 npm run desktop:dist")
     return 0
 
 
