@@ -23,14 +23,14 @@ PLACEHOLDER_KEYS = {"", "sk-your-key-here", "your-api-key", "填写你的key", "
 
 LLM_PRESETS = {
     "1": {
-        "label": "DeepSeek Chat（推荐，便宜，适合记忆提取）",
+        "label": "DeepSeek V4 Flash（默认推荐，便宜，适合持续记忆写入）",
         "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-flash",
     },
     "2": {
-        "label": "DeepSeek Reasoner（更强推理，成本更高）",
+        "label": "DeepSeek V4 Pro（更强，成本更高）",
         "base_url": "https://api.deepseek.com/v1",
-        "model": "deepseek-reasoner",
+        "model": "deepseek-v4-pro",
     },
     "3": {
         "label": "OpenAI GPT-4o mini",
@@ -114,6 +114,7 @@ def upsert_env_text(text: str, updates: dict[str, str]) -> str:
 def choose_llm_config() -> dict[str, str] | None:
     print("\n可选：配置 LLM API Key")
     print("Memo 没有 Key 也能安装，但记忆提取/总结会降级。你也可以先跳过，之后编辑 .env。")
+    print("提示：记忆写入、总结和治理会持续消耗 token，建议优先使用便宜模型，默认推荐 deepseek-v4-flash。")
     print("\n请选择模型供应商：")
     for key, preset in LLM_PRESETS.items():
         print(f"  {key}. {preset['label']}")
