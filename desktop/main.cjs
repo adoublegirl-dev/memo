@@ -42,7 +42,12 @@ function resolveMemoRoot() {
     }
   }
 
-  // 打包版找不到外部 Memo 根目录时，不回退到 resources/app，避免在安装包内部生成 data/.env。
+  // Packaged installer currently ships Memo runtime under resources/app.
+  // Prefer an external MEMO_ROOT when available, but fall back to bundled runtime so the companion can still start services.
+  const bundledRoot = path.resolve(__dirname, '..');
+  if (app.isPackaged && fs.existsSync(path.join(bundledRoot, 'start_all.bat')) && fs.existsSync(path.join(bundledRoot, 'memo'))) {
+    return bundledRoot;
+  }
   return app.isPackaged ? process.cwd() : path.resolve(__dirname, '..');
 }
 
