@@ -4,7 +4,9 @@ setlocal
 
 set ROOT=%~dp0
 set PID_DIR=%ROOT%data\pids
+set LOG_DIR=%ROOT%data\logs
 if not exist "%PID_DIR%" mkdir "%PID_DIR%"
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
 REM Prefer explicit PYTHON_EXE if user configured it; otherwise use bundled project .venv; finally use python command.
 REM This avoids starting services with a different Python from the one used by install.bat.
@@ -36,13 +38,13 @@ set MEMO_DASHBOARD_PORT=9121
 set MEMO_DASHBOARD_TARGET_PORT=9121
 
 REM 首先启动轻量启动页，占用 9120，避免浏览器在服务预热时显示拒绝访问。
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=Start-Process -FilePath $env:PYTHON_EXE -ArgumentList @('%ROOT%scripts\boot_server.py') -WorkingDirectory '%ROOT%' -PassThru -WindowStyle Hidden; Set-Content -Encoding ascii '%PID_DIR%\boot.pid' $p.Id"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$script=Join-Path $env:ROOT 'scripts\boot_server.py'; $out=Join-Path $env:LOG_DIR 'boot.out.log'; $err=Join-Path $env:LOG_DIR 'boot.err.log'; $pidFile=Join-Path $env:PID_DIR 'boot.pid'; $args='-u \"' + $script + '\"'; $p=Start-Process -FilePath $env:PYTHON_EXE -ArgumentList $args -WorkingDirectory $env:ROOT -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden; Set-Content -Encoding ascii $pidFile $p.Id"
 
 REM 立刻打开启动页。真正 Dashboard 在 9121 预热，ready 后由 boot server 代理到 9120。
 powershell -NoProfile -Command "Start-Sleep -Milliseconds 700; Start-Process 'http://localhost:9120'"
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:MEMO_DASHBOARD_PORT='9121'; $p=Start-Process -FilePath $env:PYTHON_EXE -ArgumentList @('%ROOT%scripts\memo_dashboard.py') -WorkingDirectory '%ROOT%' -PassThru -WindowStyle Hidden; Set-Content -Encoding ascii '%PID_DIR%\dashboard.pid' $p.Id"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=Start-Process -FilePath $env:PYTHON_EXE -ArgumentList @('%ROOT%scripts\memo_watcher.py') -WorkingDirectory '%ROOT%' -PassThru -WindowStyle Hidden; Set-Content -Encoding ascii '%PID_DIR%\watcher.pid' $p.Id"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:MEMO_DASHBOARD_PORT='9121'; $script=Join-Path $env:ROOT 'scripts\memo_dashboard.py'; $out=Join-Path $env:LOG_DIR 'dashboard.out.log'; $err=Join-Path $env:LOG_DIR 'dashboard.err.log'; $pidFile=Join-Path $env:PID_DIR 'dashboard.pid'; $args='-u \"' + $script + '\"'; $p=Start-Process -FilePath $env:PYTHON_EXE -ArgumentList $args -WorkingDirectory $env:ROOT -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden; Set-Content -Encoding ascii $pidFile $p.Id"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$script=Join-Path $env:ROOT 'scripts\memo_watcher.py'; $out=Join-Path $env:LOG_DIR 'watcher.out.log'; $err=Join-Path $env:LOG_DIR 'watcher.err.log'; $pidFile=Join-Path $env:PID_DIR 'watcher.pid'; $args='-u \"' + $script + '\"'; $p=Start-Process -FilePath $env:PYTHON_EXE -ArgumentList $args -WorkingDirectory $env:ROOT -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden; Set-Content -Encoding ascii $pidFile $p.Id"
 
 echo Memo services starting. PID files: %PID_DIR%
 echo Boot page will enter dashboard automatically when services are ready.
