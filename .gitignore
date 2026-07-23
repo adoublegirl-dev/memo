@@ -15,7 +15,6 @@ dist/
 node_modules/
 .venv/
 install_output/
-reports/
 release/
 *.egg-info/
 docs/*.docx
