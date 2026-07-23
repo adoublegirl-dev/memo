@@ -134,7 +134,7 @@
         <div class="card card-pad">
           <div class="item-row">
             <div>
-              <div class="item-title">{detail.source_session?.title || detail.session.title || '未命名会话'}</div>
+              <div class="item-title">{detail.session.display_title || detail.source_session?.title || detail.session.title || '未命名会话'}</div>
               <div class="item-meta">{detail.session.agent_id} · {fmtTime(detail.session.created_at)} · {detail.memories.length} 条底层记忆</div>
             </div>
             <button class="btn" on:click={saveSessionPreview} disabled={saving}><Save size={16}/> {saving ? '保存中...' : '保存预览审计'}</button>
