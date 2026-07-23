@@ -71,7 +71,20 @@ class EpisodeManager:
         items = []
         for row in rows:
             data = dict(row)
-            data["display_title"] = data.get("source_title") or data.get("title") or "未命名会话"
+            sample_memories = [dict(r) for r in db.fetchall(
+                """SELECT id, title, summary, summary_detail, raw_text, memory_type, signal_level, confidence, created_at
+                   FROM memory_units
+                   WHERE session_id=? AND COALESCE(status, 'active') NOT IN ('deleted','wrong')
+                   ORDER BY
+                     CASE memory_type WHEN 'DECISION' THEN 0 WHEN 'PREFERENCE' THEN 1 WHEN 'EVENT' THEN 2 ELSE 3 END,
+                     signal_level DESC, confidence DESC, created_at ASC
+                   LIMIT 8""",
+                (data["id"],),
+            )]
+            tags = self._top_tags_for_memories([m["id"] for m in sample_memories], limit=4)
+            data["original_title"] = data.get("title") or ""
+            data["display_title"] = self._session_display_title(data, sample_memories, tags)
+            data["sample_memory_titles"] = [m.get("title", "") for m in sample_memories[:3] if m.get("title")]
             data["needs_review"] = int(data.get("canonical_count") or 0) == 0 or int(data.get("muted_count") or 0) == 0
             data["value_hint"] = self._session_value_hint(data)
             items.append(data)
@@ -97,9 +110,13 @@ class EpisodeManager:
         if not memories:
             return {"session": dict(session), "source_session": dict(source) if source else None, "memories": [], "canonical_preview": None}
 
-        preview = self._canonical_from_memory_fragments(dict(session), memories, dict(source) if source else None)
+        session_data = dict(session)
+        source_data = dict(source) if source else None
+        tags = self._top_tags_for_memories([m["id"] for m in memories], limit=6)
+        display_title = self._session_display_title({**session_data, "source_title": source_data.get("title") if source_data else ""}, memories, tags)
+        preview = self._canonical_from_memory_fragments({**session_data, "display_title": display_title}, memories, source_data)
         return {
-            "session": dict(session),
+            "session": {**session_data, "display_title": display_title, "original_title": session_data.get("title", "")}, 
             "source_session": dict(source) if source else None,
             "memories": memories,
             "canonical_preview": preview,
@@ -254,7 +271,7 @@ class EpisodeManager:
         return self._row_to_import_run(row, include_report=True) if row else None
 
     def _canonical_from_memory_fragments(self, session: dict, memories: list[dict], source: dict | None = None) -> dict:
-        title = source.get("title") if source else ""
+        title = session.get("display_title") or (source.get("title") if source else "")
         title = title or session.get("title") or "未命名会话"
         scored = [self._classify_fragment(m) for m in memories]
         keepers = [x for x in scored if x["suggested_action"] in {"keep_as_signal", "keep_as_evidence"}]
@@ -349,6 +366,44 @@ class EpisodeManager:
             tuple(memory_ids + [limit]),
         )
         return [r["name"] for r in rows]
+
+    def _compact(self, text: str, limit: int = 48) -> str:
+        import re
+        text = re.sub(r"\s+", " ", (text or "").strip())
+        return text[:limit] + ("…" if len(text) > limit else "")
+
+    def _is_generic_session_title(self, title: str) -> bool:
+        title = (title or "").strip()
+        return title in {"", "自动会话", "自动同步会话", "自动导入会话", "未命名会话", "新会话"} or title.startswith("Bridge-")
+
+    def _session_display_title(self, session: dict, memories: list[dict], tags: list[str] | None = None) -> str:
+        """为自动同步/旧会话生成可读展示名，不修改 sessions 原始标题。"""
+        source_title = (session.get("source_title") or "").strip()
+        if source_title and not self._is_generic_session_title(source_title):
+            return source_title[:56]
+        title = (session.get("title") or "").strip()
+        if title and not self._is_generic_session_title(title):
+            return title[:56]
+        # 优先使用决策/事件/高信号记忆标题。
+        ordered = sorted(
+            memories,
+            key=lambda m: (
+                0 if m.get("memory_type") == "DECISION" else 1 if m.get("memory_type") == "PREFERENCE" else 2 if m.get("memory_type") == "EVENT" else 3,
+                -int(m.get("signal_level") or 0),
+                -float(m.get("confidence") or 0),
+            ),
+        )
+        for m in ordered:
+            mt = (m.get("title") or "").strip()
+            if mt and not self._is_generic_session_title(mt):
+                return mt[:56]
+        for m in ordered:
+            text = self._compact(m.get("summary") or m.get("summary_detail") or m.get("raw_text") or "", 56)
+            if text:
+                return text
+        if tags:
+            return " / ".join(tags[:3])[:56]
+        return f"{session.get('agent_id') or '会话'} · {str(session.get('created_at') or '')[:10]}"
 
     def _session_value_hint(self, data: dict) -> str:
         if int(data.get("decision_count") or 0) > 0:
