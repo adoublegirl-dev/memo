@@ -13,7 +13,7 @@ Memo 是一个本地运行的 AI Context Space，做四件事：
 
 任何支持 MCP 的 Agent（WorkBuddy / HanaAgent / QoderWork / Claude / Cursor）安装后，共用同一套记忆、空间、人格和待办。
 
-V0.9 后续记忆地基改造方案见：[`docs/V0.9-episode-memory-and-agent-import-plan.md`](docs/V0.9-episode-memory-and-agent-import-plan.md)。该方案覆盖 episode-level canonical memory、新老用户迁移、历史 Agent 会话导入和主流 Agent 兼容策略。
+V0.9 后续记忆地基改造请优先阅读最终推进方案：[`docs/V0.9-source-aware-final-execution-plan.md`](docs/V0.9-source-aware-final-execution-plan.md)。背景方案见：[`docs/V0.9-episode-memory-and-agent-import-plan.md`](docs/V0.9-episode-memory-and-agent-import-plan.md)。
 
 ---
 
