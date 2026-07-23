@@ -1017,6 +1017,36 @@ class Engine:
 
     # ── Episode Memory / 历史记忆迁移预览 ──
 
+    def episode_session_candidate_list(self, limit: int = 50, min_memories: int = 2, status: str = "active") -> dict:
+        """按现有会话聚合底层记忆，列出会话层整理候选。"""
+        self._ensure_init()
+        from memo.episode.manager import episode_manager
+        return episode_manager.session_candidate_list(limit=limit, min_memories=min_memories, status=status)
+
+    def episode_session_candidate_get(self, session_id: str) -> dict | None:
+        """查看一个会话下的记忆碎片与 canonical 候选。"""
+        self._ensure_init()
+        from memo.episode.manager import episode_manager
+        return episode_manager.session_candidate_get(session_id)
+
+    def episode_session_canonicalization_record(self, session_id: str, report: dict, mode: str = "session_preview") -> dict:
+        """保存一次会话层整理预览审计，不改 memory_units。"""
+        self._ensure_init()
+        from memo.episode.manager import episode_manager
+        return episode_manager.record_session_canonicalization(session_id=session_id, report=report, mode=mode)
+
+    def episode_canonicalization_run_list(self, limit: int = 50) -> list[dict]:
+        """列出会话层 canonicalization 预览审计记录。"""
+        self._ensure_init()
+        from memo.episode.manager import episode_manager
+        return episode_manager.canonicalization_run_list(limit=limit)
+
+    def episode_canonicalization_run_get(self, run_id: str) -> dict | None:
+        """查看会话层 canonicalization 预览审计详情。"""
+        self._ensure_init()
+        from memo.episode.manager import episode_manager
+        return episode_manager.canonicalization_run_get(run_id)
+
     def episode_preview_turns(
         self,
         turns: list[dict],

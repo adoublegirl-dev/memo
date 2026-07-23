@@ -1119,6 +1119,28 @@ class MemoHandler(BaseHTTPRequestHandler):
             source_type = self._get_query_param("source_type", "")
             source_agent = self._get_query_param("source_agent", "")
             self._json({"stats": engine.source_session_stats(), "items": engine.source_session_list(limit=limit, source_type=source_type, source_agent=source_agent)})
+        elif path == "/api/episode/session-candidates":
+            limit = int(self._get_query_param("limit", "50"))
+            min_memories = int(self._get_query_param("min_memories", "2"))
+            status = self._get_query_param("status", "active")
+            self._json(engine.episode_session_candidate_list(limit=limit, min_memories=min_memories, status=status))
+        elif path.startswith("/api/episode/session-candidate/"):
+            session_id = path.split("/")[-1]
+            result = engine.episode_session_candidate_get(session_id)
+            if not result:
+                self._json({"error": "session candidate not found"}, 404); return
+            self._json(result)
+        elif path == "/api/episode/canonicalization-runs":
+            limit = int(self._get_query_param("limit", "50"))
+            self._json({"items": engine.episode_canonicalization_run_list(limit=limit)})
+        elif path == "/api/episode/canonicalization-run/action":
+            self._handle_episode_canonicalization_action()
+        elif path.startswith("/api/episode/canonicalization-run/"):
+            run_id = path.split("/")[-1]
+            result = engine.episode_canonicalization_run_get(run_id)
+            if not result:
+                self._json({"error": "canonicalization run not found"}, 404); return
+            self._json(result)
         elif path == "/api/episode/import-runs":
             limit = int(self._get_query_param("limit", "50"))
             source_agent = self._get_query_param("source_agent", "")
@@ -1266,6 +1288,18 @@ class MemoHandler(BaseHTTPRequestHandler):
             mode=body.get("mode", "recommended"),
         )
         self._json(result)
+
+    def _handle_episode_canonicalization_action(self):
+        body = self._read_json_body()
+        action = body.get("action", "")
+        if action == "record_session_preview":
+            session_id = body.get("session_id", "")
+            report = body.get("report") or {}
+            if not session_id:
+                self._json({"error": "missing session_id"}, 400); return
+            result = engine.episode_session_canonicalization_record(session_id=session_id, report=report, mode=body.get("mode", "session_preview"))
+            self._json(result); return
+        self._json({"error": f"unknown canonicalization action {action}"}, 400)
 
     def _handle_episode_import_run_action(self):
         body = self._read_json_body()
