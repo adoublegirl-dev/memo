@@ -30,5 +30,9 @@ export const api = {
   spaceAction: (body) => request('/api/space/action', { method: 'POST', body: JSON.stringify(body) }),
   personaAction: (body) => request('/api/persona/action', { method: 'POST', body: JSON.stringify(body) }),
   governance: (params = {}) => request(`/api/governance?${new URLSearchParams(params)}`),
+  episodePreview: (body) => request('/api/episode/preview', { method: 'POST', body: JSON.stringify(body) }),
+  episodeImportRuns: (params = {}) => request(`/api/episode/import-runs?${new URLSearchParams(params)}`),
+  episodeImportRun: (id) => request(`/api/episode/import-run/${encodeURIComponent(id)}`),
+  episodeImportRunAction: (body) => request('/api/episode/import-run/action', { method: 'POST', body: JSON.stringify(body) }),
   memoryLink: (body) => request('/api/memory/link', { method: 'POST', body: JSON.stringify(body) }),
 };

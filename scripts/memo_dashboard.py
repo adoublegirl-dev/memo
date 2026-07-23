@@ -1119,6 +1119,20 @@ class MemoHandler(BaseHTTPRequestHandler):
             source_type = self._get_query_param("source_type", "")
             source_agent = self._get_query_param("source_agent", "")
             self._json({"stats": engine.source_session_stats(), "items": engine.source_session_list(limit=limit, source_type=source_type, source_agent=source_agent)})
+        elif path == "/api/episode/import-runs":
+            limit = int(self._get_query_param("limit", "50"))
+            source_agent = self._get_query_param("source_agent", "")
+            self._json({"items": engine.episode_import_run_list(limit=limit, source_agent=source_agent)})
+        elif path == "/api/episode/preview":
+            self._handle_episode_preview()
+        elif path == "/api/episode/import-run/action":
+            self._handle_episode_import_run_action()
+        elif path.startswith("/api/episode/import-run/"):
+            run_id = path.split("/")[-1]
+            result = engine.episode_import_run_get(run_id)
+            if not result:
+                self._json({"error": "import run not found"}, 404); return
+            self._json(result)
         elif path.startswith("/api/source-session/"):
             source_id = path.split("/")[-1]
             result = engine.source_session_get(source_id)
@@ -1170,6 +1184,103 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._handle_memory_link()
         else:
             self._json({"error": "not found"}, 404)
+
+    def _read_json_body(self) -> dict:
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        return _j.loads(self.rfile.read(length)) if length > 0 else {}
+
+    def _turns_from_episode_preview_body(self, body: dict) -> list[dict]:
+        import json as _j
+        import re as _re
+        text = (body.get("text") or body.get("transcript") or "").strip()
+        fmt = (body.get("format") or "auto").lower()
+        source_agent = body.get("source_agent") or "generic"
+        session_id = body.get("source_session_id") or "dashboard-preview"
+        if isinstance(body.get("turns"), list):
+            return body.get("turns")
+        if not text:
+            return []
+        turns: list[dict] = []
+        if fmt in {"auto", "jsonl"}:
+            ok = False
+            for i, line in enumerate(text.splitlines()):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = _j.loads(line)
+                except Exception:
+                    ok = False
+                    turns = []
+                    break
+                message = obj.get("message") if isinstance(obj.get("message"), dict) else obj
+                role = str(message.get("role") or obj.get("role") or "").lower()
+                content = message.get("content") if "content" in message else obj.get("content")
+                if isinstance(content, list):
+                    parts = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            parts.append(str(item.get("text") or item.get("content") or ""))
+                        else:
+                            parts.append(str(item))
+                    content = "\n".join(parts)
+                if role in {"user", "assistant", "tool", "system"} and str(content or "").strip():
+                    turns.append({
+                        "agent": obj.get("agent") or source_agent,
+                        "session_id": obj.get("session_id") or session_id,
+                        "turn_id": obj.get("turn_id") or obj.get("id") or f"{session_id}:{i}",
+                        "role": role,
+                        "content": str(content).strip(),
+                        "timestamp": obj.get("timestamp") or obj.get("created_at") or "",
+                        "tool_name": obj.get("tool_name") or obj.get("name") or "",
+                        "is_final": bool(obj.get("is_final") or obj.get("final") or False),
+                    })
+                    ok = True
+            if ok and turns:
+                return turns
+        pattern = _re.compile(r"^(?:#{1,6}\s*)?(User|用户|Human|Assistant|助手|AI|Tool|System)\s*[:：]?\s*$", _re.I | _re.M)
+        matches = list(pattern.finditer(text))
+        if matches:
+            for idx, match in enumerate(matches):
+                role_label = match.group(1).lower()
+                start = match.end()
+                end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+                content = text[start:end].strip()
+                if not content:
+                    continue
+                role = "assistant" if role_label in {"assistant", "助手", "ai"} else ("tool" if role_label == "tool" else ("system" if role_label == "system" else "user"))
+                turns.append({"agent": source_agent, "session_id": session_id, "turn_id": f"{session_id}:{idx}", "role": role, "content": content})
+            return turns
+        return [{"agent": source_agent, "session_id": session_id, "turn_id": f"{session_id}:0", "role": "user", "content": text[:20000]}]
+
+    def _handle_episode_preview(self):
+        body = self._read_json_body()
+        turns = self._turns_from_episode_preview_body(body)
+        if not turns:
+            self._json({"error": "请粘贴 JSONL、Markdown 或传入 turns 数组"}, 400); return
+        result = engine.episode_preview_turns(
+            turns=turns,
+            source_session_id=body.get("source_session_id", "dashboard-preview"),
+            agent_name=body.get("source_agent", "generic"),
+            mode=body.get("mode", "recommended"),
+        )
+        self._json(result)
+
+    def _handle_episode_import_run_action(self):
+        body = self._read_json_body()
+        action = body.get("action", "")
+        if action == "record_preview":
+            report = body.get("report") or {}
+            result = engine.episode_import_run_record(
+                report=report,
+                source_agent=body.get("source_agent", report.get("agent_name", report.get("source", "dashboard"))),
+                source_path=body.get("source_path", "dashboard://preview"),
+                mode=body.get("mode", report.get("mode", "recommended")),
+                status="dry_run",
+            )
+            self._json(result); return
+        self._json({"error": f"unknown episode import action {action}"}, 400)
 
     def _handle_space_action(self):
         import json as _j

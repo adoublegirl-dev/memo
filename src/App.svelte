@@ -8,8 +8,9 @@
   import Persona from './routes/Persona.svelte';
   import Todos from './routes/Todos.svelte';
   import Governance from './routes/Governance.svelte';
+  import EpisodeImport from './routes/EpisodeImport.svelte';
   import { route, theme, setTheme } from './lib/stores.js';
-  const routes = { '/': Overview, '/graph': Graph, '/memories': Memories, '/governance': Governance, '/spaces': Spaces, '/persona': Persona, '/todos': Todos };
+  const routes = { '/': Overview, '/graph': Graph, '/memories': Memories, '/governance': Governance, '/episode-import': EpisodeImport, '/spaces': Spaces, '/persona': Persona, '/todos': Todos };
   $: Page = routes[$route] || Overview;
   onMount(() => setTheme($theme));
 </script>
