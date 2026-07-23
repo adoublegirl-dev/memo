@@ -1015,6 +1015,58 @@ class Engine:
         from memo.space.source_sessions import source_session_manager
         return source_session_manager.stats()
 
+    # ── Episode Memory / 历史记忆迁移预览 ──
+
+    def episode_preview_turns(
+        self,
+        turns: list[dict],
+        source_session_id: str = "",
+        agent_name: str = "",
+        mode: str = "recommended",
+    ) -> dict:
+        """将标准 turns 预览为 episode/canonical memory 候选。
+
+        纯内存 dry-run，不初始化数据库，不触发生产 migration。
+        """
+        from memo.episode.manager import episode_manager
+        return episode_manager.preview_turns(
+            turns=turns,
+            source_session_id=source_session_id,
+            agent_name=agent_name,
+            mode=mode,
+        )
+
+    def episode_import_run_record(
+        self,
+        report: dict,
+        source_agent: str = "",
+        source_path: str = "",
+        mode: str = "recommended",
+        status: str = "dry_run",
+    ) -> dict:
+        """记录一次 episode 导入预览审计，只写 import_runs，不写长期记忆。"""
+        self._ensure_init()
+        from memo.episode.manager import episode_manager
+        return episode_manager.record_import_run(
+            report=report,
+            source_agent=source_agent,
+            source_path=source_path,
+            mode=mode,
+            status=status,
+        )
+
+    def episode_import_run_list(self, limit: int = 50, source_agent: str = "") -> list[dict]:
+        """列出 episode 导入/预览审计记录。"""
+        self._ensure_init()
+        from memo.episode.manager import episode_manager
+        return episode_manager.import_run_list(limit=limit, source_agent=source_agent)
+
+    def episode_import_run_get(self, run_id: str) -> dict | None:
+        """查看 episode 导入/预览审计详情。"""
+        self._ensure_init()
+        from memo.episode.manager import episode_manager
+        return episode_manager.import_run_get(run_id)
+
     # ── 记忆治理 ──
 
     def memory_govern(self, memory_id: str, action: str, **kwargs) -> dict:
