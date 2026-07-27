@@ -35,6 +35,7 @@
         <span class="muted" style="margin-left:10px">本地私有 AI 上下文中枢</span>
       </div>
       <div class="toolbar">
+        <button class="btn" on:click={() => navigate('/history-processing')}><History size={16}/> 处理历史</button>
         <button class="btn" on:click={() => navigate('/memories')}><Search size={16}/> 搜索记忆</button>
         <button class="icon-btn" on:click={() => setTheme($theme === 'dark' ? 'light' : 'dark')} title="切换主题">
           {#if $theme === 'dark'}<Sun size={18}/>{:else}<Moon size={18}/>{/if}
