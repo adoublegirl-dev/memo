@@ -18,10 +18,12 @@ import sys
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REPORTS_DIR = PROJECT_ROOT / "reports"
+MIGRATIONS_DIR = PROJECT_ROOT / "memo" / "store" / "migrations"
+TEST_APPLY_CONFIRM = "TEST_APPLY"
 
 MIN_MEMORY_TEXT_LENGTH = 30
 MAX_SAMPLE_SESSIONS = 500
@@ -101,6 +103,8 @@ class SourceSessionDraft:
     source_hash: str
     title_source: str
     has_original_title: bool
+    original_title: str = ""
+    display_title: str = ""
     created_at: str = ""
     updated_at: str = ""
     turns: list[SourceTurnDraft] = field(default_factory=list)
@@ -215,16 +219,17 @@ class HanaAgentAdapter(BaseAdapter):
             return []
         return sorted(self.sessions_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
 
-    def _title_source_for(self, path: Path) -> tuple[str, bool]:
+    def _title_source_for(self, path: Path) -> tuple[str, bool, str]:
         candidates = [str(path), str(path.resolve()), path.name]
         for key in candidates:
-            if key in self.titles and str(self.titles.get(key, "")).strip():
-                return "session_titles_json_path", True
+            title = str(self.titles.get(key, "")).strip() if key in self.titles else ""
+            if title:
+                return "session_titles_json_path", True, title
         # session-titles.json 中存在 sess_* 键，但当前没有可靠映射时不能冒充真实标题。
-        return "missing", False
+        return "missing", False, ""
 
     def load_session(self, path: Path) -> SourceSessionDraft:
-        title_source, has_title = self._title_source_for(path)
+        title_source, has_title, original_title = self._title_source_for(path)
         turns: list[SourceTurnDraft] = []
         risks: list[str] = []
         agent_session_id = path.stem.split("_")[-1] if "_" in path.stem else path.stem
@@ -280,6 +285,8 @@ class HanaAgentAdapter(BaseAdapter):
             source_hash=file_hash(path),
             title_source=title_source,
             has_original_title=has_title,
+            original_title=original_title,
+            display_title=original_title if has_title else path.stem,
             updated_at=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
             turns=turns,
             risks=risks,
@@ -295,8 +302,8 @@ class WorkBuddyAdapter(BaseAdapter):
         self.db_path = self.root / "workbuddy.db"
         self.titles = self._load_titles()
 
-    def _load_titles(self) -> dict[str, bool]:
-        titles: dict[str, bool] = {}
+    def _load_titles(self) -> dict[str, str]:
+        titles: dict[str, str] = {}
         if not self.db_path.exists():
             return titles
         try:
@@ -305,9 +312,10 @@ class WorkBuddyAdapter(BaseAdapter):
             if "id" in cols and ("title" in cols or "custom_title" in cols):
                 title_expr = "COALESCE(custom_title, title, '')" if "custom_title" in cols and "title" in cols else ("title" if "title" in cols else "custom_title")
                 for sid, title in conn.execute(f"SELECT id, {title_expr} FROM sessions").fetchall():
-                    if str(title or "").strip():
-                        titles[str(sid)] = True
-                        titles[str(sid).replace("-", "")] = True
+                    clean_title = str(title or "").strip()
+                    if clean_title:
+                        titles[str(sid)] = clean_title
+                        titles[str(sid).replace("-", "")] = clean_title
             conn.close()
         except Exception:
             return titles
@@ -322,7 +330,8 @@ class WorkBuddyAdapter(BaseAdapter):
     def load_session(self, path: Path) -> SourceSessionDraft:
         sid = path.stem
         normalized = sid.replace("-", "")
-        has_title = sid in self.titles or normalized in self.titles
+        original_title = self.titles.get(sid) or self.titles.get(normalized) or ""
+        has_title = bool(original_title)
         turns = parse_workbuddy_jsonl(path)
         risks = [] if has_title else ["WorkBuddy JSONL 未能按文件名关联 workbuddy.db.sessions 标题。"]
         return SourceSessionDraft(
@@ -332,6 +341,8 @@ class WorkBuddyAdapter(BaseAdapter):
             source_hash=file_hash(path),
             title_source="db_title" if has_title else "missing",
             has_original_title=has_title,
+            original_title=original_title,
+            display_title=original_title if has_title else sid,
             updated_at=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
             turns=turns,
             risks=risks,
@@ -361,6 +372,8 @@ class CodexAdapter(BaseAdapter):
             source_hash=file_hash(path),
             title_source="generated_fallback",
             has_original_title=False,
+            original_title="",
+            display_title=path.stem,
             updated_at=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
             turns=turns,
             risks=["Codex JSONL 未发现稳定真实 UI 标题；只能生成 fallback display_title，不能写入 original_title。"],
@@ -396,6 +409,8 @@ class GenericTranscriptAdapter(BaseAdapter):
             source_hash=file_hash(path),
             title_source="file_name",
             has_original_title=False,
+            original_title="",
+            display_title=path.stem,
             updated_at=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
             turns=turns,
             risks=["Generic transcript 只使用文件名/路径作为来源，无法证明真实 Agent UI 标题。"],
@@ -604,23 +619,273 @@ def run_dry_run(source: str, path: str = "", limit: int = MAX_SAMPLE_SESSIONS) -
     return adapter.dry_run(limit=limit)
 
 
+def quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def apply_all_migrations(conn: sqlite3.Connection) -> int:
+    latest = 0
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY)")
+    current_row = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
+    current = int(current_row[0] or 0)
+    for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        version = int(migration.stem.split("_", 1)[0])
+        latest = max(latest, version)
+        if version <= current:
+            continue
+        conn.executescript(migration.read_text(encoding="utf-8"))
+        conn.execute("INSERT OR IGNORE INTO schema_version(version) VALUES (?)", (version,))
+    conn.commit()
+    return latest
+
+
+def assert_safe_test_db_path(db_path: Path) -> None:
+    resolved = db_path.resolve()
+    text = str(resolved).lower()
+    prod_candidates = [
+        (PROJECT_ROOT / "data" / "memo.db").resolve(),
+    ]
+    try:
+        # 只读取 config，不初始化数据库。
+        from memo.core.config import config
+
+        prod_candidates.append(Path(config.db_path).resolve())
+    except Exception:
+        pass
+    if any(resolved == p for p in prod_candidates):
+        raise ValueError(f"拒绝写入生产数据库路径：{resolved}")
+    if not any(token in text for token in ["test", "dev", "sandbox", "dryrun", "source_aware"]):
+        raise ValueError("测试导入的 --db-path 必须包含 test/dev/sandbox/dryrun/source_aware 等安全标记。")
+
+
+def insert_source_session(conn: sqlite3.Connection, session: SourceSessionDraft) -> tuple[str, str]:
+    source_id = "ss_" + stable_hash(f"{session.source_agent}|{session.agent_session_id}|{session.source_path}")[:24]
+    memo_session_id = "memo_" + source_id
+    now = iso_now()
+    conn.execute(
+        """INSERT OR IGNORE INTO sessions(id, agent_id, title, status, created_at)
+           VALUES (?, ?, ?, 'active', ?)""",
+        (memo_session_id, session.source_agent, session.display_title or session.agent_session_id, now),
+    )
+    conn.execute(
+        """INSERT OR REPLACE INTO source_sessions
+           (id, source_type, source_agent, external_session_id, agent_session_id, source_path,
+            source_hash, original_title, title_source, display_title, started_at, updated_at,
+            imported_at, message_count, content_hash, status, metadata_json, created_at)
+           VALUES (?, 'agent_session', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+        (
+            source_id,
+            session.source_agent,
+            session.agent_session_id,
+            session.agent_session_id,
+            session.source_path,
+            session.source_hash,
+            session.original_title if session.has_original_title else "",
+            session.title_source,
+            session.display_title,
+            session.created_at,
+            session.updated_at,
+            now,
+            len(session.turns),
+            session.source_hash,
+            json.dumps({"dry_run_apply": True, "risks": session.risks}, ensure_ascii=False),
+            now,
+        ),
+    )
+    return source_id, memo_session_id
+
+
+def insert_turns(conn: sqlite3.Connection, source_id: str, session: SourceSessionDraft) -> list[str]:
+    turn_ids: list[str] = []
+    for turn in session.turns:
+        turn_id = "turn_" + stable_hash(f"{source_id}|{turn.turn_index}|{turn.content_hash}|{turn.source_event_type}")[:24]
+        turn_ids.append(turn_id)
+        conn.execute(
+            """INSERT OR REPLACE INTO source_turns
+               (id, source_session_id, agent_turn_id, parent_turn_id, role, content, content_hash,
+                timestamp, turn_index, is_final_answer, is_tool_call, is_tool_result, tool_name,
+                source_event_type, metadata_json)
+               VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                turn_id,
+                source_id,
+                turn.agent_turn_id,
+                turn.parent_turn_id,
+                turn.role,
+                turn.content_hash,
+                turn.timestamp,
+                turn.turn_index,
+                int(turn.is_final_answer),
+                int(turn.is_tool_call),
+                int(turn.is_tool_result),
+                turn.tool_name,
+                turn.source_event_type,
+                json.dumps({"content_length": turn.content_length}, ensure_ascii=False),
+            ),
+        )
+    return turn_ids
+
+
+def insert_episode_and_memories(conn: sqlite3.Connection, source_id: str, memo_session_id: str, session: SourceSessionDraft, turn_ids: list[str]) -> tuple[int, int]:
+    episode_count = 0
+    memory_count = 0
+    current_episode_id = ""
+    for idx, turn in enumerate(session.turns):
+        turn_id = turn_ids[idx]
+        if turn.role == "user" and turn.content_length >= MIN_MEMORY_TEXT_LENGTH:
+            episode_count += 1
+            current_episode_id = "ep_" + stable_hash(f"{source_id}|{idx}|{turn.content_hash}")[:24]
+            conn.execute(
+                """INSERT OR REPLACE INTO episodes
+                   (id, source_session_id, title, user_intent, start_turn_id, end_turn_id,
+                    start_turn_index, end_turn_index, status, confidence, metadata_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 0.5, ?)""",
+                (
+                    current_episode_id,
+                    source_id,
+                    f"Episode {episode_count}",
+                    "dry-run-import-placeholder",
+                    turn_id,
+                    turn_id,
+                    idx,
+                    idx,
+                    json.dumps({"dry_run_apply": True}, ensure_ascii=False),
+                ),
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO episode_turns(episode_id, turn_id, role_in_episode, weight)
+                   VALUES (?, ?, 'trigger', 1.0)""",
+                (current_episode_id, turn_id),
+            )
+            memory_id = "mem_" + stable_hash(f"{current_episode_id}|{turn.content_hash}")[:24]
+            conn.execute(
+                """INSERT OR REPLACE INTO memory_units
+                   (id, session_id, title, summary, summary_detail, raw_text, memory_type,
+                    source_session_id, episode_id, source_turn_start_id, source_turn_end_id,
+                    memory_granularity, speaker_scope, source_confidence, is_canonical)
+                   VALUES (?, ?, ?, ?, '', '', 'FACT', ?, ?, ?, ?, 'turn', 'user_claim', 0.5, 0)""",
+                (
+                    memory_id,
+                    memo_session_id,
+                    f"Dry-run memory {memory_count + 1}",
+                    "Source-aware test import placeholder. Raw transcript content is not stored by this dry-run apply.",
+                    source_id,
+                    current_episode_id,
+                    turn_id,
+                    turn_id,
+                ),
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO memory_turn_sources(memory_id, turn_id, evidence_role, weight)
+                   VALUES (?, ?, 'source', 1.0)""",
+                (memory_id, turn_id),
+            )
+            conn.execute(
+                """INSERT OR IGNORE INTO source_session_memories(source_session_id, memory_id, relation_type)
+                   VALUES (?, ?, 'originated_from')""",
+                (source_id, memory_id),
+            )
+            memory_count += 1
+        elif current_episode_id:
+            role = "final_answer" if turn.is_final_answer else ("tool_support" if turn.is_tool_call or turn.is_tool_result else "context")
+            try:
+                conn.execute(
+                    """INSERT OR IGNORE INTO episode_turns(episode_id, turn_id, role_in_episode, weight)
+                       VALUES (?, ?, ?, 0.5)""",
+                    (current_episode_id, turn_id, role),
+                )
+                conn.execute("UPDATE episodes SET end_turn_id=?, end_turn_index=? WHERE id=?", (turn_id, idx, current_episode_id))
+            except sqlite3.IntegrityError:
+                pass
+    conn.execute("UPDATE sessions SET memory_count=? WHERE id=?", (memory_count, memo_session_id))
+    conn.execute("UPDATE source_sessions SET memory_count=? WHERE id=?", (memory_count, source_id))
+    return episode_count, memory_count
+
+
+def apply_to_test_db(source: str, db_path: Path, path: str = "", limit: int = 5) -> dict[str, Any]:
+    assert_safe_test_db_path(db_path)
+    adapter = adapter_for(source, path=path)
+    sessions = []
+    for source_path in adapter.list_sessions(limit=limit):
+        sessions.append(adapter.load_session(source_path))
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    latest = apply_all_migrations(conn)
+    totals = {"source_sessions": 0, "source_turns": 0, "episodes": 0, "memory_units": 0}
+    for session in sessions:
+        source_id, memo_session_id = insert_source_session(conn, session)
+        turn_ids = insert_turns(conn, source_id, session)
+        episode_count, memory_count = insert_episode_and_memories(conn, source_id, memo_session_id, session, turn_ids)
+        totals["source_sessions"] += 1
+        totals["source_turns"] += len(turn_ids)
+        totals["episodes"] += episode_count
+        totals["memory_units"] += memory_count
+    conn.commit()
+    validation = {
+        "schema_version": conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0],
+        "source_sessions": conn.execute("SELECT COUNT(*) FROM source_sessions").fetchone()[0],
+        "source_turns": conn.execute("SELECT COUNT(*) FROM source_turns").fetchone()[0],
+        "episodes": conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0],
+        "memory_units": conn.execute("SELECT COUNT(*) FROM memory_units").fetchone()[0],
+        "evidence_links": conn.execute("SELECT COUNT(*) FROM memory_turn_sources").fetchone()[0],
+    }
+    conn.close()
+    return {
+        "mode": "TEST_APPLY",
+        "source": source,
+        "db_path": str(db_path),
+        "latest_migration": latest,
+        "imported": totals,
+        "validation": validation,
+        "safety": "Applied only to explicit test/dev/sandbox db path; raw transcript content is not stored in memory_units/source_turns.content by this test apply.",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Source-aware import dry-run. 当前版本不支持 apply。")
     parser.add_argument("--source", choices=["hanaagent", "workbuddy", "codex", "generic"], required=True)
     parser.add_argument("--path", default="", help="generic transcript 文件或目录。")
     parser.add_argument("--limit", type=int, default=MAX_SAMPLE_SESSIONS)
-    parser.add_argument("--dry-run", action="store_true", help="只读预览。当前必须传或默认 dry-run。")
-    parser.add_argument("--apply", action="store_true", help="保留参数；当前会拒绝执行。")
+    parser.add_argument("--dry-run", action="store_true", help="只读预览。默认 dry-run。")
+    parser.add_argument("--apply", action="store_true", help="仅允许写入显式测试库。必须传 --db-path 和 --confirm TEST_APPLY。")
+    parser.add_argument("--db-path", default="", help="测试库路径。--apply 时必填，且路径必须包含 test/dev/sandbox/dryrun/source_aware。")
+    parser.add_argument("--confirm", default="", help="测试库写入确认词：TEST_APPLY")
     parser.add_argument("--output", default="", help="报告输出路径；默认 reports/source-aware-import-<source>-<timestamp>.json")
     parser.add_argument("--json", action="store_true", help="控制台输出 JSON。")
     args = parser.parse_args()
 
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
     if args.apply:
-        print("拒绝执行：当前阶段只允许 --dry-run，不支持 --apply。", file=sys.stderr)
-        return 2
+        if args.confirm != TEST_APPLY_CONFIRM:
+            print("拒绝执行：测试库写入必须传入 --confirm TEST_APPLY。", file=sys.stderr)
+            return 2
+        if not args.db_path:
+            print("拒绝执行：--apply 必须显式传入 --db-path。", file=sys.stderr)
+            return 2
+        try:
+            result = apply_to_test_db(args.source, Path(args.db_path), path=args.path, limit=args.limit)
+        except Exception as exc:
+            print(f"测试库导入失败：{exc}", file=sys.stderr)
+            return 1
+        output = Path(args.output) if args.output else REPORTS_DIR / f"source-aware-apply-{args.source}-{now_stamp()}.json"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print("=" * 72)
+            print("Memo Source-aware Import TEST APPLY")
+            print("=" * 72)
+            print(f"source: {result['source']}")
+            print(f"db_path: {result['db_path']}")
+            print(f"imported: {json.dumps(result['imported'], ensure_ascii=False)}")
+            print(f"validation: {json.dumps(result['validation'], ensure_ascii=False)}")
+            print(f"Report written: {output}")
+        return 0
 
     report = run_dry_run(args.source, path=args.path, limit=args.limit)
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     output = Path(args.output) if args.output else REPORTS_DIR / f"source-aware-import-{args.source}-{now_stamp()}.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")

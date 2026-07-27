@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.source_aware_import import GenericTranscriptAdapter, parse_generic_jsonl, run_dry_run
+from scripts.source_aware_import import GenericTranscriptAdapter, apply_to_test_db, parse_generic_jsonl, run_dry_run
 
 
 def test_parse_generic_jsonl_counts_roles_and_tools(tmp_path: Path):
@@ -54,7 +54,7 @@ def test_run_dry_run_generic(tmp_path: Path):
     assert report.estimated_episodes >= 1
 
 
-def test_source_aware_import_apply_is_rejected():
+def test_source_aware_import_apply_requires_confirm():
     result = subprocess.run(
         [sys.executable, "scripts/source_aware_import.py", "--source", "generic", "--path", ".", "--apply"],
         cwd=Path(__file__).resolve().parent.parent,
@@ -64,4 +64,35 @@ def test_source_aware_import_apply_is_rejected():
     )
 
     assert result.returncode == 2
-    assert "只允许 --dry-run" in result.stderr
+    assert "--confirm TEST_APPLY" in result.stderr
+
+
+def test_apply_to_test_db_rejects_unsafe_path(tmp_path: Path):
+    transcript = tmp_path / "session.txt"
+    transcript.write_text("User: 这个项目后续要保留来源会话关系\nAssistant: 好。", encoding="utf-8")
+
+    unsafe_db = Path(__file__).resolve().parent.parent / "data" / "memo.db"
+    try:
+        apply_to_test_db("generic", unsafe_db, path=str(transcript), limit=1)
+    except ValueError as exc:
+        assert "拒绝写入生产数据库路径" in str(exc) or "必须包含 test/dev/sandbox/dryrun/source_aware" in str(exc)
+    else:
+        raise AssertionError("unsafe db path should be rejected")
+
+
+def test_apply_to_test_db_writes_evidence_chain_to_test_database(tmp_path: Path):
+    transcript = tmp_path / "session.txt"
+    transcript.write_text(
+        "User: 这个项目后续要保留来源会话关系，并且每一条长期记忆都必须能追溯到原始会话和具体对话轮次\nAssistant: 好，先做测试库导入。",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "source_aware_test.db"
+
+    result = apply_to_test_db("generic", db_path, path=str(transcript), limit=1)
+
+    assert result["validation"]["schema_version"] == 17
+    assert result["validation"]["source_sessions"] == 1
+    assert result["validation"]["source_turns"] >= 1
+    assert result["validation"]["episodes"] >= 1
+    assert result["validation"]["memory_units"] >= 1
+    assert result["validation"]["evidence_links"] >= 1
