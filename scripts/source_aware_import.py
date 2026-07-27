@@ -1183,6 +1183,9 @@ def is_memory_subject_text(text: str) -> bool:
         "[hana_reminder",
         "[use skill:",
         "[sessionfile]",
+        "<environment_context",
+        "<recommended_plugins",
+        "the following is the codex agent history",
         "system:",
     )
     if lowered.startswith(blocked_prefixes):
