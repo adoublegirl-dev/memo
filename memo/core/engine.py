@@ -1090,6 +1090,40 @@ class Engine:
     def _history_latest_job(self):
         return db.fetchone("SELECT * FROM history_processing_jobs ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC LIMIT 1")
 
+    def _history_progress_summary(self, job: dict[str, Any]) -> dict[str, Any]:
+        steps = ["detect", "source_import", "memory_extract", "quality_rules", "llm_enhance", "done"]
+        labels = {
+            "detect": "检测历史源",
+            "source_import": "导入原始会话/轮次",
+            "memory_extract": "保守抽取记忆",
+            "quality_rules": "规则质量处理",
+            "llm_enhance": "LLM 增强（最后一步）",
+            "done": "完成",
+        }
+        step = job.get("current_step") or "detect"
+        status = job.get("status") or "draft"
+        idx = steps.index(step) if step in steps else 0
+        denominator = max(1, len(steps) - 1)
+        completed = denominator if step == "done" or status == "done" else max(0, min(idx, denominator))
+        percent = int(round((completed / denominator) * 100))
+        if status == "running" and step != "done":
+            percent = min(99, int(round(((idx + 0.35) / denominator) * 100)))
+        blocking_reason = ""
+        if step == "llm_enhance":
+            blocking_reason = "LLM 增强执行器尚未接入；基础处理已可用，当前不会真实调用模型。"
+        return {
+            "steps": steps,
+            "labels": labels,
+            "current_step": step,
+            "current_label": labels.get(step, step),
+            "status": status,
+            "completed_steps": completed,
+            "total_steps": denominator,
+            "percent": percent,
+            "is_running": status == "running",
+            "blocking_reason": blocking_reason,
+        }
+
     def history_processing_overview(self) -> dict[str, Any]:
         """历史 Agent 会话处理中心状态。"""
         self._ensure_init()
@@ -1101,9 +1135,11 @@ class Engine:
                 "SELECT event_type, message, payload_json, created_at FROM history_processing_job_events WHERE job_id=? ORDER BY datetime(created_at) DESC LIMIT 30",
                 (job["id"],),
             )]
+        progress_summary = self._history_progress_summary(job) if job else self._history_progress_summary({})
         return {
             "schema_ready": ready,
             "job": job,
+            "job_progress": progress_summary,
             "events": events,
             "supported_sources": [
                 {"id": "hanaagent", "label": "HanaAgent"},
@@ -1119,7 +1155,31 @@ class Engine:
                 "llm_enhance": "LLM 增强（最后一步）",
                 "done": "完成",
             },
-            "llm_note": "LLM 增强永远在规则质量处理之后执行；当前版本先完成基础导入与规则处理，LLM 执行器待接入。",
+            "llm_note": "LLM 增强永远在规则质量处理之后执行；当前版本先完成基础导入与规则处理。LLM 执行器尚未接入时，页面会明确提示等待接入，不再重复追加执行记录。",
+        }
+
+    def _history_normalize_model_config(self, model_config: dict[str, Any] | None, current_row=None) -> dict[str, Any]:
+        model_config = dict(model_config or {})
+        allowed_providers = {"openai-compatible", "anthropic-compatible", "gemini-compatible", "ollama"}
+        provider = model_config.get("provider") or "openai-compatible"
+        if provider not in allowed_providers:
+            provider = "openai-compatible"
+        old_model: dict[str, Any] = {}
+        if current_row:
+            try:
+                old_model = json.loads(current_row["model_config_json"] or "{}")
+            except Exception:
+                old_model = {}
+        api_key = model_config.get("api_key")
+        if api_key == "***":
+            api_key = old_model.get("api_key", "")
+        return {
+            "provider": provider,
+            "base_url": str(model_config.get("base_url") or "").strip(),
+            "api_key": str(api_key or "").strip(),
+            "model": str(model_config.get("model") or "").strip(),
+            "concurrency": max(1, min(int(model_config.get("concurrency") or 1), 8)),
+            "batch_size": max(1, min(int(model_config.get("batch_size") or 20), 100)),
         }
 
     def _history_create_or_update_job(self, selected_sources: list[str] | None = None, detect_report: dict[str, Any] | None = None, model_config: dict[str, Any] | None = None) -> str:
@@ -1139,7 +1199,7 @@ class Engine:
                 params.append(json.dumps(detect_report, ensure_ascii=False))
             if model_config is not None:
                 updates.append("model_config_json=?")
-                params.append(json.dumps(model_config, ensure_ascii=False))
+                params.append(json.dumps(self._history_normalize_model_config(model_config, row), ensure_ascii=False))
             params.append(job_id)
             db.execute(f"UPDATE history_processing_jobs SET {', '.join(updates)} WHERE id=?", tuple(params))
         else:
@@ -1147,7 +1207,7 @@ class Engine:
                 """INSERT INTO history_processing_jobs
                    (id, status, current_step, selected_sources_json, detect_report_json, model_config_json, progress_json, created_at, updated_at)
                    VALUES (?, 'draft', 'detect', ?, ?, ?, '{}', ?, ?)""",
-                (job_id, json.dumps(selected, ensure_ascii=False), json.dumps(detect_report or {}, ensure_ascii=False), json.dumps(model_config or {}, ensure_ascii=False), now, now),
+                (job_id, json.dumps(selected, ensure_ascii=False), json.dumps(detect_report or {}, ensure_ascii=False), json.dumps(self._history_normalize_model_config(model_config), ensure_ascii=False), now, now),
             )
         db.commit()
         return job_id
@@ -1248,10 +1308,20 @@ class Engine:
                 result = self.apply_source_aware_quality_rules(dry_run=False)
                 progress["quality_rules"] = result
                 db.execute("UPDATE history_processing_jobs SET progress_json=?, current_step='llm_enhance', status='paused', updated_at=? WHERE id=?", (json.dumps(progress, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), job_id))
-                self._history_job_event(job_id, "quality_rules", "规则质量处理完成；LLM 增强是最后一步，当前待接入执行器", result)
+                self._history_job_event(job_id, "quality_rules", "规则质量处理完成；LLM 增强是最后一步，等待执行器接入", result)
             elif step == "llm_enhance":
-                self._history_job_event(job_id, "llm_enhance", "LLM 增强为最后一步；当前版本已预留配置，执行器待接入")
-                db.execute("UPDATE history_processing_jobs SET status='paused', updated_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), job_id))
+                message = "LLM 增强执行器尚未接入；不会重复执行。基础导入、记忆抽取和规则质量处理已完成。"
+                already_logged = db.fetchone(
+                    "SELECT 1 FROM history_processing_job_events WHERE job_id=? AND event_type='llm_enhance_blocked' LIMIT 1",
+                    (job_id,),
+                )
+                if not already_logged:
+                    self._history_job_event(job_id, "llm_enhance_blocked", message)
+                progress["llm_enhance"] = {"status": "blocked", "reason": "executor_not_implemented"}
+                db.execute(
+                    "UPDATE history_processing_jobs SET progress_json=?, status='paused', last_error=?, updated_at=? WHERE id=?",
+                    (json.dumps(progress, ensure_ascii=False), message, datetime.now().isoformat(timespec="seconds"), job_id),
+                )
             db.commit()
         except Exception as exc:
             db.execute("UPDATE history_processing_jobs SET status='failed', last_error=?, updated_at=? WHERE id=?", (str(exc), datetime.now().isoformat(timespec="seconds"), job_id))
