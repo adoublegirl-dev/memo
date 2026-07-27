@@ -1182,6 +1182,7 @@ def is_memory_subject_text(text: str) -> bool:
         "[system",
         "[hana_reminder",
         "[use skill:",
+        "[sessionfile]",
         "system:",
     )
     if lowered.startswith(blocked_prefixes):

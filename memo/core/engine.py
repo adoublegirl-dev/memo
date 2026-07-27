@@ -1216,7 +1216,7 @@ class Engine:
 
     def _quality_rule_plan(self, row: dict[str, Any], duplicate_counts: dict[str, int]) -> dict[str, Any]:
         text = f"{row.get('title') or ''}\n{row.get('summary') or ''}".lower()
-        pollution_tokens = ("<system-reminder", "<command-name>", "<local-command-", "[hana_reminder", "[use skill:", "tool_call", "tool_result", "command-caveat", "user-context")
+        pollution_tokens = ("<system-reminder", "<command-name>", "<local-command-", "[hana_reminder", "[use skill:", "[sessionfile]", "c:\\users\\pc>", "tool_call", "tool_result", "command-caveat", "user-context", "secret key", "api key", "sk-", "successfully updated")
         temporary_tokens = ("帮我安装", "打开", "访问", "检查一下", "跑一下", "修一下", "这个路径", "这个文件", "当前这个项目")
         flags: list[str] = []
         flags.extend([f"pollution:{t}" for t in pollution_tokens if t in text])
@@ -1280,7 +1280,8 @@ class Engine:
         )]
         pollution_tokens = (
             "<system-reminder", "<command-name>", "<local-command-", "[hana_reminder",
-            "[use skill:", "tool_call", "tool_result", "command-caveat", "user-context",
+            "[use skill:", "[sessionfile]", "c:\\users\\pc>", "tool_call", "tool_result",
+            "command-caveat", "user-context", "secret key", "api key", "sk-", "successfully updated",
         )
         temporary_tokens = (
             "帮我安装", "打开", "访问", "检查一下", "跑一下", "修一下",

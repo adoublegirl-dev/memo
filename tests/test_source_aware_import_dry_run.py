@@ -122,6 +122,7 @@ def test_memory_subject_filter_blocks_system_and_command_markup():
     assert is_memory_subject_text('<command-name>/status</command-name>') is False
     assert is_memory_subject_text('<local-command-stdout>ok</local-command-stdout>') is False
     assert is_memory_subject_text('[Use skill: user-guide] 默认模型指的是助手的配置吗') is False
+    assert is_memory_subject_text('[SessionFile] {"fileId":"sf_xxx"}') is False
 
 
 def test_source_only_episode_boundary_ignores_system_markup(tmp_path: Path):
