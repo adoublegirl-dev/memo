@@ -134,7 +134,7 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'companion.html'));
   mainWindow.on('blur', () => {
-    // 首版保持不自动隐藏，避免用户误以为消失；后续可加偏好设置。
+    hideWindow();
   });
 }
 
