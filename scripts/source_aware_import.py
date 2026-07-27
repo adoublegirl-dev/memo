@@ -459,11 +459,11 @@ class CodexAdapter(BaseAdapter):
         return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
 
     def load_session(self, path: Path) -> SourceSessionDraft:
-        turns, first_user_text = parse_generic_jsonl(path)
+        turns, first_user_text, agent_session_id = parse_codex_jsonl(path)
         display_title, display_title_source = compact_display_title(first_user_text, path.stem)
         return SourceSessionDraft(
             source_agent="Codex",
-            agent_session_id=path.stem,
+            agent_session_id=agent_session_id or path.stem,
             source_path=str(path),
             source_hash=file_hash(path),
             title_source="generated_fallback",
@@ -594,6 +594,85 @@ def parse_workbuddy_jsonl(path: Path) -> tuple[list[SourceTurnDraft], str]:
                 source_event_type=typ,
             ))
     return turns, first_user_text
+
+
+def normalize_codex_payload_text(payload: dict[str, Any]) -> tuple[str, bool, bool, str]:
+    payload_type = str(payload.get("type") or "")
+    text, has_tool_call, has_tool_result, tool_name = normalize_content(payload.get("content", ""))
+    if not text:
+        text = str(payload.get("message") or payload.get("text") or payload.get("output") or payload.get("input") or "").strip()
+    if not text and payload.get("summary"):
+        text, _, _, _ = normalize_content(payload.get("summary"))
+    if payload_type in {"function_call", "custom_tool_call", "local_shell_call"}:
+        has_tool_call = True
+        tool_name = str(payload.get("name") or payload.get("tool_name") or tool_name)
+        if not text:
+            text = str(payload.get("arguments") or payload.get("input") or "").strip()
+    if payload_type in {"function_call_output", "custom_tool_call_output", "local_shell_call_output"}:
+        has_tool_result = True
+        tool_name = str(payload.get("name") or payload.get("tool_name") or tool_name)
+    return text, has_tool_call, has_tool_result, tool_name
+
+
+def parse_codex_jsonl(path: Path) -> tuple[list[SourceTurnDraft], str, str]:
+    turns: list[SourceTurnDraft] = []
+    first_user_text = ""
+    agent_session_id = path.stem
+    with path.open("r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                continue
+            outer_type = str(obj.get("type") or obj.get("event") or "")
+            payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else {}
+            payload_type = str(payload.get("type") or "")
+            if outer_type == "session_meta":
+                agent_session_id = str(payload.get("session_id") or payload.get("id") or agent_session_id)
+                continue
+            if not payload:
+                continue
+            event_type = f"{outer_type}:{payload_type}" if payload_type else outer_type
+            role = str(payload.get("role") or "unknown")
+            text, has_tool_call, has_tool_result, tool_name = normalize_codex_payload_text(payload)
+            if outer_type == "event_msg" and payload_type == "user_message":
+                role = "user"
+            elif outer_type == "response_item" and payload_type == "message":
+                role = "assistant" if role == "assistant" else "user" if role == "user" else role
+            elif payload_type in {"function_call", "custom_tool_call", "local_shell_call"}:
+                role = "tool"
+                has_tool_call = True
+            elif payload_type in {"function_call_output", "custom_tool_call_output", "local_shell_call_output"}:
+                role = "tool"
+                has_tool_result = True
+            elif payload_type == "reasoning":
+                role = "assistant"
+            elif outer_type in {"turn_context", "world_state"}:
+                role = "system"
+            if role == "human":
+                role = "user"
+            if role not in {"user", "assistant", "tool", "system"}:
+                role = "unknown"
+            if role == "user" and not first_user_text and text.strip():
+                first_user_text = text.strip()
+            turns.append(SourceTurnDraft(
+                agent_turn_id=str(payload.get("id") or payload.get("turn_id") or payload.get("call_id") or obj.get("id") or ""),
+                parent_turn_id=str(payload.get("parentId") or payload.get("parent_id") or ""),
+                role=role,
+                content_hash=stable_hash(text) if text else "",
+                content_length=len(text),
+                timestamp=str(obj.get("timestamp") or payload.get("timestamp") or payload.get("started_at") or payload.get("completed_at") or ""),
+                turn_index=len(turns),
+                is_final_answer=role == "assistant" and payload_type == "message" and not has_tool_call and not has_tool_result,
+                is_tool_call=has_tool_call,
+                is_tool_result=has_tool_result,
+                tool_name=tool_name,
+                source_event_type=event_type,
+            ))
+    return turns, first_user_text, agent_session_id
 
 
 def parse_generic_jsonl(path: Path) -> tuple[list[SourceTurnDraft], str]:

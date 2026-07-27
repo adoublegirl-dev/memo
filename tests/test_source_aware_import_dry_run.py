@@ -3,7 +3,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.source_aware_import import GenericTranscriptAdapter, apply_to_test_db, parse_generic_jsonl, run_dry_run
+from scripts.source_aware_import import GenericTranscriptAdapter, apply_to_test_db, parse_codex_jsonl, parse_generic_jsonl, run_dry_run
 
 
 def test_parse_generic_jsonl_counts_roles_and_tools(tmp_path: Path):
@@ -24,6 +24,28 @@ def test_parse_generic_jsonl_counts_roles_and_tools(tmp_path: Path):
     assert turns[1].is_final_answer is True
     assert any(t.is_tool_call for t in turns)
     assert any(t.is_tool_result for t in turns)
+
+
+def test_parse_codex_jsonl_payload_wrapped_events(tmp_path: Path):
+    transcript = tmp_path / "codex.jsonl"
+    lines = [
+        {"timestamp": "2026-07-20T10:00:00Z", "type": "session_meta", "payload": {"session_id": "codex-session-1", "cwd": "D:/demo"}},
+        {"timestamp": "2026-07-20T10:00:01Z", "type": "event_msg", "payload": {"type": "user_message", "message": "请分析这个 source-aware 导入方案如何处理 Codex 正文结构"}},
+        {"timestamp": "2026-07-20T10:00:02Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "可以，先识别 payload 包裹。"}]}},
+        {"timestamp": "2026-07-20T10:00:03Z", "type": "response_item", "payload": {"type": "function_call", "name": "read", "arguments": "{}", "call_id": "call_1"}},
+        {"timestamp": "2026-07-20T10:00:04Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_1", "output": "ok"}},
+    ]
+    transcript.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in lines), encoding="utf-8")
+
+    turns, first_user_text, agent_session_id = parse_codex_jsonl(transcript)
+
+    assert agent_session_id == "codex-session-1"
+    assert len(turns) == 4
+    assert turns[0].role == "user"
+    assert "Codex 正文结构" in first_user_text
+    assert turns[1].is_final_answer is True
+    assert turns[2].is_tool_call is True
+    assert turns[3].is_tool_result is True
 
 
 def test_generic_adapter_dry_run_does_not_include_raw_content(tmp_path: Path):
