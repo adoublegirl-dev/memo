@@ -21,7 +21,7 @@ import sqlite3
 import sys
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +106,119 @@ def read_json(path: Path) -> Any | None:
             return None
     except Exception:
         return None
+
+
+def parse_ts(text: str | None) -> float | None:
+    if not text:
+        return None
+    try:
+        normalized = str(text).replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized).timestamp()
+    except Exception:
+        return None
+
+
+def jsonl_time_range(path: Path, max_lines: int = 200000) -> dict[str, Any]:
+    """统计 JSONL timestamp 范围，不保存正文。"""
+    min_ts: float | None = None
+    max_ts: float | None = None
+    count = 0
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i >= max_lines:
+                    break
+                if "timestamp" not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                ts = parse_ts(str(obj.get("timestamp") or obj.get("created_at") or ""))
+                if ts is None:
+                    continue
+                count += 1
+                min_ts = ts if min_ts is None else min(min_ts, ts)
+                max_ts = ts if max_ts is None else max(max_ts, ts)
+    except Exception as exc:
+        return {"path": redact_home(path), "error": str(exc), "timestamp_count": 0}
+    return {
+        "path": redact_home(path),
+        "timestamp_count": count,
+        "start_ts": min_ts,
+        "end_ts": max_ts,
+        "start": datetime.fromtimestamp(min_ts, timezone.utc).isoformat() if min_ts is not None else "",
+        "end": datetime.fromtimestamp(max_ts, timezone.utc).isoformat() if max_ts is not None else "",
+    }
+
+
+def resolve_hana_sess_titles(agent_dir: Path, jsonl_files: list[Path], titles: dict[str, Any]) -> dict[str, Any]:
+    """用 memory/summaries/sess_*.json 的 source_time_range 保守映射到 JSONL。
+
+    只在唯一最高候选时认定 resolved；不保存标题正文。
+    """
+    sess_keys = [k for k in titles if str(k).startswith("sess_")]
+    summaries_dir = agent_dir / "memory" / "summaries"
+    ranges = {p: jsonl_time_range(p) for p in jsonl_files}
+    resolved: dict[str, str] = {}
+    unresolved = 0
+    ambiguous = 0
+    missing_summary = 0
+    examples: list[dict[str, Any]] = []
+    tolerance = 15 * 60
+    for sess_id in sess_keys:
+        summary_path = summaries_dir / f"{sess_id}.json"
+        summary = read_json(summary_path) if summary_path.exists() else None
+        if not isinstance(summary, dict):
+            missing_summary += 1
+            continue
+        source_range = summary.get("source_time_range") or {}
+        start = parse_ts(source_range.get("start"))
+        end = parse_ts(source_range.get("end"))
+        if start is None or end is None:
+            unresolved += 1
+            continue
+        candidates: list[tuple[float, Path]] = []
+        for path, rng in ranges.items():
+            rs = rng.get("start_ts")
+            re = rng.get("end_ts")
+            if rs is None or re is None:
+                continue
+            # 覆盖或重叠均可作为候选，覆盖优先。
+            covers = rs - tolerance <= start and re + tolerance >= end
+            overlap = max(0.0, min(end, re + tolerance) - max(start, rs - tolerance))
+            if covers or overlap > 0:
+                score = (end - start + 1) + overlap if covers else overlap
+                candidates.append((score, path))
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        if len(candidates) == 1 or (len(candidates) > 1 and candidates[0][0] > candidates[1][0] * 1.5):
+            resolved[sess_id] = str(candidates[0][1])
+            if len(examples) < 8:
+                examples.append({
+                    "sess_id": sess_id,
+                    "jsonl_path": redact_home(candidates[0][1]),
+                    "confidence": "time_range_unique" if len(candidates) == 1 else "time_range_best",
+                    "source_time_range": {"start": source_range.get("start", ""), "end": source_range.get("end", "")},
+                })
+        elif candidates:
+            ambiguous += 1
+        else:
+            unresolved += 1
+    path_to_sess: dict[str, list[str]] = {}
+    for sess_id, path in resolved.items():
+        path_to_sess.setdefault(path, []).append(sess_id)
+    unique_path_to_sess = {path: ids[0] for path, ids in path_to_sess.items() if len(ids) == 1}
+    return {
+        "sess_title_keys": len(sess_keys),
+        "summary_files_found": len(sess_keys) - missing_summary,
+        "resolved_sess_to_jsonl": len(resolved),
+        "unique_jsonl_matches": len(unique_path_to_sess),
+        "ambiguous": ambiguous,
+        "unresolved": unresolved,
+        "missing_summary": missing_summary,
+        "path_to_sess": unique_path_to_sess,
+        "examples": examples,
+    }
 
 
 def inspect_jsonl(path: Path, max_lines: int = 2000) -> dict[str, Any]:
@@ -307,7 +420,10 @@ class Detector:
             manifest_path = sessions_dir / "session-manifest.db"
             jsonl_files = sorted(sessions_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True) if sessions_dir.exists() else []
             titles = read_json(titles_path) if titles_path.exists() else {}
-            title_keys = set(titles.keys()) if isinstance(titles, dict) else set()
+            titles = titles if isinstance(titles, dict) else {}
+            title_keys = set(titles.keys())
+            sess_resolution = resolve_hana_sess_titles(agent_dir, jsonl_files, titles) if title_keys else {"path_to_sess": {}}
+            sess_path_map = sess_resolution.get("path_to_sess", {}) if isinstance(sess_resolution, dict) else {}
             title_key_shapes = {
                 "path_like": sum(1 for k in title_keys if "\\" in k or "/" in k),
                 "sess_id_like": sum(1 for k in title_keys if k.startswith("sess_")),
@@ -315,10 +431,14 @@ class Detector:
                 "other": 0,
             }
             title_key_shapes["other"] = max(len(title_keys) - sum(title_key_shapes.values()), 0)
-            titled = 0
+            path_titled = 0
+            sess_titled = 0
             for jf in jsonl_files:
-                if str(jf) in title_keys or redact_home(jf) in title_keys or jf.name in title_keys:
-                    titled += 1
+                if str(jf) in title_keys or str(jf.resolve()) in title_keys or redact_home(jf) in title_keys or jf.name in title_keys:
+                    path_titled += 1
+                elif str(jf) in sess_path_map or str(jf.resolve()) in sess_path_map:
+                    sess_titled += 1
+            titled = path_titled + sess_titled
             total_sessions += len(jsonl_files)
             total_titles += titled
             sample_inspections = [inspect_jsonl(p, max_lines=500) for p in jsonl_files[:3]]
@@ -331,7 +451,9 @@ class Detector:
                 "session_titles_json": safe_stat(titles_path),
                 "session_titles_entries": len(titles) if isinstance(titles, dict) else 0,
                 "session_title_key_shapes": title_key_shapes,
-                "matched_titles_by_path": titled,
+                "matched_titles_by_path": path_titled,
+                "matched_titles_by_sess_time_range": sess_titled,
+                "sess_title_resolution": {k: v for k, v in sess_resolution.items() if k != "path_to_sess"},
                 "session_meta_json": safe_stat(meta_path),
                 "session_manifest_db": safe_stat(manifest_path),
                 "sample_jsonl_structure": sample_inspections,
@@ -346,10 +468,10 @@ class Detector:
         if total_titles:
             report.title_sources.append("session-titles.json[path]")
         if any(
-            agent.get("session_title_key_shapes", {}).get("sess_id_like", 0) > 0
+            agent.get("matched_titles_by_sess_time_range", 0) > 0
             for agent in structures.get("agents", [])
         ):
-            report.title_sources.append("session-titles.json[sess_*] (likely media/sessionfile ids; not JSONL chat title source)")
+            report.title_sources.append("session-titles.json[sess_*] + memory/summaries source_time_range")
         if any((self.home / ".hanako" / "agents" / "hanako" / "sessions" / "session-manifest.db").exists() for _ in [0]):
             report.title_sources.append("session-manifest.db")
         report.turn_sources.append("~/.hanako/agents/<agent_id>/sessions/*.jsonl")
@@ -359,9 +481,9 @@ class Detector:
         report.encryption_or_locking = "no_encryption_detected" if any_jsonl_readable else "unknown"
         report.structures = structures
         if report.missing_title_count:
-            report.risks.append("部分 HanaAgent JSONL 未匹配到 session-titles.json 的 path 标题；已观察到 sess_* 多出现在 message.details/screenshot/media sessionId，不能直接当作 JSONL 聊天会话标题来源。")
+            report.risks.append("部分 HanaAgent JSONL 仍未匹配真实标题；sess_* 仅在 memory/summaries source_time_range 能唯一映射到 JSONL 时才可作为真实会话标题来源。")
         report.risks.append("不要用 Memo 生成标题写入 original_title；只能作为 display_title fallback。")
-        report.next_checks.append("实现 HanaAgentAdapter：加载 session-titles.json，按 JSONL 绝对路径匹配真实标题。")
+        report.next_checks.append("实现 HanaAgentAdapter：优先 path 标题，其次使用 sess_* summary 时间范围唯一映射标题。")
         return report
 
     def detect_workbuddy(self) -> AgentDetectReport:

@@ -79,6 +79,75 @@ def read_json(path: Path) -> Any | None:
         return None
 
 
+def parse_ts(text: str | None) -> float | None:
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(str(text).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
+def jsonl_time_range(path: Path, max_lines: int = 200000) -> dict[str, Any]:
+    min_ts: float | None = None
+    max_ts: float | None = None
+    count = 0
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i >= max_lines:
+                    break
+                if "timestamp" not in line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                ts = parse_ts(str(obj.get("timestamp") or obj.get("created_at") or ""))
+                if ts is None:
+                    continue
+                count += 1
+                min_ts = ts if min_ts is None else min(min_ts, ts)
+                max_ts = ts if max_ts is None else max(max_ts, ts)
+    except Exception:
+        pass
+    return {"timestamp_count": count, "start_ts": min_ts, "end_ts": max_ts}
+
+
+def resolve_hana_sess_title_paths(agent_dir: Path, jsonl_files: list[Path], titles: dict[str, Any]) -> dict[str, str]:
+    sess_keys = [k for k in titles if str(k).startswith("sess_")]
+    summaries_dir = agent_dir / "memory" / "summaries"
+    ranges = {p: jsonl_time_range(p) for p in jsonl_files}
+    resolved: dict[str, str] = {}
+    tolerance = 15 * 60
+    for sess_id in sess_keys:
+        summary_path = summaries_dir / f"{sess_id}.json"
+        summary = read_json(summary_path) if summary_path.exists() else None
+        if not isinstance(summary, dict):
+            continue
+        source_range = summary.get("source_time_range") or {}
+        start = parse_ts(source_range.get("start"))
+        end = parse_ts(source_range.get("end"))
+        if start is None or end is None:
+            continue
+        candidates: list[tuple[float, Path]] = []
+        for path, rng in ranges.items():
+            rs = rng.get("start_ts")
+            re = rng.get("end_ts")
+            if rs is None or re is None:
+                continue
+            covers = rs - tolerance <= start and re + tolerance >= end
+            overlap = max(0.0, min(end, re + tolerance) - max(start, rs - tolerance))
+            if covers or overlap > 0:
+                score = (end - start + 1) + overlap if covers else overlap
+                candidates.append((score, path))
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        if len(candidates) == 1 or (len(candidates) > 1 and candidates[0][0] > candidates[1][0] * 1.5):
+            resolved[str(candidates[0][1])] = sess_id
+            resolved[str(candidates[0][1].resolve())] = sess_id
+    return resolved
+
+
 @dataclass
 class SourceTurnDraft:
     agent_turn_id: str = ""
@@ -213,6 +282,8 @@ class HanaAgentAdapter(BaseAdapter):
         self.titles_path = self.sessions_dir / "session-titles.json"
         raw_titles = read_json(self.titles_path) if self.titles_path.exists() else {}
         self.titles = raw_titles if isinstance(raw_titles, dict) else {}
+        all_jsonl = sorted(self.sessions_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True) if self.sessions_dir.exists() else []
+        self.sess_title_by_path = resolve_hana_sess_title_paths(self.sessions_dir.parent, all_jsonl, self.titles) if self.titles else {}
 
     def list_sessions(self, limit: int = MAX_SAMPLE_SESSIONS) -> list[Path]:
         if not self.sessions_dir.exists():
@@ -225,8 +296,11 @@ class HanaAgentAdapter(BaseAdapter):
             title = str(self.titles.get(key, "")).strip() if key in self.titles else ""
             if title:
                 return "session_titles_json_path", True, title
-        # session-titles.json 中存在 sess_* 键，但已观察到多为 screenshot/media/SessionFile sessionId，
-        # 不能冒充 JSONL 聊天会话标题。
+        sess_id = self.sess_title_by_path.get(str(path)) or self.sess_title_by_path.get(str(path.resolve()))
+        if sess_id:
+            title = str(self.titles.get(sess_id, "")).strip()
+            if title:
+                return "session_titles_json_id", True, title
         return "missing", False, ""
 
     def load_session(self, path: Path) -> SourceSessionDraft:
@@ -278,7 +352,7 @@ class HanaAgentAdapter(BaseAdapter):
         except Exception as exc:
             raise RuntimeError(f"无法读取 HanaAgent JSONL: {exc}") from exc
         if not has_title:
-            risks.append("HanaAgent 会话未匹配 path 型真实标题；如果只能生成 fallback，必须标记 generated_fallback。")
+            risks.append("HanaAgent 会话未匹配 path 标题或 sess_* summary 时间范围标题；如果只能生成 fallback，必须标记 generated_fallback。")
         return SourceSessionDraft(
             source_agent="HanaAgent",
             agent_session_id=agent_session_id,
