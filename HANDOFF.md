@@ -32,7 +32,7 @@ D:\个人\Hanako项目文件\Memo_V0.1.0
 ├── src/                      # Svelte Dashboard 源码
 ├── dashboard/dist/           # Dashboard 构建产物
 ├── scripts/                  # 运行、升级、自检、打包脚本
-├── data/memo.db              # 生产数据库（不提交 Git / 不进发布包）
+├── data/memo_source_aware.db # 默认生产数据库（不提交 Git / 不进发布包）
 ├── README.md
 ├── CHANGELOG.md
 └── HANDOFF.md

@@ -64,7 +64,7 @@ python scripts/install_doctor.py --json
 ```
 LLM_API_KEY=sk-your-deepseek-key
 LLM_BASE_URL=https://api.deepseek.com/v1
-MEMO_DB_PATH=data/memo.db
+MEMO_DB_PATH=data/memo_source_aware.db
 ```
 
 如果用自己的 API，改 `LLM_BASE_URL` 和模型名即可。
@@ -265,7 +265,7 @@ python -c "from memo.core.engine import engine; engine.init(); r=engine.build_pe
 | 停止全部 | `stop_all.bat` |
 | 手动生命周期 | `python -c "from memo.core.engine import engine; engine.init(); engine.run_lifecycle()"` |
 | 人格增量刷新 | `python -c "from memo.core.engine import engine; engine.init(); engine.update_persona()"` |
-| 数据库备份 | 复制 `data/memo.db` |
+| 数据库备份 | 复制 `data/memo_source_aware.db` |
 | 安全升级 | `upgrade.bat` 或先 `python scripts/init_db.py` 再 `start_all.bat` |
 | 环境自检 | `python scripts/doctor.py` |
 | 安全打包 | `python scripts/build_release.py --include-dist` |

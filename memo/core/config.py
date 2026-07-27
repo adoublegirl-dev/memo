@@ -27,7 +27,7 @@ def _memo_env() -> str:
 def _resolve_db_path() -> str:
     """解析数据库路径。
 
-    production：沿用 MEMO_DB_PATH 或 data/memo.db。
+    production：沿用 MEMO_DB_PATH 或 data/memo_source_aware.db。
     development/test：强制使用隔离数据库，避免污染真实记忆库。
     """
     env = _memo_env()
@@ -42,7 +42,7 @@ def _resolve_db_path() -> str:
         if not p.is_absolute():
             p = _PROJECT_ROOT / p
         return str(p)
-    return str(_PROJECT_ROOT / "data" / "memo.db")
+    return str(_PROJECT_ROOT / "data" / "memo_source_aware.db")
 
 
 @dataclass

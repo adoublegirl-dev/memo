@@ -179,7 +179,7 @@ def ensure_env(api_key: str = "", dry_run: bool = False, skip_key_config: bool =
         print("✓ .env 已存在，但未检测到有效 API Key")
     else:
         print("准备创建 .env")
-        text = example.read_text(encoding="utf-8") if example.exists() else "MEMO_DB_PATH=data/memo.db\n"
+        text = example.read_text(encoding="utf-8") if example.exists() else "MEMO_DB_PATH=data/memo_source_aware.db\n"
         values = parse_env_text(text)
 
     updates: dict[str, str] = {}
