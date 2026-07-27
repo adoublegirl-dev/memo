@@ -1042,22 +1042,45 @@ class Engine:
         total_row = db.fetchone(f"SELECT COUNT(*) AS c FROM source_sessions ss{where}", params)
         total = int(total_row["c"] if total_row else 0)
         rows = db.fetchall(
-            f"""SELECT ss.id, ss.source_agent, ss.agent_session_id, ss.source_path, ss.source_hash,
+            f"""WITH turn_counts AS (
+                    SELECT source_session_id,
+                           COUNT(*) AS turn_count,
+                           SUM(CASE WHEN is_tool_call=1 THEN 1 ELSE 0 END) AS tool_call_count,
+                           SUM(CASE WHEN is_tool_result=1 THEN 1 ELSE 0 END) AS tool_result_count
+                    FROM source_turns
+                    GROUP BY source_session_id
+                ), episode_counts AS (
+                    SELECT source_session_id, COUNT(*) AS episode_count
+                    FROM episodes
+                    GROUP BY source_session_id
+                ), memory_counts AS (
+                    SELECT source_session_id, COUNT(*) AS memory_count
+                    FROM memory_units
+                    WHERE source_session_id IS NOT NULL
+                    GROUP BY source_session_id
+                ), evidence_counts AS (
+                    SELECT mu.source_session_id,
+                           COUNT(DISTINCT mts.memory_id || ':' || mts.turn_id || ':' || mts.evidence_role) AS evidence_count
+                    FROM memory_units mu
+                    JOIN memory_turn_sources mts ON mts.memory_id=mu.id
+                    WHERE mu.source_session_id IS NOT NULL
+                    GROUP BY mu.source_session_id
+                )
+                SELECT ss.id, ss.source_agent, ss.agent_session_id, ss.source_path, ss.source_hash,
                        ss.original_title, ss.title_source, ss.display_title, ss.display_title_source,
                        ss.started_at, ss.updated_at, ss.imported_at, ss.message_count, ss.status,
-                       COUNT(DISTINCT st.id) AS turn_count,
-                       COUNT(DISTINCT e.id) AS episode_count,
-                       COUNT(DISTINCT mu.id) AS memory_count,
-                       COUNT(DISTINCT mts.turn_id || ':' || mts.memory_id || ':' || mts.evidence_role) AS evidence_count,
-                       SUM(CASE WHEN st.is_tool_call=1 THEN 1 ELSE 0 END) AS tool_call_count,
-                       SUM(CASE WHEN st.is_tool_result=1 THEN 1 ELSE 0 END) AS tool_result_count
+                       COALESCE(tc.turn_count, 0) AS turn_count,
+                       COALESCE(ec.episode_count, 0) AS episode_count,
+                       COALESCE(mc.memory_count, 0) AS memory_count,
+                       COALESCE(evc.evidence_count, 0) AS evidence_count,
+                       COALESCE(tc.tool_call_count, 0) AS tool_call_count,
+                       COALESCE(tc.tool_result_count, 0) AS tool_result_count
                 FROM source_sessions ss
-                LEFT JOIN source_turns st ON st.source_session_id=ss.id
-                LEFT JOIN episodes e ON e.source_session_id=ss.id
-                LEFT JOIN memory_units mu ON mu.source_session_id=ss.id
-                LEFT JOIN memory_turn_sources mts ON mts.memory_id=mu.id
+                LEFT JOIN turn_counts tc ON tc.source_session_id=ss.id
+                LEFT JOIN episode_counts ec ON ec.source_session_id=ss.id
+                LEFT JOIN memory_counts mc ON mc.source_session_id=ss.id
+                LEFT JOIN evidence_counts evc ON evc.source_session_id=ss.id
                 {where}
-                GROUP BY ss.id
                 ORDER BY COALESCE(ss.updated_at, ss.imported_at, ss.created_at) DESC
                 LIMIT ? OFFSET ?""",
             params + (page_size, offset),
