@@ -29,14 +29,27 @@
     return matchTab && matchQuery;
   });
 
+  async function loadOverview() {
+    try {
+      const data = await api.memories({ status: 'all', limit: 1, offset: 0, include_total: true });
+      breakdown = data.breakdown || null;
+    } catch (e) { /* overview is best-effort */ }
+  }
+
   async function load() {
-    loading = true; error='';
+    error='';
+    if (!sourceSessionId) {
+      memories = [];
+      total = 0;
+      return;
+    }
+    loading = true;
     try {
       const limit = Number(pageSize || 50);
       const data = await api.memories({ q, status, source_session_id: sourceSessionId, limit, offset: (page - 1) * limit, include_total: true });
       memories = data.items || [];
       total = data.total || 0;
-      breakdown = data.breakdown || null;
+      if (data.breakdown) breakdown = data.breakdown;
     }
     catch(e) { error = e.message; }
     finally { loading = false; }
@@ -131,8 +144,8 @@
     }
   }
 
-  async function selectSourceSession(id) { sourceSessionId = id; page = 1; await load(); }
-  async function clearSourceSession() { sourceSessionId = ''; page = 1; await load(); }
+  async function selectSourceSession(id) { sourceSessionId = id; page = 1; q = ''; status = 'active'; await load(); }
+  async function clearSourceSession() { sourceSessionId = ''; page = 1; q = ''; status = 'active'; await load(); }
   async function setSessionReviewStatus(review_status) {
     if (!selectedSourceSession) return;
     const note = review_status === 'postponed' || review_status === 'has_issue' ? (prompt('可选：记录这个会话的处理备注', selectedSourceSession.session_review_note || '') || '') : (selectedSourceSession.session_review_note || '');
@@ -143,7 +156,7 @@
     } finally { sessionReviewBusy = false; }
   }
 
-  onMount(async () => { await Promise.all([loadSourceSessions(), load()]); });
+  onMount(async () => { await Promise.all([loadSourceSessions(), loadOverview()]); });
 </script>
 <section class="page">
   <h1 class="page-title">记忆管理</h1>
@@ -154,73 +167,74 @@
     <div class="card stat-card"><div><strong>{breakdown?.muted_available ?? '—'}</strong><span>不引用但保留</span></div></div>
     <div class="card stat-card"><div><strong>{breakdown?.superseded ?? '—'}</strong><span>已被替代</span></div></div>
   </div>
-  <div class="hint-card" style="margin-top:12px">总览里的“记忆”是全库总量；本页默认展示“可引用且未被替代”的记忆。因此当前筛选 {total} 条，可能小于记忆库总量。</div>
+  <div class="hint-card" style="margin-top:12px">总览里的“记忆”是全库总量；治理时请先在会话处理队列中选择一个来源会话，再处理它下面的记忆。</div>
+
   <div class="card card-pad" style="margin-top:18px">
     <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
-      <div class="toolbar" style="gap:8px;flex-wrap:wrap">
-        <input class="input" style="width:min(520px,100%)" bind:value={q} on:keydown={(e)=>e.key==='Enter'&&search()} placeholder="搜索标题、摘要或原文"/>
-        <select class="input" bind:value={status} on:change={search}>
-          <option value="active">可引用</option><option value="expired">已过期</option><option value="wrong">已标错</option><option value="muted">不引用</option><option value="deleted">已删除</option><option value="all">全部</option>
-        </select>
-
+      <div>
+        <strong>会话处理队列</strong>
+        <div class="item-meta" style="margin-top:4px">先按状态查看会话，再选择某个会话处理它下面的记忆。</div>
       </div>
-      <div class="toolbar" style="gap:8px">
-        <select class="input" style="width:110px" bind:value={pageSize} on:change={search}>
-          <option value="50">50 / 页</option>
-          <option value="100">100 / 页</option>
-          <option value="200">200 / 页</option>
-        </select>
-        <button class="btn primary" class:loading={loading} disabled={loading} on:click={search}>{loading ? '搜索中' : '搜索'}</button>
-      </div>
+      <input class="input" style="width:min(320px,100%)" bind:value={sourceSessionQuery} placeholder="搜索会话标题 / Agent" />
     </div>
-    <div class="item-meta" style="margin-top:12px">当前筛选共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
-    <div class="hint-card" style="margin-top:12px">
-      <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <div>
-          <strong>会话处理队列</strong>
-          <div class="item-meta" style="margin-top:4px">先按状态查看会话，再选择某个会话处理它下面的记忆。</div>
-        </div>
-        <input class="input" style="width:min(320px,100%)" bind:value={sourceSessionQuery} placeholder="搜索会话标题 / Agent" />
-      </div>
-      <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:12px">
-        {#each sessionReviewTabsWithCounts as tab}
-          <button class="btn" class:primary={sessionReviewTab === tab.id} on:click={() => sessionReviewTab = tab.id}>{tab.label} {tab.count}</button>
-        {/each}
-      </div>
-      <div class="session-grid" style="margin-top:12px">
-        {#each filteredSourceSessions as s}
-          <button class="session-card" class:selected={sourceSessionId === s.id} on:click={() => selectSourceSession(s.id)}>
-            <div class="session-card-head">
-              <strong>{s.display_title || s.agent_session_id || s.id}</strong>
-              <span class="badge green">{sessionReviewLabels[s.effective_review_status] || s.effective_review_status}</span>
-            </div>
-            <div class="item-meta">{s.source_agent} · memory {s.memory_count || 0} · 已规则处理 {s.quality_reviewed_count || 0}</div>
-            <div class="item-meta">长期 {s.long_term_count || 0} · 临时 {s.temporary_task_count || 0} · 噪声 {s.noise_count || 0} · 需LLM {s.needs_llm_count || 0}</div>
-            {#if s.session_review_note}<div class="item-summary">备注：{s.session_review_note}</div>{/if}
-          </button>
-        {:else}
-          <div class="empty">当前 Tab 下暂无会话</div>
-        {/each}
-      </div>
+    <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+      {#each sessionReviewTabsWithCounts as tab}
+        <button class="btn" class:primary={sessionReviewTab === tab.id} on:click={() => sessionReviewTab = tab.id}>{tab.label} {tab.count}</button>
+      {/each}
     </div>
-    {#if selectedSourceSession}
-      <div class="hint-card" style="margin-top:12px">
-        <div><strong>当前按来源会话筛选：</strong>{selectedSourceSession.display_title || selectedSourceSession.agent_session_id}</div>
-        <div class="item-meta" style="margin-top:6px">
-          {selectedSourceSession.source_agent} · memories {selectedSourceSession.memory_count || 0} · 已规则处理 {selectedSourceSession.quality_reviewed_count || 0} · 长期 {selectedSourceSession.long_term_count || 0} · 临时 {selectedSourceSession.temporary_task_count || 0} · 噪声 {selectedSourceSession.noise_count || 0} · 需LLM {selectedSourceSession.needs_llm_count || 0}
-        </div>
-        <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:10px">
-          <span class="badge green">状态：{sessionReviewLabels[selectedSourceSession.effective_review_status] || selectedSourceSession.effective_review_status || '未处理'}</span>
-          {#if selectedSourceSession.session_review_note}<span class="badge">备注：{selectedSourceSession.session_review_note}</span>{/if}
-          <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('in_review')}>标记处理中</button>
-          <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('done')}>标记已完成</button>
-          <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('postponed')}>暂缓</button>
-          <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('needs_llm')}>需 LLM</button>
-          <button class="btn" on:click={clearSourceSession}>清除会话筛选</button>
-        </div>
-      </div>
-    {/if}
+    <div class="session-grid" style="margin-top:12px">
+      {#each filteredSourceSessions as s}
+        <button class="session-card" class:selected={sourceSessionId === s.id} on:click={() => selectSourceSession(s.id)}>
+          <div class="session-card-head">
+            <strong>{s.display_title || s.agent_session_id || s.id}</strong>
+            <span class="badge green">{sessionReviewLabels[s.effective_review_status] || s.effective_review_status}</span>
+          </div>
+          <div class="item-meta">{s.source_agent} · memory {s.memory_count || 0} · 已规则处理 {s.quality_reviewed_count || 0}</div>
+          <div class="item-meta">长期 {s.long_term_count || 0} · 临时 {s.temporary_task_count || 0} · 噪声 {s.noise_count || 0} · 需LLM {s.needs_llm_count || 0}</div>
+          {#if s.session_review_note}<div class="item-summary">备注：{s.session_review_note}</div>{/if}
+        </button>
+      {:else}
+        <div class="empty">当前 Tab 下暂无会话</div>
+      {/each}
+    </div>
   </div>
+
+  {#if selectedSourceSession}
+    <div class="card card-pad" style="margin-top:18px">
+      <div><strong>当前处理会话：</strong>{selectedSourceSession.display_title || selectedSourceSession.agent_session_id}</div>
+      <div class="item-meta" style="margin-top:6px">
+        {selectedSourceSession.source_agent} · memories {selectedSourceSession.memory_count || 0} · 已规则处理 {selectedSourceSession.quality_reviewed_count || 0} · 长期 {selectedSourceSession.long_term_count || 0} · 临时 {selectedSourceSession.temporary_task_count || 0} · 噪声 {selectedSourceSession.noise_count || 0} · 需LLM {selectedSourceSession.needs_llm_count || 0}
+      </div>
+      <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+        <span class="badge green">状态：{sessionReviewLabels[selectedSourceSession.effective_review_status] || selectedSourceSession.effective_review_status || '未处理'}</span>
+        {#if selectedSourceSession.session_review_note}<span class="badge">备注：{selectedSourceSession.session_review_note}</span>{/if}
+        <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('in_review')}>标记处理中</button>
+        <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('done')}>标记已完成</button>
+        <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('postponed')}>暂缓</button>
+        <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('needs_llm')}>需 LLM</button>
+        <button class="btn" on:click={clearSourceSession}>清除会话筛选</button>
+      </div>
+      <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px;border-top:1px solid var(--border-subtle, rgba(148,163,184,.22));padding-top:14px">
+        <div class="toolbar" style="gap:8px;flex-wrap:wrap">
+          <input class="input" style="width:min(520px,100%)" bind:value={q} on:keydown={(e)=>e.key==='Enter'&&search()} placeholder="在当前会话内搜索标题、摘要或原文"/>
+          <select class="input" bind:value={status} on:change={search}>
+            <option value="active">可引用</option><option value="expired">已过期</option><option value="wrong">已标错</option><option value="muted">不引用</option><option value="deleted">已删除</option><option value="all">全部</option>
+          </select>
+        </div>
+        <div class="toolbar" style="gap:8px">
+          <select class="input" style="width:110px" bind:value={pageSize} on:change={search}>
+            <option value="50">50 / 页</option>
+            <option value="100">100 / 页</option>
+            <option value="200">200 / 页</option>
+          </select>
+          <button class="btn primary" class:loading={loading} disabled={loading} on:click={search}>{loading ? '搜索中' : '搜索'}</button>
+        </div>
+      </div>
+      <div class="item-meta" style="margin-top:12px">当前会话筛选共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
+    </div>
+  {:else}
+    <div class="card card-pad empty" style="margin-top:18px">请先从上方会话处理队列中选择一个会话，再查看和治理该会话下的记忆。</div>
+  {/if}
 
   {#if toast}
     <div class="toast-card">
@@ -229,22 +243,24 @@
     </div>
   {/if}
   {#if error}<div class="card card-pad" style="margin-top:12px;color:var(--color-danger)">{error}</div>{/if}
-  <div class="list stagger" style="margin-top:18px">
-    {#if loading}
-      {#each Array(4) as _}<div class="card card-pad"><div class="skeleton" style="height:96px"></div></div>{/each}
-    {:else}
-      {#each memories as m}
-        <MemoryCard memory={m} actionable busy={actionBusy} on:govern={govern} on:open={openDetail}/>
+  {#if selectedSourceSession}
+    <div class="list stagger" style="margin-top:18px">
+      {#if loading}
+        {#each Array(4) as _}<div class="card card-pad"><div class="skeleton" style="height:96px"></div></div>{/each}
       {:else}
-        <div class="empty card">暂无匹配记忆</div>
-      {/each}
-    {/if}
-  </div>
-  <div class="toolbar" style="justify-content:flex-end;margin-top:18px">
-    <button class="btn" disabled={loading || page <= 1} on:click={() => gotoPage(page - 1)}>上一页</button>
-    <span class="item-meta">第 {page} / {totalPages} 页，每页 {pageSize} 条，共 {total} 条</span>
-    <button class="btn" disabled={loading || page >= totalPages} on:click={() => gotoPage(page + 1)}>下一页</button>
-  </div>
+        {#each memories as m}
+          <MemoryCard memory={m} actionable busy={actionBusy} on:govern={govern} on:open={openDetail}/>
+        {:else}
+          <div class="empty card">当前会话下暂无匹配记忆</div>
+        {/each}
+      {/if}
+    </div>
+    <div class="toolbar" style="justify-content:flex-end;margin-top:18px">
+      <button class="btn" disabled={loading || page <= 1} on:click={() => gotoPage(page - 1)}>上一页</button>
+      <span class="item-meta">第 {page} / {totalPages} 页，每页 {pageSize} 条，共 {total} 条</span>
+      <button class="btn" disabled={loading || page >= totalPages} on:click={() => gotoPage(page + 1)}>下一页</button>
+    </div>
+  {/if}
 </section>
 
 {#if detailLoading || selected}
