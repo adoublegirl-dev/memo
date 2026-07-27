@@ -819,6 +819,86 @@ class Engine:
         from memo.persona.extractor import update_persona_incremental
         return update_persona_incremental()
 
+    def _persona_task_row(self) -> dict[str, Any]:
+        row = db.fetchone("SELECT value FROM persona_settings WHERE key='persona_task'")
+        if not row or not row["value"]:
+            return {}
+        try:
+            return json.loads(row["value"])
+        except Exception:
+            return {}
+
+    def _set_persona_task(self, payload: dict[str, Any]) -> None:
+        db.execute(
+            "INSERT OR REPLACE INTO persona_settings (key, value) VALUES ('persona_task', ?)",
+            (json.dumps(payload, ensure_ascii=False),),
+        )
+        db.commit()
+
+    def _persona_task_is_running(self) -> bool:
+        task = self._persona_task_row()
+        return task.get("status") == "running"
+
+    def start_persona_task(self, task_type: str, reset_existing: bool = False) -> dict[str, Any]:
+        """Start persona refresh/rebuild in background and return immediately."""
+        self._ensure_init()
+        if self._persona_task_is_running():
+            return {"status": "running", "message": "人格任务正在后台执行，请稍后刷新。", "task": self._persona_task_row()}
+        now = datetime.now().isoformat(timespec="seconds")
+        task = {
+            "type": task_type,
+            "status": "running",
+            "message": "人格基线正在后台重建..." if reset_existing else "人格画像正在后台增量刷新...",
+            "started_at": now,
+            "updated_at": now,
+            "result": None,
+            "error": "",
+        }
+        self._set_persona_task(task)
+        thread = threading.Thread(
+            target=self._run_persona_task_worker,
+            args=(task_type, reset_existing, now),
+            name="memo-persona-task",
+            daemon=True,
+        )
+        thread.start()
+        return {"status": "running", "message": task["message"], "task": task}
+
+    def _run_persona_task_worker(self, task_type: str, reset_existing: bool, started_at: str) -> None:
+        try:
+            self._ensure_init()
+            if reset_existing:
+                result = self.build_persona_baseline(reset_existing=True)
+            else:
+                result = self.update_persona()
+            now = datetime.now().isoformat(timespec="seconds")
+            status = result.get("status") or "done"
+            if status == "running":
+                status = "done"
+            self._set_persona_task({
+                "type": task_type,
+                "status": "error" if status == "error" else "done",
+                "message": result.get("message") or "人格任务完成。",
+                "started_at": started_at,
+                "finished_at": now,
+                "updated_at": now,
+                "result": result,
+                "error": result.get("last_error", "") if status == "error" else "",
+            })
+        except Exception as exc:
+            now = datetime.now().isoformat(timespec="seconds")
+            self._set_persona_task({
+                "type": task_type,
+                "status": "error",
+                "message": f"人格任务失败：{str(exc)[:240]}",
+                "started_at": started_at,
+                "finished_at": now,
+                "updated_at": now,
+                "result": None,
+                "error": str(exc)[:1000],
+            })
+            logger.exception("人格后台任务失败")
+
     def persona_ask(self, question: str) -> dict[str, Any]:
         """人格路由问答。
 

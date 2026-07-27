@@ -1,13 +1,21 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api.js';
   let data = null, active = '', selected = null, draft = null;
-  let refreshLoading = false, rebuildLoading = false, refreshResult = null, refreshError = '';
+  let refreshLoading = false, rebuildLoading = false, refreshResult = null, refreshError = '', personaTask = null, pollTimer = null;
   let form = { dimension:'preference', assertion:'', confidence:0.8, locked:true };
   const labels = { value:'价值观', decision:'决策', identity:'身份', preference:'偏好', sensitivity:'敏感', relationship:'关系', knowledge:'知识边界', communication:'沟通', mental_model:'思维模型', emotion:'情绪' };
 
+  function parsePersonaTask(settings = {}) {
+    const raw = settings.persona_task;
+    if (!raw) return null;
+    try { return typeof raw === 'string' ? JSON.parse(raw) : raw; }
+    catch { return null; }
+  }
   async function load() {
     data = await api.persona();
+    personaTask = parsePersonaTask(data.settings || {});
+    if (personaTask?.status === 'done' || personaTask?.status === 'error') refreshResult = personaTask.result || personaTask;
     active = active || Object.keys(data.assertions || {})[0] || 'preference';
   }
   function edit(a) { selected = a; draft = { assertion:a.assertion, confidence:a.confidence }; }
@@ -18,7 +26,8 @@
   async function refresh() {
     refreshLoading = true; refreshError = ''; refreshResult = null;
     try {
-      refreshResult = await api.personaAction({ action:'refresh', id:'refresh' });
+      const started = await api.personaAction({ action:'refresh', id:'refresh' });
+      refreshResult = started;
       await load();
     } catch (e) {
       refreshError = e.message || String(e);
@@ -31,7 +40,8 @@
     if (!ok) return;
     rebuildLoading = true; refreshError = ''; refreshResult = null;
     try {
-      refreshResult = await api.personaAction({ action:'rebuild_baseline', id:'rebuild_baseline', confirm:true });
+      const started = await api.personaAction({ action:'rebuild_baseline', id:'rebuild_baseline', confirm:true });
+      refreshResult = started;
       await load();
     } catch (e) {
       refreshError = e.message || String(e);
@@ -40,7 +50,13 @@
     }
   }
   async function sensitivity(level) { await api.personaAction({ action:'set_sensitivity', id:String(level) }); await load(); }
-  onMount(load);
+  onMount(() => {
+    load();
+    pollTimer = setInterval(() => {
+      if (personaTask?.status === 'running') load();
+    }, 2500);
+  });
+  onDestroy(() => { if (pollTimer) clearInterval(pollTimer); });
 </script>
 
 <section class="page">
@@ -48,22 +64,25 @@
   <p class="page-subtitle">从长期记忆中提炼出的判断偏好和沟通倾向。支持编辑、锁定、删除、补充自定义断言和查看证据。</p>
 
   <div class="toolbar" style="margin:20px 0">
-    <button class="btn" disabled={refreshLoading || rebuildLoading} on:click={refresh}>{refreshLoading ? '刷新中…' : '增量刷新'}</button>
-    <button class="btn danger" disabled={refreshLoading || rebuildLoading} on:click={rebuildBaseline}>{rebuildLoading ? '重建中…' : '重建人格基线'}</button>
+    <button class="btn" disabled={refreshLoading || rebuildLoading || personaTask?.status === 'running'} on:click={refresh}>{refreshLoading ? '启动中…' : personaTask?.status === 'running' ? '后台运行中' : '增量刷新'}</button>
+    <button class="btn danger" disabled={refreshLoading || rebuildLoading || personaTask?.status === 'running'} on:click={rebuildBaseline}>{rebuildLoading ? '启动中…' : personaTask?.status === 'running' ? '后台运行中' : '重建人格基线'}</button>
     <span class="item-meta">灵敏度</span>
     {#each [1,2,3,4,5] as l}<button class="btn" class:primary={String(l)===(data?.settings?.sensitivity_level || '2')} on:click={() => sensitivity(l)}>{l}</button>{/each}
   </div>
 
-  {#if refreshResult || refreshError}
-    <div class="card card-pad" style={`margin-bottom:18px;color:${refreshError || refreshResult?.status === 'error' || refreshResult?.status === 'blocked' ? 'var(--color-danger)' : refreshResult?.status === 'updated' ? 'var(--color-success)' : 'var(--text-secondary)'}`}>
+  {#if personaTask?.status === 'running' || refreshResult || refreshError}
+    <div class="card card-pad" style={`margin-bottom:18px;color:${refreshError || personaTask?.status === 'error' || refreshResult?.status === 'error' || refreshResult?.status === 'blocked' ? 'var(--color-danger)' : personaTask?.status === 'done' || refreshResult?.status === 'updated' ? 'var(--color-success)' : 'var(--text-secondary)'}`}>
       {#if refreshError}
         人格画像刷新失败：{refreshError}
+      {:else if personaTask?.status === 'running'}
+        <strong>{personaTask.message || '人格任务正在后台运行...'}</strong>
+        <div class="item-meta" style="margin-top:6px">状态：running · 开始：{personaTask.started_at || '-' } · 页面每 2.5 秒自动刷新</div>
       {:else}
-        <strong>{refreshResult.message || '人格画像刷新完成。'}</strong>
+        <strong>{refreshResult?.message || personaTask?.message || '人格画像刷新完成。'}</strong>
         <div class="item-meta" style="margin-top:6px">
-          状态：{refreshResult.status || 'ok'} · 原因：{refreshResult.reason || '-'} · 候选记忆：{refreshResult.candidate_memories ?? '-'} · LLM 检查：{refreshResult.candidate_checks ?? 0} · LLM 错误：{refreshResult.llm_errors ?? 0}
-          {#if refreshResult.assertions_created !== undefined} · 新增断言：{refreshResult.assertions_created} · 归档旧断言：{refreshResult.archived_old ?? 0}{/if}
-          {#if refreshResult.cursor_advanced === false} · 刷新游标未推进，可修复配置后重试{/if}
+          状态：{refreshResult?.status || personaTask?.status || 'ok'} · 原因：{refreshResult?.reason || refreshResult?.result?.reason || '-'} · 候选记忆：{refreshResult?.candidate_memories ?? refreshResult?.result?.candidate_memories ?? '-'} · LLM 检查：{refreshResult?.candidate_checks ?? refreshResult?.result?.candidate_checks ?? 0} · LLM 错误：{refreshResult?.llm_errors ?? refreshResult?.result?.llm_errors ?? 0}
+          {#if (refreshResult?.assertions_created ?? refreshResult?.result?.assertions_created) !== undefined} · 新增断言：{refreshResult?.assertions_created ?? refreshResult?.result?.assertions_created} · 归档旧断言：{refreshResult?.archived_old ?? refreshResult?.result?.archived_old ?? 0}{/if}
+          {#if refreshResult?.cursor_advanced === false || refreshResult?.result?.cursor_advanced === false} · 刷新游标未推进，可修复配置后重试{/if}
         </div>
       {/if}
     </div>

@@ -1471,13 +1471,13 @@ class MemoHandler(BaseHTTPRequestHandler):
             )
         elif action == "refresh":
             from memo.core.engine import engine as _eng
-            result = _eng.update_persona()
+            result = _eng.start_persona_task("incremental_refresh", reset_existing=False)
             self._json(result); return
         elif action == "rebuild_baseline":
             if not body.get("confirm"):
                 self._json({"error": "rebuild confirmation required"}, 400); return
             from memo.core.engine import engine as _eng
-            result = _eng.build_persona_baseline(reset_existing=True)
+            result = _eng.start_persona_task("rebuild_baseline", reset_existing=True)
             self._json(result); return
         elif action == "set_sensitivity":
             db.execute("INSERT OR REPLACE INTO persona_settings (key, value) VALUES ('sensitivity_level', ?)", (str(aid),))

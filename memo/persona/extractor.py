@@ -138,15 +138,16 @@ def _build_dimension_prompt(dimension: str, description: str, memories: list[dic
     return f"""你是用户的人格分析师。请基于以下对话记录，提炼用户在「{dimension}（{description}）」维度的断言。
 
 要求：
-1. 输出 JSON 数组，每条断言包含 assertion（一句话结论）、confidence（0~1）、evidences（引用的记忆ID列表）。
-2. 每条断言必须基于具体证据，不能凭空编造。如果某个子方向证据不足，可以只输出一条。
-3. 置信度规则：多条独立记忆互相印证 ≥0.7，2-3 条相关记忆 ≥0.5，单条记忆支撑 =0.3。
-4. 避免空洞结论（如"用户重视质量"），要具体（如"用户对数据治理的执行顺序极其敏感，容不得逻辑错误"）。
+1. 输出严格 JSON 对象，格式为 {{"assertions":[...]}}。
+2. assertions 数组中每条断言包含 assertion（一句话结论）、confidence（0~1）、evidences（引用的记忆ID列表）。
+3. 每条断言必须基于具体证据，不能凭空编造。如果某个子方向证据不足，可以只输出一条。
+4. 置信度规则：多条独立记忆互相印证 ≥0.7，2-3 条相关记忆 ≥0.5，单条记忆支撑 =0.3。
+5. 避免空洞结论（如"用户重视质量"），要具体（如"用户对数据治理的执行顺序极其敏感，容不得逻辑错误"）。
 
 对话记录：
 {joined}
 
-请只输出 JSON 数组，不要有其他内容。"""
+请只输出严格 JSON 对象，不要输出 Markdown，不要输出解释。"""
 
 
 def build_persona_baseline(reset_existing: bool = False) -> dict[str, Any]:
@@ -188,16 +189,27 @@ def build_persona_baseline(reset_existing: bool = False) -> dict[str, Any]:
                 model=config.gating_model,
                 temperature=0.3,
                 max_tokens=2000,
+                response_format={"type": "json_object"},
             )
 
-            # 解析 JSON
+            # 解析 JSON。优先使用 {"assertions": [...]}，兼容旧的数组输出。
             import json, re
-            json_match = re.search(r"\[.*?\]", response, re.DOTALL)
-            if not json_match:
-                logger.warning(f"维度 {dim_key} 未返回有效 JSON，跳过")
+            try:
+                parsed = json.loads(response)
+            except Exception:
+                obj_match = re.search(r"\{.*\}", response, re.DOTALL)
+                arr_match = re.search(r"\[.*\]", response, re.DOTALL)
+                if obj_match:
+                    parsed = json.loads(obj_match.group())
+                elif arr_match:
+                    parsed = json.loads(arr_match.group())
+                else:
+                    logger.warning(f"维度 {dim_key} 未返回有效 JSON，跳过")
+                    continue
+            assertions = parsed.get("assertions", []) if isinstance(parsed, dict) else parsed
+            if not isinstance(assertions, list):
+                logger.warning(f"维度 {dim_key} JSON 中缺少 assertions 数组，跳过")
                 continue
-
-            assertions = json.loads(json_match.group())
             for a in assertions:
                 assertion_text = a.get("assertion", "").strip()
                 if not assertion_text or len(assertion_text) < 10:
