@@ -3,14 +3,31 @@
   import { api } from '../lib/api.js';
   import MemoryCard from '../components/MemoryCard.svelte';
   let q = '', status = 'active', memories = [], loading = false, error = '';
-  let sourceSessionId = '', sourceSessions = [];
+  let sourceSessionId = '', sourceSessions = [], sourceSessionQuery = '', sessionReviewTab = 'needs_review', sessionReviewTabsWithCounts = [];
   let page = 1, pageSize = '50', total = 0, breakdown = null;
   let selected = null, detailLoading = false, actionBusy = false, sessionReviewBusy = false, toast = null;
   const statusLabels = { active:'可引用', expired:'已过期', wrong:'已标错', muted:'不引用', deleted:'已删除' };
   const sessionReviewLabels = { new:'未处理', rule_processed:'规则已处理', needs_review:'需复核', needs_llm:'需 LLM', in_review:'处理中', done:'已完成', postponed:'暂缓', has_issue:'有问题' };
+  const sessionReviewTabs = [
+    { id:'all', label:'全部' },
+    { id:'needs_review', label:'需复核' },
+    { id:'needs_llm', label:'需 LLM' },
+    { id:'in_review', label:'处理中' },
+    { id:'postponed', label:'暂缓' },
+    { id:'done', label:'已完成' },
+    { id:'rule_processed', label:'规则已处理' },
+    { id:'has_issue', label:'有问题' },
+  ];
   const typeLabels = { FACT:'事实', DECISION:'决策', PREFERENCE:'偏好', EVENT:'事件', REASONING:'推理' };
   $: totalPages = Math.max(1, Math.ceil(total / Number(pageSize || 50)));
   $: selectedSourceSession = sourceSessions.find(s => s.id === sourceSessionId);
+  $: filteredSourceSessions = sourceSessions.filter(s => {
+    const effective = s.effective_review_status || s.session_review_status || 'rule_processed';
+    const matchTab = sessionReviewTab === 'all' || effective === sessionReviewTab;
+    const text = `${s.source_agent || ''} ${s.display_title || ''} ${s.original_title || ''} ${s.agent_session_id || ''}`.toLowerCase();
+    const matchQuery = !sourceSessionQuery.trim() || text.includes(sourceSessionQuery.trim().toLowerCase());
+    return matchTab && matchQuery;
+  });
 
   async function load() {
     loading = true; error='';
@@ -85,15 +102,36 @@
     finally { actionBusy = false; }
   }
 
+  function refreshSessionReviewCounts(list) {
+    const counts = list.reduce((acc, s) => {
+      const effective = s.effective_review_status || s.session_review_status || 'rule_processed';
+      acc.all = (acc.all || 0) + 1;
+      acc[effective] = (acc[effective] || 0) + 1;
+      return acc;
+    }, {});
+    sessionReviewTabsWithCounts = sessionReviewTabs.map(tab => ({ ...tab, count: counts[tab.id] || 0 }));
+  }
+
   async function loadSourceSessions() {
     try {
-      const data = await api.sourceAware({ mode: 'sessions', page: 1, page_size: 100 });
-      sourceSessions = data.sessions || [];
+      let all = [], pageNo = 1, totalSeen = 0, totalAvailable = 0;
+      do {
+        const data = await api.sourceAware({ mode: 'sessions', page: pageNo, page_size: 100 });
+        const batch = data.sessions || [];
+        all = all.concat(batch);
+        totalSeen = all.length;
+        totalAvailable = data.total || totalSeen;
+        pageNo += 1;
+      } while (totalSeen < totalAvailable && pageNo <= 10);
+      sourceSessions = all;
+      refreshSessionReviewCounts(all);
     } catch (e) {
       sourceSessions = [];
+      refreshSessionReviewCounts([]);
     }
   }
 
+  async function selectSourceSession(id) { sourceSessionId = id; page = 1; await load(); }
   async function clearSourceSession() { sourceSessionId = ''; page = 1; await load(); }
   async function setSessionReviewStatus(review_status) {
     if (!selectedSourceSession) return;
@@ -124,12 +162,7 @@
         <select class="input" bind:value={status} on:change={search}>
           <option value="active">可引用</option><option value="expired">已过期</option><option value="wrong">已标错</option><option value="muted">不引用</option><option value="deleted">已删除</option><option value="all">全部</option>
         </select>
-        <select class="input" style="width:min(420px,100%)" bind:value={sourceSessionId} on:change={search}>
-          <option value="">全部来源会话</option>
-          {#each sourceSessions as s}
-            <option value={s.id}>{s.source_agent} · {s.display_title || s.agent_session_id || s.id} · {s.memory_count || 0} 条</option>
-          {/each}
-        </select>
+
       </div>
       <div class="toolbar" style="gap:8px">
         <select class="input" style="width:110px" bind:value={pageSize} on:change={search}>
@@ -141,6 +174,35 @@
       </div>
     </div>
     <div class="item-meta" style="margin-top:12px">当前筛选共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
+    <div class="hint-card" style="margin-top:12px">
+      <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <strong>会话处理队列</strong>
+          <div class="item-meta" style="margin-top:4px">先按状态查看会话，再选择某个会话处理它下面的记忆。</div>
+        </div>
+        <input class="input" style="width:min(320px,100%)" bind:value={sourceSessionQuery} placeholder="搜索会话标题 / Agent" />
+      </div>
+      <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+        {#each sessionReviewTabsWithCounts as tab}
+          <button class="btn" class:primary={sessionReviewTab === tab.id} on:click={() => sessionReviewTab = tab.id}>{tab.label} {tab.count}</button>
+        {/each}
+      </div>
+      <div class="session-grid" style="margin-top:12px">
+        {#each filteredSourceSessions as s}
+          <button class="session-card" class:selected={sourceSessionId === s.id} on:click={() => selectSourceSession(s.id)}>
+            <div class="session-card-head">
+              <strong>{s.display_title || s.agent_session_id || s.id}</strong>
+              <span class="badge green">{sessionReviewLabels[s.effective_review_status] || s.effective_review_status}</span>
+            </div>
+            <div class="item-meta">{s.source_agent} · memory {s.memory_count || 0} · 已规则处理 {s.quality_reviewed_count || 0}</div>
+            <div class="item-meta">长期 {s.long_term_count || 0} · 临时 {s.temporary_task_count || 0} · 噪声 {s.noise_count || 0} · 需LLM {s.needs_llm_count || 0}</div>
+            {#if s.session_review_note}<div class="item-summary">备注：{s.session_review_note}</div>{/if}
+          </button>
+        {:else}
+          <div class="empty">当前 Tab 下暂无会话</div>
+        {/each}
+      </div>
+    </div>
     {#if selectedSourceSession}
       <div class="hint-card" style="margin-top:12px">
         <div><strong>当前按来源会话筛选：</strong>{selectedSourceSession.display_title || selectedSourceSession.agent_session_id}</div>
@@ -223,3 +285,46 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .session-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+    max-height: 360px;
+    overflow: auto;
+    padding-right: 4px;
+  }
+  .session-card {
+    width: 100%;
+    text-align: left;
+    border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.22));
+    border-radius: 14px;
+    background: var(--bg-card, rgba(255,255,255,0.72));
+    padding: 12px;
+    cursor: pointer;
+    transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+  }
+  .session-card:hover {
+    border-color: var(--accent, #4f8cff);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, .08);
+    transform: translateY(-1px);
+  }
+  .session-card.selected {
+    border-color: var(--accent, #4f8cff);
+    box-shadow: 0 0 0 2px rgba(79, 140, 255, .14);
+  }
+  .session-card-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .session-card-head strong {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.35;
+  }
+</style>
