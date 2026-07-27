@@ -29,7 +29,9 @@
   $: isRunning = job.status === 'running';
   $: llmBlocked = job.current_step === 'llm_enhance' && progress.blocking_reason;
   $: llmProgress = job.progress?.llm_enhance || {};
-  $: canContinue = state?.schema_ready && !loading && !isRunning && job.status !== 'done';
+  $: scanProgress = job.progress?.scan || {};
+  $: noNewHistory = scanProgress.status === 'up_to_date';
+  $: canContinue = state?.schema_ready && !loading && !isRunning && job.status !== 'done' && !noNewHistory;
 
   function applyModelFromState(nextState) {
     const saved = nextState?.job?.model_config;
@@ -114,6 +116,16 @@
         <div class="step-pill" class:active={job.current_step === step} class:done={stepIndex(job.current_step) > i || job.current_step === 'done'}>{i + 1}. {stepLabels[step]}</div>
       {/each}
     </div>
+    {#if noNewHistory}
+      <div class="hint-card" style="margin-top:12px;color:var(--color-success)">
+        没有发现新的历史会话，当前已是最新。下次有新会话后再点“检测历史”。
+      </div>
+    {/if}
+    {#if scanProgress.status === 'has_pending'}
+      <div class="hint-card" style="margin-top:12px">
+        检测到 {scanProgress.total_pending || 0} 个新的或已变化的历史会话，可以继续导入。
+      </div>
+    {/if}
     {#if job.current_step === 'llm_enhance' && llmProgress.total}
       <div class="hint-card" style="margin-top:12px">
         LLM 子进度：{llmProgress.processed || 0}/{llmProgress.total}；每批 {llmProgress.batch_size || model.batch_size || 20} 条自动续跑。
@@ -187,7 +199,7 @@
     <h2>4. 执行 / 继续</h2>
     <p class="item-meta">点击一次会启动当前阶段。进入 LLM 增强后，系统会按“每批处理条数”在后台自动续跑到完成；暂停会在当前批次结束后生效。</p>
     <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:12px">
-      <button class="btn primary" disabled={!canContinue || selectedSources.length === 0} on:click={() => act('continue')}>{isRunning ? '后台处理中' : loading ? '启动中' : '启动 / 继续处理'}</button>
+      <button class="btn primary" disabled={!canContinue || selectedSources.length === 0} on:click={() => act('continue')}>{noNewHistory ? '当前已是最新' : isRunning ? '后台处理中' : loading ? '启动中' : '启动 / 继续处理'}</button>
       <button class="btn" disabled={loading || !job.id || !isRunning} on:click={() => act('pause')}>暂停</button>
       <button class="btn" disabled={loading} on:click={() => load()}>刷新状态</button>
     </div>

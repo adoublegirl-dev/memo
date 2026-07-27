@@ -1416,7 +1416,52 @@ class Engine:
             if sid and item.get("detected") and int(item.get("session_count") or 0) > 0:
                 detected_sources.append(sid)
         report["detected_supported_sources"] = detected_sources
+        report["pending_import"] = self._history_detect_pending_imports(detected_sources)
         return report
+
+    def _history_detect_pending_imports(self, sources: list[str], limit: int = 100000) -> dict[str, Any]:
+        """Read-only incremental scan for source sessions that are new or changed.
+
+        Detection compares the source-aware session id and content_hash against the
+        current DB. It does not write source_sessions/source_turns/episodes.
+        """
+        try:
+            from scripts.source_aware_import import adapter_for, stable_hash
+        except Exception as exc:
+            return {"status": "error", "message": str(exc), "sources": {}, "total_pending": 0}
+        by_source: dict[str, Any] = {}
+        total_pending = 0
+        allowed = {"hanaagent", "workbuddy", "codex"}
+        for source in [s for s in (sources or []) if s in allowed]:
+            info = {"scanned": 0, "pending": 0, "new": 0, "changed": 0, "unchanged": 0, "errors": 0}
+            try:
+                adapter = adapter_for(source)
+                paths = adapter.list_sessions(limit=limit)
+                for source_path in paths:
+                    try:
+                        session = adapter.load_session(source_path)
+                        source_id = "ss_" + stable_hash(f"{session.source_agent}|{session.agent_session_id}|{session.source_path}")[:24]
+                        row = db.fetchone("SELECT content_hash FROM source_sessions WHERE id=?", (source_id,))
+                        info["scanned"] += 1
+                        if not row:
+                            info["new"] += 1
+                            info["pending"] += 1
+                        elif (row["content_hash"] or "") != (session.content_hash or ""):
+                            info["changed"] += 1
+                            info["pending"] += 1
+                        else:
+                            info["unchanged"] += 1
+                    except Exception:
+                        info["errors"] += 1
+            except Exception as exc:
+                info["error"] = str(exc)
+            total_pending += int(info.get("pending") or 0)
+            by_source[source] = info
+        return {
+            "status": "has_pending" if total_pending > 0 else "up_to_date",
+            "total_pending": total_pending,
+            "sources": by_source,
+        }
 
     def _history_llm_worker_is_running(self) -> bool:
         with self._history_worker_lock:
@@ -1496,9 +1541,23 @@ class Engine:
                 return self.history_processing_overview()
         if action == "scan":
             report = self._history_detect_sources()
-            job_id = self._history_create_or_update_job(selected_sources=report.get("detected_supported_sources", []), detect_report=report)
-            self._history_job_event(job_id, "scan", "历史源检测完成", {"sources": report.get("detected_supported_sources", [])})
-            db.execute("UPDATE history_processing_jobs SET status='ready', current_step='source_import', updated_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), job_id))
+            selected_sources = report.get("detected_supported_sources", [])
+            pending = report.get("pending_import") or {}
+            job_id = self._history_create_or_update_job(selected_sources=selected_sources, detect_report=report)
+            now = datetime.now().isoformat(timespec="seconds")
+            scan_progress = {"scan": pending}
+            if int(pending.get("total_pending") or 0) <= 0:
+                self._history_job_event(job_id, "scan", "没有发现新的历史会话，当前已是最新", {"sources": selected_sources, "pending_import": pending})
+                db.execute(
+                    "UPDATE history_processing_jobs SET progress_json=?, status='ready', current_step='detect', updated_at=?, last_error='' WHERE id=?",
+                    (json.dumps(scan_progress, ensure_ascii=False), now, job_id),
+                )
+            else:
+                self._history_job_event(job_id, "scan", "历史源检测完成，发现新的或已变化的历史会话", {"sources": selected_sources, "pending_import": pending})
+                db.execute(
+                    "UPDATE history_processing_jobs SET progress_json=?, status='ready', current_step='source_import', updated_at=?, last_error='' WHERE id=?",
+                    (json.dumps(scan_progress, ensure_ascii=False), now, job_id),
+                )
             db.commit()
             return self.history_processing_overview()
         if action == "save_config":
@@ -1547,10 +1606,18 @@ class Engine:
             return self.history_processing_overview()
         if not selected and step != "detect":
             return {"error": "no selected sources; run scan or choose sources first"}
+        progress = json.loads(row["progress_json"] or "{}")
+        scan_progress = progress.get("scan") or {}
+        if step == "detect" and scan_progress.get("status") == "up_to_date":
+            return {"message": "没有发现新的历史会话，当前已是最新", **self.history_processing_overview()}
+        if step == "source_import" and scan_progress.get("status") == "up_to_date":
+            return {"message": "没有发现新的历史会话，当前已是最新", **self.history_processing_overview()}
+        if step == "source_import" and scan_progress and int(scan_progress.get("total_pending") or 0) <= 0:
+            return {"message": "没有发现新的历史会话，当前已是最新", **self.history_processing_overview()}
+        
         now = datetime.now().isoformat(timespec="seconds")
         db.execute("UPDATE history_processing_jobs SET status='running', started_at=COALESCE(started_at, ?), updated_at=?, last_error='' WHERE id=?", (now, now, job_id))
         db.commit()
-        progress = json.loads(row["progress_json"] or "{}")
         try:
             if step == "detect":
                 report = self._history_detect_sources()
