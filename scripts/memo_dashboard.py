@@ -1173,6 +1173,10 @@ class MemoHandler(BaseHTTPRequestHandler):
                 q=self._get_query_param("q", ""),
                 mode=self._get_query_param("mode", "sessions"),
             ))
+        elif path == "/api/source-aware/memory-quality":
+            self._json(engine.source_aware_memory_quality(
+                limit=int(self._get_query_param("limit", "20")),
+            ))
         elif path.startswith("/api/source-aware/session/"):
             source_id = path.split("/")[-1]
             result = engine.source_aware_session_detail(source_id)

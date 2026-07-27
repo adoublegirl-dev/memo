@@ -3,6 +3,7 @@
 所有外部调用通过 Engine 进行，不直接访问底层 store。
 """
 
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -1095,6 +1096,114 @@ class Engine:
             "schema_status": schema_status,
             "stats": stats,
             "sessions": [self._source_aware_session_row(r) for r in rows],
+        }
+
+    def source_aware_memory_quality(self, limit: int = 20) -> dict[str, Any]:
+        """Source-aware memory 质量审计：只读返回候选风险，不修改数据库。"""
+        self._ensure_init()
+        limit = max(1, min(int(limit or 20), 100))
+        schema_status = self._source_aware_schema_status()
+        if not schema_status["ready"]:
+            return {"schema_status": schema_status, "counts": {}, "flags": {}, "samples": {}}
+
+        rows = [dict(r) for r in db.fetchall(
+            """SELECT mu.id, mu.title, mu.summary, mu.source_session_id, mu.episode_id,
+                      mu.memory_type, mu.memory_granularity, mu.speaker_scope, mu.source_confidence,
+                      ss.source_agent, ss.display_title, ss.title_source, ss.display_title_source,
+                      COUNT(mts.turn_id) AS evidence_count
+               FROM memory_units mu
+               JOIN source_sessions ss ON ss.id=mu.source_session_id
+               LEFT JOIN memory_turn_sources mts ON mts.memory_id=mu.id
+               WHERE mu.source_session_id IS NOT NULL
+               GROUP BY mu.id
+               ORDER BY mu.created_at DESC"""
+        )]
+        pollution_tokens = (
+            "<system-reminder", "<command-name>", "<local-command-", "[hana_reminder",
+            "[use skill:", "tool_call", "tool_result", "command-caveat", "user-context",
+        )
+        temporary_tokens = (
+            "帮我安装", "打开", "访问", "检查一下", "跑一下", "修一下",
+            "这个路径", "这个文件", "当前这个项目",
+        )
+
+        def compact(row: dict[str, Any], matched: list[str] | None = None) -> dict[str, Any]:
+            data = {
+                "id": row.get("id"),
+                "title": row.get("title"),
+                "summary": row.get("summary"),
+                "source_agent": row.get("source_agent"),
+                "source_session_id": row.get("source_session_id"),
+                "episode_id": row.get("episode_id"),
+                "display_title": row.get("display_title"),
+                "title_source": row.get("title_source"),
+                "display_title_source": row.get("display_title_source"),
+                "evidence_count": int(row.get("evidence_count") or 0),
+            }
+            if matched:
+                data["matched"] = matched
+            return data
+
+        def normalize_title(text: str) -> str:
+            normalized = "".join(ch for ch in (text or "").lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+            return normalized[:80]
+
+        pollution_hits: list[dict[str, Any]] = []
+        temporary_hits: list[dict[str, Any]] = []
+        low_evidence: list[dict[str, Any]] = []
+        duplicate_map: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            text = f"{row.get('title') or ''}\n{row.get('summary') or ''}".lower()
+            p_hits = [token for token in pollution_tokens if token in text]
+            t_hits = [token for token in temporary_tokens if token in text]
+            if p_hits:
+                pollution_hits.append(compact(row, p_hits))
+            if t_hits:
+                temporary_hits.append(compact(row, t_hits))
+            if int(row.get("evidence_count") or 0) <= 0:
+                low_evidence.append(compact(row))
+            key = normalize_title(row.get("title") or "")
+            if key:
+                duplicate_map[key].append(row)
+
+        duplicate_groups = [
+            {"normalized_title": key, "count": len(items), "items": [compact(item) for item in items[:limit]]}
+            for key, items in duplicate_map.items()
+            if len(items) > 1
+        ]
+        duplicate_groups.sort(key=lambda item: item["count"], reverse=True)
+        missing_titles = [dict(r) for r in db.fetchall(
+            """SELECT id, source_agent, agent_session_id, display_title, title_source, display_title_source, source_path
+               FROM source_sessions
+               WHERE COALESCE(title_source,'')='missing'
+               ORDER BY COALESCE(updated_at, imported_at, created_at) DESC
+               LIMIT ?""",
+            (limit,),
+        )]
+        counts = {
+            "source_aware_memories": len(rows),
+            "memories_with_evidence": int(db.fetchone("SELECT COUNT(DISTINCT memory_id) AS c FROM memory_turn_sources")["c"]),
+            "source_sessions": int(db.fetchone("SELECT COUNT(*) AS c FROM source_sessions")["c"]),
+            "missing_original_titles": int(db.fetchone("SELECT COUNT(*) AS c FROM source_sessions WHERE COALESCE(title_source,'')='missing'")["c"]),
+        }
+        flags = {
+            "pollution_pattern_hits": len(pollution_hits),
+            "temporary_task_like_hits": len(temporary_hits),
+            "duplicate_title_groups": len(duplicate_groups),
+            "low_evidence_hits": len(low_evidence),
+            "missing_original_titles": counts["missing_original_titles"],
+        }
+        return {
+            "schema_status": schema_status,
+            "counts": counts,
+            "flags": flags,
+            "samples": {
+                "pollution_pattern_hits": pollution_hits[:limit],
+                "temporary_task_like_hits": temporary_hits[:limit],
+                "duplicate_title_groups": duplicate_groups[:limit],
+                "low_evidence_hits": low_evidence[:limit],
+                "missing_original_titles": missing_titles,
+            },
         }
 
     def source_aware_session_detail(self, source_session_id: str) -> dict[str, Any] | None:

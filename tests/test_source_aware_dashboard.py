@@ -87,6 +87,29 @@ def test_source_aware_dashboard_lists_missing_titles_and_counts():
     assert row["evidence_count"] >= 1
 
 
+def test_source_aware_memory_quality_returns_readonly_flags():
+    ids = _seed_source_aware_fixture()
+
+    db.execute(
+        """INSERT INTO memory_units
+           (id, session_id, title, summary, raw_text, memory_type, source_session_id, episode_id,
+            source_turn_start_id, source_turn_end_id, memory_granularity, speaker_scope, source_confidence, is_canonical)
+           SELECT ?, session_id, '帮我安装测试工具', '帮我安装测试工具', '', 'FACT', source_session_id, episode_id,
+                  source_turn_start_id, source_turn_end_id, 'episode', 'user_claim', 0.5, 1
+           FROM memory_units WHERE id=?""",
+        (f"memory_temp_{ids['memory_id']}", ids["memory_id"]),
+    )
+    db.commit()
+
+    quality = engine.source_aware_memory_quality(limit=5)
+
+    assert quality["schema_status"]["ready"] is True
+    assert quality["counts"]["source_aware_memories"] >= 1
+    assert quality["flags"]["temporary_task_like_hits"] >= 1
+    assert quality["samples"]["temporary_task_like_hits"]
+    assert "raw_text" not in quality["samples"]["temporary_task_like_hits"][0]
+
+
 def test_source_aware_session_detail_and_evidence_do_not_return_raw_content():
     ids = _seed_source_aware_fixture()
 

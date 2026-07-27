@@ -4,6 +4,7 @@
   import { RefreshCcw, Search, Database, AlertTriangle, Link2, Wrench, Eye, GitBranch, MessageSquareText } from '@lucide/svelte';
 
   let data = null;
+  let quality = null;
   let detail = null;
   let evidence = null;
   let loading = false;
@@ -21,6 +22,9 @@
   $: totalPages = Math.max(1, Math.ceil(total / currentPageSize));
   $: titleSourceItems = data?.stats?.by_title_source || [];
   $: displayTitleSourceItems = data?.stats?.by_display_title_source || [];
+  $: qualityFlags = quality?.flags || {};
+  $: duplicateGroups = quality?.samples?.duplicate_title_groups || [];
+  $: temporarySamples = quality?.samples?.temporary_task_like_hits || [];
   $: filteredTurns = filterTurns(detail?.turns || []);
   $: visibleTurns = filteredTurns.slice(0, Number(turnPreviewLimit || 80));
 
@@ -48,7 +52,14 @@
 
   async function load() {
     loading = true; error = '';
-    try { data = await api.sourceAware({ mode, page, page_size: currentPageSize, q }); }
+    try {
+      const [overview, qualityResult] = await Promise.all([
+        api.sourceAware({ mode, page, page_size: currentPageSize, q }),
+        api.sourceAwareMemoryQuality({ limit: 8 }),
+      ]);
+      data = overview;
+      quality = qualityResult;
+    }
     catch (e) { error = e.message; }
     finally { loading = false; }
   }
@@ -90,6 +101,40 @@
     <div class="card stat-card"><AlertTriangle size={20}/><div><strong>{loading && !data ? '—' : data?.stats?.missing_original_titles || 0}</strong><span>缺原始标题</span></div></div>
     <div class="card stat-card"><Link2 size={20}/><div><strong>{loading && !data ? '—' : data?.stats?.memories_with_evidence || 0}</strong><span>有证据记忆</span></div></div>
     <div class="card stat-card"><Wrench size={20}/><div><strong>{loading && !data ? '—' : pct(data?.stats?.tool_turn_ratio)}</strong><span>工具/过程占比</span></div></div>
+  </div>
+
+  <div class="card card-pad" style="margin-top:18px">
+    <div class="section-head" style="margin:0 0 12px">
+      <div>
+        <h2>Memory Quality 只读审计</h2>
+        <p class="section-subtitle">只展示候选风险，不删除、不合并、不写入真实记忆。</p>
+      </div>
+      <span class="badge {qualityFlags.pollution_pattern_hits ? 'gold' : 'green'}">系统/工具污染命中 {qualityFlags.pollution_pattern_hits ?? '—'}</span>
+    </div>
+    <div class="grid cols-4">
+      <div class="card stat-card"><AlertTriangle size={18}/><div><strong>{qualityFlags.temporary_task_like_hits ?? '—'}</strong><span>疑似临时任务</span></div></div>
+      <div class="card stat-card"><GitBranch size={18}/><div><strong>{qualityFlags.duplicate_title_groups ?? '—'}</strong><span>重复标题组</span></div></div>
+      <div class="card stat-card"><Link2 size={18}/><div><strong>{quality?.counts?.memories_with_evidence ?? '—'}</strong><span>有证据记忆</span></div></div>
+      <div class="card stat-card"><AlertTriangle size={18}/><div><strong>{qualityFlags.missing_original_titles ?? '—'}</strong><span>缺原始标题会话</span></div></div>
+    </div>
+    <div class="grid cols-2" style="margin-top:12px">
+      <div class="item">
+        <div class="item-title">疑似临时任务样本</div>
+        {#each temporarySamples.slice(0, 4) as item}
+          <div class="item-summary">· {item.title} <span class="item-meta">({item.matched?.join(', ')})</span></div>
+        {:else}
+          <div class="item-meta">暂无命中</div>
+        {/each}
+      </div>
+      <div class="item">
+        <div class="item-title">重复标题候选</div>
+        {#each duplicateGroups.slice(0, 4) as group}
+          <div class="item-summary">· {group.count} 条：{group.items?.[0]?.title || group.normalized_title}</div>
+        {:else}
+          <div class="item-meta">暂无命中</div>
+        {/each}
+      </div>
+    </div>
   </div>
 
   <div class="card card-pad" style="margin-top:18px">
