@@ -77,11 +77,47 @@
             <button id="startBtn">启动服务</button>
             <button id="restartBtn">重启服务</button>
             <button id="stopBtn" class="danger-menu-item">停止服务</button>
+            <button id="mcpGuideBtn">MCP配置</button>
+            <button id="checkUpdateBtn">检查更新</button>
           </div>
           <label class="settings-toggle">
             <span>开机自动启动助手</span>
             <input id="loginToggle" type="checkbox" />
           </label>
+        </section>
+
+        <section class="modal-panel" id="mcpGuide" aria-label="MCP 配置向导">
+          <div class="modal-head">
+            <div>
+              <div class="settings-panel-title">MCP 配置向导</div>
+              <strong>连接 Agent 到当前 Memo</strong>
+            </div>
+            <button class="icon-button" id="closeMcpGuideBtn">×</button>
+          </div>
+          <p class="modal-note">如果旧 Memo 不再使用，请把 Agent 里的 Memo MCP 改成下面这份配置，避免继续写入旧库。</p>
+          <div class="path-box" id="memoRootText">Memo 路径加载中…</div>
+          <textarea id="mcpConfigText" readonly></textarea>
+          <div class="modal-actions">
+            <button id="copyMcpConfigBtn" class="primary-action">复制配置</button>
+            <button id="openMemoRootBtn" class="secondary-action">打开目录</button>
+          </div>
+          <div class="modal-note" id="mcpCopyStatus"></div>
+        </section>
+
+        <section class="modal-panel" id="updateGuide" aria-label="版本更新">
+          <div class="modal-head">
+            <div>
+              <div class="settings-panel-title">版本更新</div>
+              <strong>检查 Memo 新版本</strong>
+            </div>
+            <button class="icon-button" id="closeUpdateGuideBtn">×</button>
+          </div>
+          <p class="modal-note">当前先提供版本检查和下载页入口；后续可扩展为自动下载包并引导安装。</p>
+          <div class="path-box" id="updateStatusText">点击“检查更新”获取最新版本。</div>
+          <div class="modal-actions">
+            <button id="runCheckUpdateBtn" class="primary-action">检查更新</button>
+            <button id="openReleasePageBtn" class="secondary-action">打开下载页</button>
+          </div>
         </section>
       </section>
     </main>

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, Notification, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, Notification, ipcMain, shell, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -72,6 +72,8 @@ const BOOT_URL = process.env.MEMO_BOOT_URL || 'http://127.0.0.1:9120';
 const POLL_INTERVAL_MS = Number(process.env.MEMO_COMPANION_POLL_MS || 60000);
 const AUTO_START_SERVICES = process.env.MEMO_COMPANION_AUTO_START !== '0';
 const ICON_PATH = path.join(__dirname, 'assets', process.platform === 'win32' ? 'memo-companion.ico' : 'memo-companion.png');
+const RELEASE_PAGE = process.env.MEMO_RELEASE_PAGE || 'https://github.com/adoublegirl-dev/memo/releases';
+const RELEASE_API = process.env.MEMO_RELEASE_API || 'https://api.github.com/repos/adoublegirl-dev/memo/releases/latest';
 
 let mainWindow = null;
 let tray = null;
@@ -178,6 +180,8 @@ function buildTrayMenu() {
     { label: '显示/隐藏 Memo 助手', click: toggleWindow },
     { label: '打开 Memo Dashboard', click: () => openDashboard('') },
     { label: '处理历史 Agent 会话', click: () => openDashboard('history-processing') },
+    { label: '复制 MCP 配置', click: () => copyMcpConfig() },
+    { label: '检查更新', click: async () => { const result = await checkForUpdates(); if (Notification.isSupported()) new Notification({ title: 'Memo 版本检查', body: result.message }).show(); } },
     { label: '刷新状态', click: refreshAndSend },
     { type: 'separator' },
     { label: '启动 Memo 服务', click: startMemoServices },
@@ -380,6 +384,93 @@ function getLoginItemEnabled() {
   return loginItemEnabledCache;
 }
 
+function readEnvValue(name, fallback = '') {
+  try {
+    const envPath = path.join(ROOT, '.env');
+    if (!fs.existsSync(envPath)) return fallback;
+    const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const idx = trimmed.indexOf('=');
+      if (idx <= 0) continue;
+      if (trimmed.slice(0, idx).trim() === name) {
+        return trimmed.slice(idx + 1).trim().replace(/^['\"]|['\"]$/g, '') || fallback;
+      }
+    }
+  } catch (_) {}
+  return fallback;
+}
+
+function getPythonCommand() {
+  const localPython = path.join(ROOT, '.venv', 'Scripts', 'python.exe');
+  return fs.existsSync(localPython) ? localPython : 'python';
+}
+
+function buildMcpConfig() {
+  const dbPath = readEnvValue('MEMO_DB_PATH', 'data/memo_source_aware.db');
+  const config = {
+    mcpServers: {
+      memo: {
+        command: getPythonCommand(),
+        args: [path.join(ROOT, 'scripts', 'run_mcp.py')],
+        cwd: ROOT,
+        env: {
+          MEMO_DB_PATH: dbPath,
+        },
+      },
+    },
+  };
+  return {
+    memoRoot: ROOT,
+    config,
+    configText: JSON.stringify(config, null, 2),
+  };
+}
+
+function copyMcpConfig(text) {
+  clipboard.writeText(String(text || buildMcpConfig().configText));
+  return { ok: true };
+}
+
+function openMemoRoot() {
+  shell.openPath(ROOT);
+  return { ok: true };
+}
+
+function appVersion() {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+    return pkg.version || app.getVersion();
+  } catch (_) {
+    return app.getVersion();
+  }
+}
+
+async function checkForUpdates() {
+  const current = appVersion();
+  const latest = await fetchJson(RELEASE_API, null);
+  if (!latest) {
+    return { ok: false, current, message: `当前版本 ${current}。暂时无法连接更新源。` };
+  }
+  const tag = latest.tag_name || latest.name || '';
+  const page = latest.html_url || RELEASE_PAGE;
+  const assets = Array.isArray(latest.assets) ? latest.assets.map((a) => ({ name: a.name, url: a.browser_download_url })) : [];
+  return {
+    ok: true,
+    current,
+    latest: tag,
+    page,
+    assets,
+    message: `当前版本 ${current}；最新版本 ${tag || '未知'}。可点击“打开下载页”获取安装包。`,
+  };
+}
+
+function openReleasePage() {
+  shell.openExternal(RELEASE_PAGE);
+  return { ok: true };
+}
+
 function setLoginItemEnabled(enabled) {
   loginItemUserSelected = true;
   loginItemEnabledCache = Boolean(enabled);
@@ -412,6 +503,11 @@ ipcMain.handle('memo:stopServices', () => stopMemoServices());
 ipcMain.handle('memo:restartServices', () => restartMemoServices());
 ipcMain.handle('memo:setLoginItemEnabled', (_event, enabled) => setLoginItemEnabled(enabled));
 ipcMain.handle('memo:setSettingsExpanded', (_event, expanded) => setSettingsExpanded(Boolean(expanded)));
+ipcMain.handle('memo:getMcpConfig', () => buildMcpConfig());
+ipcMain.handle('memo:copyMcpConfig', (_event, text) => copyMcpConfig(text));
+ipcMain.handle('memo:openMemoRoot', () => openMemoRoot());
+ipcMain.handle('memo:checkForUpdates', () => checkForUpdates());
+ipcMain.handle('memo:openReleasePage', () => openReleasePage());
 
 app.whenReady().then(() => {
   app.setAppUserModelId('Memo.DesktopCompanion');

@@ -18,6 +18,20 @@ const els = {
   restartBtn: $('restartBtn'),
   stopBtn: $('stopBtn'),
   loginToggle: $('loginToggle'),
+  mcpGuideBtn: $('mcpGuideBtn'),
+  checkUpdateBtn: $('checkUpdateBtn'),
+  mcpGuide: $('mcpGuide'),
+  closeMcpGuideBtn: $('closeMcpGuideBtn'),
+  memoRootText: $('memoRootText'),
+  mcpConfigText: $('mcpConfigText'),
+  copyMcpConfigBtn: $('copyMcpConfigBtn'),
+  openMemoRootBtn: $('openMemoRootBtn'),
+  mcpCopyStatus: $('mcpCopyStatus'),
+  updateGuide: $('updateGuide'),
+  closeUpdateGuideBtn: $('closeUpdateGuideBtn'),
+  updateStatusText: $('updateStatusText'),
+  runCheckUpdateBtn: $('runCheckUpdateBtn'),
+  openReleasePageBtn: $('openReleasePageBtn'),
 };
 
 function formatTime(iso) {
@@ -80,6 +94,11 @@ function setSettingsOpen(open) {
   els.settingsMenu.classList.toggle('open', open);
 }
 
+function setModal(openEl, open) {
+  [els.mcpGuide, els.updateGuide].forEach((el) => el.classList.remove('open'));
+  if (open && openEl) openEl.classList.add('open');
+}
+
 els.settingsBtn.addEventListener('click', (event) => {
   event.stopPropagation();
   setSettingsOpen(!els.settingsMenu.classList.contains('open'));
@@ -108,6 +127,41 @@ async function runServiceAction(button, label, action) {
 els.startBtn.addEventListener('click', () => runServiceAction(els.startBtn, '启动服务', () => window.memoCompanion.startServices()));
 els.restartBtn.addEventListener('click', () => runServiceAction(els.restartBtn, '重启', () => window.memoCompanion.restartServices()));
 els.stopBtn.addEventListener('click', () => runServiceAction(els.stopBtn, '停止', () => window.memoCompanion.stopServices()));
+els.mcpGuideBtn.addEventListener('click', async (event) => {
+  event.stopPropagation();
+  setSettingsOpen(false);
+  const info = await window.memoCompanion.getMcpConfig();
+  els.memoRootText.textContent = `当前 Memo 路径：${info.memoRoot}`;
+  els.mcpConfigText.value = info.configText;
+  els.mcpCopyStatus.textContent = '复制后，到 Agent 的 MCP 设置里替换旧 Memo 配置。';
+  setModal(els.mcpGuide, true);
+});
+els.closeMcpGuideBtn.addEventListener('click', () => setModal(null, false));
+els.copyMcpConfigBtn.addEventListener('click', async () => {
+  await window.memoCompanion.copyMcpConfig(els.mcpConfigText.value);
+  els.mcpCopyStatus.textContent = '已复制 MCP 配置。';
+});
+els.openMemoRootBtn.addEventListener('click', () => window.memoCompanion.openMemoRoot());
+
+els.checkUpdateBtn.addEventListener('click', (event) => {
+  event.stopPropagation();
+  setSettingsOpen(false);
+  els.updateStatusText.textContent = '点击“检查更新”获取最新版本。';
+  setModal(els.updateGuide, true);
+});
+els.closeUpdateGuideBtn.addEventListener('click', () => setModal(null, false));
+els.runCheckUpdateBtn.addEventListener('click', async () => {
+  els.runCheckUpdateBtn.disabled = true;
+  els.updateStatusText.textContent = '正在检查更新…';
+  try {
+    const result = await window.memoCompanion.checkForUpdates();
+    els.updateStatusText.textContent = result.message;
+  } finally {
+    els.runCheckUpdateBtn.disabled = false;
+  }
+});
+els.openReleasePageBtn.addEventListener('click', () => window.memoCompanion.openReleasePage());
+
 els.loginToggle.addEventListener('click', (event) => event.stopPropagation());
 els.loginToggle.addEventListener('change', async () => {
   const wanted = els.loginToggle.checked;
