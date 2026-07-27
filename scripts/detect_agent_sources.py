@@ -349,7 +349,7 @@ class Detector:
             agent.get("session_title_key_shapes", {}).get("sess_id_like", 0) > 0
             for agent in structures.get("agents", [])
         ):
-            report.title_sources.append("session-titles.json[sess_*] (requires separate identity mapping)")
+            report.title_sources.append("session-titles.json[sess_*] (likely media/sessionfile ids; not JSONL chat title source)")
         if any((self.home / ".hanako" / "agents" / "hanako" / "sessions" / "session-manifest.db").exists() for _ in [0]):
             report.title_sources.append("session-manifest.db")
         report.turn_sources.append("~/.hanako/agents/<agent_id>/sessions/*.jsonl")
@@ -359,7 +359,7 @@ class Detector:
         report.encryption_or_locking = "no_encryption_detected" if any_jsonl_readable else "unknown"
         report.structures = structures
         if report.missing_title_count:
-            report.risks.append("部分 HanaAgent JSONL 未匹配到 session-titles.json 的 path 标题；需要继续确认 sess_* 标题键是否可通过 session-meta/bridge 等索引映射到 JSONL。")
+            report.risks.append("部分 HanaAgent JSONL 未匹配到 session-titles.json 的 path 标题；已观察到 sess_* 多出现在 message.details/screenshot/media sessionId，不能直接当作 JSONL 聊天会话标题来源。")
         report.risks.append("不要用 Memo 生成标题写入 original_title；只能作为 display_title fallback。")
         report.next_checks.append("实现 HanaAgentAdapter：加载 session-titles.json，按 JSONL 绝对路径匹配真实标题。")
         return report

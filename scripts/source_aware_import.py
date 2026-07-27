@@ -225,7 +225,8 @@ class HanaAgentAdapter(BaseAdapter):
             title = str(self.titles.get(key, "")).strip() if key in self.titles else ""
             if title:
                 return "session_titles_json_path", True, title
-        # session-titles.json 中存在 sess_* 键，但当前没有可靠映射时不能冒充真实标题。
+        # session-titles.json 中存在 sess_* 键，但已观察到多为 screenshot/media/SessionFile sessionId，
+        # 不能冒充 JSONL 聊天会话标题。
         return "missing", False, ""
 
     def load_session(self, path: Path) -> SourceSessionDraft:
