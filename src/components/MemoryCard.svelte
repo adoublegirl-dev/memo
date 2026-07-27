@@ -48,6 +48,9 @@
       <div class="item-meta">
         置信度 {Math.round((memory.confidence || 0) * 100)}% · 权重 {memory.user_weight ?? 1} · {statusLabels[memory.status || 'active'] || memory.status || '可引用'} · {memory.source_agent || memory.session_id || '?'}
       </div>
+      {#if memory.source_session_title || memory.source_session_id}
+        <div class="item-meta">来源会话：{memory.source_session_title || memory.source_session_id}</div>
+      {/if}
       {#if memory.summary}<div class="item-summary clamp-summary">{memory.summary}</div>{/if}
       {#if memory.user_note}<div class="item-summary">备注：{memory.user_note}</div>{/if}
       {#if memory.feature_tags?.length}

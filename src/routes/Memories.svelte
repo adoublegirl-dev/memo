@@ -3,17 +3,19 @@
   import { api } from '../lib/api.js';
   import MemoryCard from '../components/MemoryCard.svelte';
   let q = '', status = 'active', memories = [], loading = false, error = '';
+  let sourceSessionId = '', sourceSessions = [];
   let page = 1, pageSize = '50', total = 0, breakdown = null;
   let selected = null, detailLoading = false, actionBusy = false, toast = null;
   const statusLabels = { active:'可引用', expired:'已过期', wrong:'已标错', muted:'不引用', deleted:'已删除' };
   const typeLabels = { FACT:'事实', DECISION:'决策', PREFERENCE:'偏好', EVENT:'事件', REASONING:'推理' };
   $: totalPages = Math.max(1, Math.ceil(total / Number(pageSize || 50)));
+  $: selectedSourceSession = sourceSessions.find(s => s.id === sourceSessionId);
 
   async function load() {
     loading = true; error='';
     try {
       const limit = Number(pageSize || 50);
-      const data = await api.memories({ q, status, limit, offset: (page - 1) * limit, include_total: true });
+      const data = await api.memories({ q, status, source_session_id: sourceSessionId, limit, offset: (page - 1) * limit, include_total: true });
       memories = data.items || [];
       total = data.total || 0;
       breakdown = data.breakdown || null;
@@ -82,7 +84,18 @@
     finally { actionBusy = false; }
   }
 
-  onMount(load);
+  async function loadSourceSessions() {
+    try {
+      const data = await api.sourceAware({ mode: 'sessions', page: 1, page_size: 100 });
+      sourceSessions = data.sessions || [];
+    } catch (e) {
+      sourceSessions = [];
+    }
+  }
+
+  async function clearSourceSession() { sourceSessionId = ''; page = 1; await load(); }
+
+  onMount(async () => { await Promise.all([loadSourceSessions(), load()]); });
 </script>
 <section class="page">
   <h1 class="page-title">记忆管理</h1>
@@ -101,6 +114,12 @@
         <select class="input" bind:value={status} on:change={search}>
           <option value="active">可引用</option><option value="expired">已过期</option><option value="wrong">已标错</option><option value="muted">不引用</option><option value="deleted">已删除</option><option value="all">全部</option>
         </select>
+        <select class="input" style="width:min(420px,100%)" bind:value={sourceSessionId} on:change={search}>
+          <option value="">全部来源会话</option>
+          {#each sourceSessions as s}
+            <option value={s.id}>{s.source_agent} · {s.display_title || s.agent_session_id || s.id} · {s.memory_count || 0} 条</option>
+          {/each}
+        </select>
       </div>
       <div class="toolbar" style="gap:8px">
         <select class="input" style="width:110px" bind:value={pageSize} on:change={search}>
@@ -112,6 +131,13 @@
       </div>
     </div>
     <div class="item-meta" style="margin-top:12px">当前筛选共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
+    {#if selectedSourceSession}
+      <div class="hint-card" style="margin-top:12px">
+        当前按来源会话筛选：<strong>{selectedSourceSession.display_title || selectedSourceSession.agent_session_id}</strong>
+        · {selectedSourceSession.source_agent} · memories {selectedSourceSession.memory_count || 0} · evidence {selectedSourceSession.evidence_count || 0}
+        <button class="btn" style="margin-left:8px" on:click={clearSourceSession}>清除会话筛选</button>
+      </div>
+    {/if}
   </div>
 
   {#if toast}
@@ -150,6 +176,9 @@
             <span class="badge green">{typeLabels[String(selected.memory_type || 'FACT').toUpperCase()] || '事实'}</span>
             <h2>{selected.title || '无标题记忆'}</h2>
             <div class="item-meta">{statusLabels[selected.status || 'active']} · 置信度 {Math.round((selected.confidence || 0) * 100)}% · 权重 {selected.user_weight ?? 1}</div>
+            {#if selected.source_session}
+              <div class="item-meta">来源会话：{selected.source_session.display_title || selected.source_session.id} · {selected.source_session.source_agent}</div>
+            {/if}
           </div>
           <button class="icon-btn" on:click={() => selected = null}>×</button>
         </div>

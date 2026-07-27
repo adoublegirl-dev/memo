@@ -1001,14 +1001,15 @@ class MemoHandler(BaseHTTPRequestHandler):
             # 解析查询参数
             q = self._get_query_param("q", "")
             agent = self._get_query_param("agent", "")
+            source_session_id = self._get_query_param("source_session_id", "")
             limit = int(self._get_query_param("limit", "500"))
             offset = int(self._get_query_param("offset", "0"))
             include_total = self._get_query_param("include_total", "false").lower() == "true"
 
             status = self._get_query_param("status", "active")
             include_deleted = self._get_query_param("include_deleted", "false").lower() == "true"
-            base_from = " FROM memory_units mu LEFT JOIN sessions s ON mu.session_id = s.id WHERE mu.is_superseded=0"
-            sql = "SELECT mu.*, s.agent_id as source_agent" + base_from
+            base_from = " FROM memory_units mu LEFT JOIN sessions s ON mu.session_id = s.id LEFT JOIN source_sessions ss ON ss.id = mu.source_session_id WHERE mu.is_superseded=0"
+            sql = "SELECT mu.*, COALESCE(ss.source_agent, s.agent_id) as source_agent, ss.id AS source_session_id, ss.display_title AS source_session_title, ss.title_source AS source_title_source, ss.display_title_source AS source_display_title_source" + base_from
             count_sql = "SELECT COUNT(*) AS c" + base_from
             params = []
             if not include_deleted:
@@ -1023,9 +1024,13 @@ class MemoHandler(BaseHTTPRequestHandler):
                 count_sql += " AND (mu.title LIKE ? OR mu.summary LIKE ? OR mu.raw_text LIKE ?)"
                 params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
             if agent:
-                sql += " AND s.agent_id = ?"
-                count_sql += " AND s.agent_id = ?"
+                sql += " AND COALESCE(ss.source_agent, s.agent_id) = ?"
+                count_sql += " AND COALESCE(ss.source_agent, s.agent_id) = ?"
                 params.append(agent)
+            if source_session_id:
+                sql += " AND mu.source_session_id = ?"
+                count_sql += " AND mu.source_session_id = ?"
+                params.append(source_session_id)
             total = None
             if include_total:
                 total_row = db.fetchone(count_sql, tuple(params))
@@ -1050,6 +1055,10 @@ class MemoHandler(BaseHTTPRequestHandler):
                     "pinned": pinned_value,
                     "user_note": r["user_note"] if "user_note" in r.keys() else "",
                     "source_agent": r["source_agent"] or "?",
+                    "source_session_id": r["source_session_id"] if "source_session_id" in r.keys() else "",
+                    "source_session_title": r["source_session_title"] if "source_session_title" in r.keys() else "",
+                    "source_title_source": r["source_title_source"] if "source_title_source" in r.keys() else "",
+                    "source_display_title_source": r["source_display_title_source"] if "source_display_title_source" in r.keys() else "",
                     "feature_tags": tag_names,
                     "explanation": _memory_explanation(status_value, pinned_value, weight_value, tag_names, r["memory_type"]),
                 })
@@ -1085,6 +1094,12 @@ class MemoHandler(BaseHTTPRequestHandler):
             if not mem:
                 self._json({"error": "not found"}, 404); return
             tags = gs.get_memory_tags(mem_id)
+            source_session = None
+            try:
+                row = db.fetchone("SELECT id, source_agent, display_title, original_title, title_source, display_title_source, source_path FROM source_sessions WHERE id=(SELECT source_session_id FROM memory_units WHERE id=?)", (mem_id,))
+                source_session = dict(row) if row else None
+            except Exception:
+                source_session = None
             self._json({
                 "id": mem.id, "session_id": mem.session_id,
                 "title": mem.title, "summary": mem.summary,
@@ -1095,6 +1110,9 @@ class MemoHandler(BaseHTTPRequestHandler):
                 "user_weight": getattr(mem, "user_weight", 1.0),
                 "pinned": getattr(mem, "pinned", False),
                 "user_note": getattr(mem, "user_note", ""),
+                "source_session": source_session,
+                "source_session_id": source_session["id"] if source_session else "",
+                "source_session_title": source_session["display_title"] if source_session else "",
                 "audit": memory_store.get_memory_audit(mem_id, limit=20),
                 "feature_tags": [t.name for t in tags],
                 "explanation": _memory_explanation(getattr(mem, "status", "active"), getattr(mem, "pinned", False), getattr(mem, "user_weight", 1.0), [t.name for t in tags], str(mem.memory_type)),
