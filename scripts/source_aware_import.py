@@ -2,7 +2,7 @@
 
 Phase E 工具：从 Agent 原始会话中构建 source-aware 导入预览报告。
 
-当前版本只支持 --dry-run，不写 Memo 数据库，不调用 engine.init()，不执行 migration。
+默认 dry-run 不写 Memo 数据库；测试库 apply 只写显式 test/dev/sandbox 路径；production source-only apply 只写 source/turn/episode 证据层。
 报告默认不保存聊天正文或真实标题正文，只保存 source_session/turn/episode/memory 的计数、
 标题来源、可读性、工具日志识别情况和风险。
 """
@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import sys
 from dataclasses import dataclass, field, asdict
@@ -21,9 +22,12 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 REPORTS_DIR = PROJECT_ROOT / "reports"
 MIGRATIONS_DIR = PROJECT_ROOT / "memo" / "store" / "migrations"
 TEST_APPLY_CONFIRM = "TEST_APPLY"
+SOURCE_ONLY_PROD_CONFIRM = "SOURCE_ONLY_PROD_APPLY"
 
 MIN_MEMORY_TEXT_LENGTH = 30
 MAX_SAMPLE_SESSIONS = 500
@@ -916,6 +920,53 @@ def insert_turns(conn: sqlite3.Connection, source_id: str, session: SourceSessio
     return turn_ids
 
 
+def insert_episodes_only(conn: sqlite3.Connection, source_id: str, memo_session_id: str, session: SourceSessionDraft, turn_ids: list[str]) -> int:
+    """Insert source-aware episode boundaries only; do not create memory_units."""
+    episode_count = 0
+    current_episode_id = ""
+    for idx, turn in enumerate(session.turns):
+        turn_id = turn_ids[idx]
+        if turn.role == "user" and turn.content_length >= MIN_MEMORY_TEXT_LENGTH:
+            episode_count += 1
+            current_episode_id = "ep_" + stable_hash(f"{source_id}|{idx}|{turn.content_hash}")[:24]
+            conn.execute(
+                """INSERT OR REPLACE INTO episodes
+                   (id, source_session_id, title, user_intent, start_turn_id, end_turn_id,
+                    start_turn_index, end_turn_index, status, confidence, metadata_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 0.5, ?)""",
+                (
+                    current_episode_id,
+                    source_id,
+                    f"Episode {episode_count}",
+                    "source-only-import-placeholder",
+                    turn_id,
+                    turn_id,
+                    idx,
+                    idx,
+                    json.dumps({"source_only_apply": True}, ensure_ascii=False),
+                ),
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO episode_turns(episode_id, turn_id, role_in_episode, weight)
+                   VALUES (?, ?, 'trigger', 1.0)""",
+                (current_episode_id, turn_id),
+            )
+        elif current_episode_id:
+            role = "final_answer" if turn.is_final_answer else ("tool_support" if turn.is_tool_call or turn.is_tool_result else "context")
+            try:
+                conn.execute(
+                    """INSERT OR IGNORE INTO episode_turns(episode_id, turn_id, role_in_episode, weight)
+                       VALUES (?, ?, ?, 0.5)""",
+                    (current_episode_id, turn_id, role),
+                )
+                conn.execute("UPDATE episodes SET end_turn_id=?, end_turn_index=? WHERE id=?", (turn_id, idx, current_episode_id))
+            except sqlite3.IntegrityError:
+                pass
+    conn.execute("UPDATE sessions SET memory_count=0 WHERE id=?", (memo_session_id,))
+    conn.execute("UPDATE source_sessions SET memory_count=0 WHERE id=?", (source_id,))
+    return episode_count
+
+
 def insert_episode_and_memories(conn: sqlite3.Connection, source_id: str, memo_session_id: str, session: SourceSessionDraft, turn_ids: list[str]) -> tuple[int, int]:
     episode_count = 0
     memory_count = 0
@@ -992,6 +1043,72 @@ def insert_episode_and_memories(conn: sqlite3.Connection, source_id: str, memo_s
     return episode_count, memory_count
 
 
+def backup_db_file(db_path: Path, label: str) -> dict[str, Any]:
+    backup_dir = PROJECT_ROOT / "data" / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = now_stamp()
+    result: dict[str, Any] = {"source": str(db_path), "timestamp": stamp}
+    if db_path.exists():
+        try:
+            conn = sqlite3.connect(str(db_path))
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+            result["checkpoint"] = "ok"
+        except Exception as exc:
+            result["checkpoint"] = f"failed: {type(exc).__name__}: {exc}"
+        target = backup_dir / f"{label}-{stamp}.db"
+        shutil.copy2(db_path, target)
+        result["backup_path"] = str(target)
+        result["size"] = target.stat().st_size
+        result["sha256"] = file_hash(target, max_bytes=target.stat().st_size)
+    return result
+
+
+def apply_to_production_source_only(source: str, path: str = "", limit: int = 5) -> dict[str, Any]:
+    """Apply source/turn/episode records to the configured production DB, without memory_units."""
+    from memo.core.config import config
+
+    db_path = Path(config.db_path).resolve()
+    expected = (PROJECT_ROOT / "data" / "memo_source_aware.db").resolve()
+    if db_path != expected:
+        raise ValueError(f"生产 source-only 导入只允许写入干净新主库 {expected}，当前为 {db_path}")
+    adapter = adapter_for(source, path=path)
+    sessions = [adapter.load_session(source_path) for source_path in adapter.list_sessions(limit=limit)]
+    backup = backup_db_file(db_path, f"memo-source-only-before-{source}")
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys=ON")
+    latest = apply_all_migrations(conn)
+    totals = {"source_sessions": 0, "source_turns": 0, "episodes": 0, "memory_units": 0}
+    for session in sessions:
+        source_id, memo_session_id = insert_source_session(conn, session)
+        turn_ids = insert_turns(conn, source_id, session)
+        episode_count = insert_episodes_only(conn, source_id, memo_session_id, session, turn_ids)
+        totals["source_sessions"] += 1
+        totals["source_turns"] += len(turn_ids)
+        totals["episodes"] += episode_count
+    conn.commit()
+    validation = {
+        "schema_version": conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0],
+        "source_sessions": conn.execute("SELECT COUNT(*) FROM source_sessions").fetchone()[0],
+        "source_turns": conn.execute("SELECT COUNT(*) FROM source_turns").fetchone()[0],
+        "episodes": conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0],
+        "episode_turns": conn.execute("SELECT COUNT(*) FROM episode_turns").fetchone()[0],
+        "memory_units": conn.execute("SELECT COUNT(*) FROM memory_units").fetchone()[0],
+        "evidence_links": conn.execute("SELECT COUNT(*) FROM memory_turn_sources").fetchone()[0],
+    }
+    conn.close()
+    return {
+        "mode": "PRODUCTION_SOURCE_ONLY",
+        "source": source,
+        "db_path": str(db_path),
+        "latest_migration": latest,
+        "backup": backup,
+        "imported": totals,
+        "validation": validation,
+        "safety": "Production source-only import writes source_sessions/source_turns/episodes/episode_turns only; memory_units and raw transcript content are not created.",
+    }
+
+
 def apply_to_test_db(source: str, db_path: Path, path: str = "", limit: int = 5) -> dict[str, Any]:
     assert_safe_test_db_path(db_path)
     adapter = adapter_for(source, path=path)
@@ -1039,13 +1156,43 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=MAX_SAMPLE_SESSIONS)
     parser.add_argument("--dry-run", action="store_true", help="只读预览。默认 dry-run。")
     parser.add_argument("--apply", action="store_true", help="仅允许写入显式测试库。必须传 --db-path 和 --confirm TEST_APPLY。")
+    parser.add_argument("--apply-source-only", action="store_true", help="写入当前干净新主库的 source/turn/episode 证据层，不生成 memory_units。必须传 --confirm SOURCE_ONLY_PROD_APPLY。")
     parser.add_argument("--db-path", default="", help="测试库路径。--apply 时必填，且路径必须包含 test/dev/sandbox/dryrun/source_aware。")
-    parser.add_argument("--confirm", default="", help="测试库写入确认词：TEST_APPLY")
+    parser.add_argument("--confirm", default="", help="确认词：TEST_APPLY 或 SOURCE_ONLY_PROD_APPLY")
     parser.add_argument("--output", default="", help="报告输出路径；默认 reports/source-aware-import-<source>-<timestamp>.json")
     parser.add_argument("--json", action="store_true", help="控制台输出 JSON。")
     args = parser.parse_args()
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if args.apply and args.apply_source_only:
+        print("拒绝执行：--apply 和 --apply-source-only 不能同时使用。", file=sys.stderr)
+        return 2
+
+    if args.apply_source_only:
+        if args.confirm != SOURCE_ONLY_PROD_CONFIRM:
+            print(f"拒绝执行：生产 source-only 导入必须传入 --confirm {SOURCE_ONLY_PROD_CONFIRM}。", file=sys.stderr)
+            return 2
+        try:
+            result = apply_to_production_source_only(args.source, path=args.path, limit=args.limit)
+        except Exception as exc:
+            print(f"生产 source-only 导入失败：{exc}", file=sys.stderr)
+            return 1
+        output = Path(args.output) if args.output else REPORTS_DIR / f"source-aware-source-only-{args.source}-{now_stamp()}.json"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print("=" * 72)
+            print("Memo Source-aware Import PRODUCTION SOURCE-ONLY")
+            print("=" * 72)
+            print(f"source: {result['source']}")
+            print(f"db_path: {result['db_path']}")
+            print(f"imported: {json.dumps(result['imported'], ensure_ascii=False)}")
+            print(f"validation: {json.dumps(result['validation'], ensure_ascii=False)}")
+            print(f"Report written: {output}")
+        return 0
 
     if args.apply:
         if args.confirm != TEST_APPLY_CONFIRM:

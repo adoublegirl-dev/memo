@@ -3,7 +3,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.source_aware_import import GenericTranscriptAdapter, apply_to_test_db, parse_codex_jsonl, parse_generic_jsonl, run_dry_run
+from scripts.source_aware_import import (
+    GenericTranscriptAdapter,
+    apply_all_migrations,
+    apply_to_test_db,
+    insert_episodes_only,
+    insert_source_session,
+    insert_turns,
+    parse_codex_jsonl,
+    parse_generic_jsonl,
+    run_dry_run,
+)
 
 
 def test_parse_generic_jsonl_counts_roles_and_tools(tmp_path: Path):
@@ -75,6 +85,33 @@ def test_run_dry_run_generic(tmp_path: Path):
     assert report.source == "generic"
     assert report.scanned_sessions == 1
     assert report.estimated_episodes >= 1
+
+
+def test_source_only_insert_does_not_create_memory_units(tmp_path: Path):
+    import sqlite3
+    transcript = tmp_path / "session.txt"
+    transcript.write_text(
+        "User: 这个项目后续要保留来源会话关系，并且先只导入 source 和 episode\nAssistant: 好。",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "source_aware_source_only_test.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    apply_all_migrations(conn)
+    session = GenericTranscriptAdapter(transcript).load_session(transcript)
+
+    source_id, memo_session_id = insert_source_session(conn, session)
+    turn_ids = insert_turns(conn, source_id, session)
+    episodes = insert_episodes_only(conn, source_id, memo_session_id, session, turn_ids)
+    conn.commit()
+
+    assert episodes >= 1
+    assert conn.execute("SELECT COUNT(*) FROM source_sessions").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM source_turns").fetchone()[0] == len(turn_ids)
+    assert conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == episodes
+    assert conn.execute("SELECT COUNT(*) FROM memory_units").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM memory_turn_sources").fetchone()[0] == 0
+    conn.close()
 
 
 def test_source_aware_import_apply_requires_confirm():
