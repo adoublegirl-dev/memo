@@ -7,12 +7,14 @@ from scripts.source_aware_import import (
     GenericTranscriptAdapter,
     apply_all_migrations,
     apply_to_test_db,
+    extract_memory_units_from_source_sessions,
     insert_episodes_only,
     insert_source_session,
     insert_turns,
     parse_codex_jsonl,
     parse_generic_jsonl,
     run_dry_run,
+    is_memory_subject_text,
 )
 
 
@@ -78,7 +80,7 @@ def test_generic_adapter_dry_run_does_not_include_raw_content(tmp_path: Path):
 
 def test_run_dry_run_generic(tmp_path: Path):
     transcript = tmp_path / "session.txt"
-    transcript.write_text("User: 这个项目后续要保留来源会话关系\nAssistant: 好，先做 dry-run。", encoding="utf-8")
+    transcript.write_text("User: 这个项目后续要保留来源会话关系，并且每一条长期记忆都必须可以追溯到具体 turn\nAssistant: 好，先做 dry-run。", encoding="utf-8")
 
     report = run_dry_run("generic", path=str(transcript))
 
@@ -112,6 +114,65 @@ def test_source_only_insert_does_not_create_memory_units(tmp_path: Path):
     assert conn.execute("SELECT COUNT(*) FROM memory_units").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM memory_turn_sources").fetchone()[0] == 0
     conn.close()
+
+
+def test_memory_subject_filter_blocks_system_and_command_markup():
+    assert is_memory_subject_text("这个项目后续要保留来源会话关系，并且先只导入 source 和 episode") is True
+    assert is_memory_subject_text('<system-reminder data-role="user-context">hidden</system-reminder>') is False
+    assert is_memory_subject_text('<command-name>/status</command-name>') is False
+    assert is_memory_subject_text('<local-command-stdout>ok</local-command-stdout>') is False
+    assert is_memory_subject_text('[Use skill: user-guide] 默认模型指的是助手的配置吗') is False
+
+
+def test_source_only_episode_boundary_ignores_system_markup(tmp_path: Path):
+    import sqlite3
+    transcript = tmp_path / "session.txt"
+    transcript.write_text(
+        'User: <system-reminder data-role="user-context">hidden context should not become episode</system-reminder>\nAssistant: 好。',
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "source_aware_system_skip_test.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    apply_all_migrations(conn)
+    session = GenericTranscriptAdapter(transcript).load_session(transcript)
+    source_id, memo_session_id = insert_source_session(conn, session)
+    turn_ids = insert_turns(conn, source_id, session)
+    episodes = insert_episodes_only(conn, source_id, memo_session_id, session, turn_ids)
+    conn.commit()
+    assert episodes == 0
+    assert conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 0
+    conn.close()
+
+
+def test_conservative_memory_extraction_ignores_tool_subjects(tmp_path: Path):
+    import sqlite3
+    transcript = tmp_path / "session.txt"
+    transcript.write_text(
+        "User: 这个项目后续要保留来源会话关系，并且先只导入 source 和 episode\nAssistant: 好，这是最终回答。\nTool: 这是过程性工具结果，不应成为长期记忆主体。",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "source_aware_extract_test.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    apply_all_migrations(conn)
+    session = GenericTranscriptAdapter(transcript).load_session(transcript)
+    source_id, memo_session_id = insert_source_session(conn, session)
+    turn_ids = insert_turns(conn, source_id, session)
+    insert_episodes_only(conn, source_id, memo_session_id, session, turn_ids)
+    conn.commit()
+    conn.close()
+
+    result = extract_memory_units_from_source_sessions(db_path, source_agent="GenericTranscript", limit=5)
+
+    assert result["extracted"]["memory_units_created"] == 1
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT speaker_scope, raw_text FROM memory_units LIMIT 1").fetchone()
+    evidence_roles = conn.execute("SELECT evidence_role FROM memory_turn_sources ORDER BY evidence_role").fetchall()
+    conn.close()
+    assert row[0] == "user_claim"
+    assert row[1] == ""
+    assert ("source",) in evidence_roles
 
 
 def test_source_aware_import_apply_requires_confirm():

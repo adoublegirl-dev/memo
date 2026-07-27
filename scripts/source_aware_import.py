@@ -28,6 +28,7 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 MIGRATIONS_DIR = PROJECT_ROOT / "memo" / "store" / "migrations"
 TEST_APPLY_CONFIRM = "TEST_APPLY"
 SOURCE_ONLY_PROD_CONFIRM = "SOURCE_ONLY_PROD_APPLY"
+EXTRACT_MEMORY_CONFIRM = "EXTRACT_MEMORY_UNITS"
 
 MIN_MEMORY_TEXT_LENGTH = 30
 MAX_SAMPLE_SESSIONS = 500
@@ -157,6 +158,7 @@ class SourceTurnDraft:
     agent_turn_id: str = ""
     parent_turn_id: str = ""
     role: str = "unknown"
+    text: str = ""
     content_hash: str = ""
     content_length: int = 0
     timestamp: str = ""
@@ -185,15 +187,13 @@ class SourceSessionDraft:
     risks: list[str] = field(default_factory=list)
 
     def estimate_episodes(self) -> int:
-        user_turns = [t for t in self.turns if t.role == "user" and t.content_length >= MIN_MEMORY_TEXT_LENGTH]
-        return max(len(user_turns), 1 if self.turns else 0)
+        user_turns = [t for t in self.turns if t.role == "user" and is_memory_subject_text(t.text)]
+        return len(user_turns)
 
     def estimate_memory_units(self) -> int:
-        # 保守估算：每个有效用户问题至少可能提取 1 条长期记忆；
-        # 明确工具/过程日志不计入 memory_unit。
-        user_turns = [t for t in self.turns if t.role == "user" and t.content_length >= MIN_MEMORY_TEXT_LENGTH]
-        assistant_final = [t for t in self.turns if t.role == "assistant" and t.is_final_answer and t.content_length >= MIN_MEMORY_TEXT_LENGTH]
-        return max(len(user_turns), min(len(user_turns) + len(assistant_final), len(user_turns) * 2) if user_turns else 0)
+        # 保守估算：只有真正用户语义输入才可能提取长期记忆；工具/系统/命令上下文不计入。
+        user_turns = [t for t in self.turns if t.role == "user" and is_memory_subject_text(t.text)]
+        return len(user_turns)
 
 
 @dataclass
@@ -357,6 +357,7 @@ class HanaAgentAdapter(BaseAdapter):
                         agent_turn_id=str(obj.get("id") or ""),
                         parent_turn_id=str(obj.get("parentId") or obj.get("parent_id") or ""),
                         role=role,
+                        text=text,
                         content_hash=stable_hash(text) if text else "",
                         content_length=len(text),
                         timestamp=str(obj.get("timestamp") or ""),
@@ -587,6 +588,7 @@ def parse_workbuddy_jsonl(path: Path) -> tuple[list[SourceTurnDraft], str]:
                 agent_turn_id=str(obj.get("id") or ""),
                 parent_turn_id=str(obj.get("parentId") or obj.get("parent_id") or ""),
                 role=role,
+                text=text,
                 content_hash=stable_hash(text) if text else "",
                 content_length=len(text),
                 timestamp=str(obj.get("timestamp") or obj.get("created_at") or ""),
@@ -666,6 +668,7 @@ def parse_codex_jsonl(path: Path) -> tuple[list[SourceTurnDraft], str, str]:
                 agent_turn_id=str(payload.get("id") or payload.get("turn_id") or payload.get("call_id") or obj.get("id") or ""),
                 parent_turn_id=str(payload.get("parentId") or payload.get("parent_id") or ""),
                 role=role,
+                text=text,
                 content_hash=stable_hash(text) if text else "",
                 content_length=len(text),
                 timestamp=str(obj.get("timestamp") or payload.get("timestamp") or payload.get("started_at") or payload.get("completed_at") or ""),
@@ -710,6 +713,7 @@ def parse_generic_jsonl(path: Path) -> tuple[list[SourceTurnDraft], str]:
                 agent_turn_id=str(obj.get("id") or obj.get("turn_id") or ""),
                 parent_turn_id=str(obj.get("parentId") or obj.get("parent_id") or ""),
                 role=role,
+                text=text,
                 content_hash=stable_hash(text) if text else "",
                 content_length=len(text),
                 timestamp=str(obj.get("timestamp") or obj.get("created_at") or ""),
@@ -740,6 +744,7 @@ def parse_plain_text_transcript(path: Path) -> tuple[list[SourceTurnDraft], str]
             first_user_text = content
         turns.append(SourceTurnDraft(
             role=normalized_role,
+            text=content,
             content_hash=stable_hash(content) if content else "",
             content_length=len(content),
             turn_index=len(turns),
@@ -861,11 +866,25 @@ def insert_source_session(conn: sqlite3.Connection, session: SourceSessionDraft)
         (memo_session_id, session.source_agent, session.display_title or session.agent_session_id, now),
     )
     conn.execute(
-        """INSERT OR REPLACE INTO source_sessions
+        """INSERT INTO source_sessions
            (id, source_type, source_agent, external_session_id, agent_session_id, source_path,
             source_hash, original_title, title_source, display_title, display_title_source, started_at, updated_at,
             imported_at, message_count, content_hash, status, metadata_json, created_at)
-           VALUES (?, 'agent_session', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+           VALUES (?, 'agent_session', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             source_agent=excluded.source_agent,
+             external_session_id=excluded.external_session_id,
+             agent_session_id=excluded.agent_session_id,
+             source_path=excluded.source_path,
+             source_hash=excluded.source_hash,
+             original_title=excluded.original_title,
+             title_source=excluded.title_source,
+             display_title=excluded.display_title,
+             display_title_source=excluded.display_title_source,
+             updated_at=excluded.updated_at,
+             message_count=excluded.message_count,
+             content_hash=excluded.content_hash,
+             metadata_json=excluded.metadata_json""",
         (
             source_id,
             session.source_agent,
@@ -895,11 +914,24 @@ def insert_turns(conn: sqlite3.Connection, source_id: str, session: SourceSessio
         turn_id = "turn_" + stable_hash(f"{source_id}|{turn.turn_index}|{turn.content_hash}|{turn.source_event_type}")[:24]
         turn_ids.append(turn_id)
         conn.execute(
-            """INSERT OR REPLACE INTO source_turns
+            """INSERT INTO source_turns
                (id, source_session_id, agent_turn_id, parent_turn_id, role, content, content_hash,
                 timestamp, turn_index, is_final_answer, is_tool_call, is_tool_result, tool_name,
                 source_event_type, metadata_json)
-               VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                 agent_turn_id=excluded.agent_turn_id,
+                 parent_turn_id=excluded.parent_turn_id,
+                 role=excluded.role,
+                 content_hash=excluded.content_hash,
+                 timestamp=excluded.timestamp,
+                 turn_index=excluded.turn_index,
+                 is_final_answer=excluded.is_final_answer,
+                 is_tool_call=excluded.is_tool_call,
+                 is_tool_result=excluded.is_tool_result,
+                 tool_name=excluded.tool_name,
+                 source_event_type=excluded.source_event_type,
+                 metadata_json=excluded.metadata_json""",
             (
                 turn_id,
                 source_id,
@@ -926,14 +958,24 @@ def insert_episodes_only(conn: sqlite3.Connection, source_id: str, memo_session_
     current_episode_id = ""
     for idx, turn in enumerate(session.turns):
         turn_id = turn_ids[idx]
-        if turn.role == "user" and turn.content_length >= MIN_MEMORY_TEXT_LENGTH:
+        if turn.role == "user" and is_memory_subject_text(turn.text):
             episode_count += 1
             current_episode_id = "ep_" + stable_hash(f"{source_id}|{idx}|{turn.content_hash}")[:24]
             conn.execute(
-                """INSERT OR REPLACE INTO episodes
+                """INSERT INTO episodes
                    (id, source_session_id, title, user_intent, start_turn_id, end_turn_id,
                     start_turn_index, end_turn_index, status, confidence, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 0.5, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 0.5, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     title=excluded.title,
+                     user_intent=excluded.user_intent,
+                     start_turn_id=excluded.start_turn_id,
+                     end_turn_id=excluded.end_turn_id,
+                     start_turn_index=excluded.start_turn_index,
+                     end_turn_index=excluded.end_turn_index,
+                     status=excluded.status,
+                     confidence=excluded.confidence,
+                     metadata_json=excluded.metadata_json""",
                 (
                     current_episode_id,
                     source_id,
@@ -1109,6 +1151,152 @@ def apply_to_production_source_only(source: str, path: str = "", limit: int = 5)
     }
 
 
+def load_session_for_existing_source(source_agent: str, source_path: str) -> SourceSessionDraft:
+    path = Path(source_path).expanduser()
+    key = (source_agent or "").strip().lower()
+    if key == "workbuddy":
+        return WorkBuddyAdapter().load_session(path)
+    if key == "hanaagent":
+        return HanaAgentAdapter().load_session(path)
+    if key == "codex":
+        return CodexAdapter().load_session(path)
+    if key == "generictranscript" or key == "generic":
+        return GenericTranscriptAdapter(path).load_session(path)
+    raise ValueError(f"unsupported source_agent for extraction: {source_agent}")
+
+
+def is_memory_subject_text(text: str) -> bool:
+    """Return True only for user-authored semantic text suitable as a memory subject."""
+    cleaned = " ".join((text or "").strip().split())
+    if len(cleaned) < MIN_MEMORY_TEXT_LENGTH:
+        return False
+    lowered = cleaned[:240].lower()
+    blocked_prefixes = (
+        "<system-reminder",
+        "<command-name",
+        "<local-command",
+        "<local-command-stdout",
+        "<local-command-stderr",
+        "<tool-call",
+        "<tool-result",
+        "[system",
+        "[hana_reminder",
+        "[use skill:",
+        "system:",
+    )
+    if lowered.startswith(blocked_prefixes):
+        return False
+    blocked_fragments = (
+        'data-role="command-caveat"',
+        'data-role="user-context"',
+        "</local-command-stdout>",
+        "</local-command-stderr>",
+    )
+    if any(fragment in lowered for fragment in blocked_fragments):
+        return False
+    return True
+
+
+def extract_memory_units_from_source_sessions(db_path: Path, source_agent: str = "", limit: int = 50) -> dict[str, Any]:
+    """Conservative extraction from existing source sessions.
+
+    Creates one memory_unit from each eligible user-trigger episode. Tool/process turns are not used as
+    memory subjects; assistant final answers can be support evidence only.
+    """
+    backup = backup_db_file(db_path, "memo-before-memory-extraction")
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    where = "WHERE ss.source_path != ''"
+    params: list[Any] = []
+    if source_agent:
+        where += " AND ss.source_agent=?"
+        params.append(source_agent)
+    rows = conn.execute(
+        f"""SELECT ss.* FROM source_sessions ss
+            {where}
+            ORDER BY COALESCE(ss.updated_at, ss.imported_at, ss.created_at) DESC
+            LIMIT ?""",
+        tuple(params + [limit]),
+    ).fetchall()
+    totals = {"source_sessions": 0, "episodes_seen": 0, "memory_units_created": 0, "memory_units_existing": 0, "evidence_links": 0, "skipped": 0}
+    for row in rows:
+        source_id = row["id"]
+        totals["source_sessions"] += 1
+        try:
+            parsed = load_session_for_existing_source(row["source_agent"], row["source_path"])
+        except Exception:
+            totals["skipped"] += 1
+            continue
+        by_index = {t.turn_index: t for t in parsed.turns}
+        memo_session_id = "memo_" + source_id
+        episodes = conn.execute(
+            """SELECT * FROM episodes WHERE source_session_id=? ORDER BY start_turn_index LIMIT 1000""",
+            (source_id,),
+        ).fetchall()
+        for ep in episodes:
+            totals["episodes_seen"] += 1
+            start_idx = int(ep["start_turn_index"] or 0)
+            user_turn = by_index.get(start_idx)
+            if not user_turn or user_turn.role != "user" or not is_memory_subject_text(user_turn.text):
+                totals["skipped"] += 1
+                continue
+            memory_id = "mem_" + stable_hash(f"{source_id}|{ep['id']}|{user_turn.content_hash}")[:24]
+            existing = conn.execute("SELECT id FROM memory_units WHERE id=?", (memory_id,)).fetchone()
+            if existing:
+                totals["memory_units_existing"] += 1
+                continue
+            title, _ = compact_display_title(user_turn.text, f"Episode {ep['start_turn_index']}", max_len=42)
+            summary = " ".join(user_turn.text.split())[:240]
+            conn.execute(
+                """INSERT OR REPLACE INTO memory_units
+                   (id, session_id, title, summary, summary_detail, raw_text, memory_type,
+                    source_session_id, episode_id, source_turn_start_id, source_turn_end_id,
+                    memory_granularity, speaker_scope, source_confidence, is_canonical)
+                   VALUES (?, ?, ?, ?, '', '', 'FACT', ?, ?, ?, ?, 'episode', 'user_claim', 0.65, 0)""",
+                (memory_id, memo_session_id, title, summary, source_id, ep["id"], ep["start_turn_id"], ep["end_turn_id"]),
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO memory_turn_sources(memory_id, turn_id, evidence_role, weight)
+                   VALUES (?, ?, 'source', 1.0)""",
+                (memory_id, ep["start_turn_id"]),
+            )
+            totals["evidence_links"] += 1
+            support_turns = conn.execute(
+                """SELECT et.turn_id FROM episode_turns et
+                   JOIN source_turns st ON st.id=et.turn_id
+                   WHERE et.episode_id=? AND et.role_in_episode='final_answer'
+                         AND st.role='assistant' AND st.is_tool_call=0 AND st.is_tool_result=0
+                   ORDER BY st.turn_index LIMIT 1""",
+                (ep["id"],),
+            ).fetchall()
+            for support in support_turns:
+                conn.execute(
+                    """INSERT OR REPLACE INTO memory_turn_sources(memory_id, turn_id, evidence_role, weight)
+                       VALUES (?, ?, 'support', 0.5)""",
+                    (memory_id, support["turn_id"]),
+                )
+                totals["evidence_links"] += 1
+            conn.execute(
+                """INSERT OR IGNORE INTO source_session_memories(source_session_id, memory_id, relation_type)
+                   VALUES (?, ?, 'originated_from')""",
+                (source_id, memory_id),
+            )
+            totals["memory_units_created"] += 1
+        mem_count = conn.execute("SELECT COUNT(*) FROM memory_units WHERE source_session_id=?", (source_id,)).fetchone()[0]
+        conn.execute("UPDATE source_sessions SET memory_count=? WHERE id=?", (mem_count, source_id))
+        conn.execute("UPDATE sessions SET memory_count=? WHERE id=?", (mem_count, memo_session_id))
+    conn.commit()
+    validation = {
+        "source_sessions": conn.execute("SELECT COUNT(*) FROM source_sessions").fetchone()[0],
+        "episodes": conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0],
+        "memory_units": conn.execute("SELECT COUNT(*) FROM memory_units").fetchone()[0],
+        "evidence_links": conn.execute("SELECT COUNT(*) FROM memory_turn_sources").fetchone()[0],
+    }
+    conn.close()
+    return {"mode": "EXTRACT_MEMORY_UNITS", "db_path": str(db_path), "backup": backup, "extracted": totals, "validation": validation, "safety": "Tool/process turns are not extracted as memory subjects; raw transcript content is not stored in raw_text."}
+
+
 def apply_to_test_db(source: str, db_path: Path, path: str = "", limit: int = 5) -> dict[str, Any]:
     assert_safe_test_db_path(db_path)
     adapter = adapter_for(source, path=path)
@@ -1157,6 +1345,7 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true", help="只读预览。默认 dry-run。")
     parser.add_argument("--apply", action="store_true", help="仅允许写入显式测试库。必须传 --db-path 和 --confirm TEST_APPLY。")
     parser.add_argument("--apply-source-only", action="store_true", help="写入当前干净新主库的 source/turn/episode 证据层，不生成 memory_units。必须传 --confirm SOURCE_ONLY_PROD_APPLY。")
+    parser.add_argument("--extract-memories", action="store_true", help="从已导入 source_sessions/episodes 保守抽取 memory_units。必须传 --confirm EXTRACT_MEMORY_UNITS。")
     parser.add_argument("--db-path", default="", help="测试库路径。--apply 时必填，且路径必须包含 test/dev/sandbox/dryrun/source_aware。")
     parser.add_argument("--confirm", default="", help="确认词：TEST_APPLY 或 SOURCE_ONLY_PROD_APPLY")
     parser.add_argument("--output", default="", help="报告输出路径；默认 reports/source-aware-import-<source>-<timestamp>.json")
@@ -1165,9 +1354,40 @@ def main() -> int:
 
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    if args.apply and args.apply_source_only:
-        print("拒绝执行：--apply 和 --apply-source-only 不能同时使用。", file=sys.stderr)
+    active_modes = sum(1 for flag in [args.apply, args.apply_source_only, args.extract_memories] if flag)
+    if active_modes > 1:
+        print("拒绝执行：--apply、--apply-source-only、--extract-memories 不能同时使用。", file=sys.stderr)
         return 2
+
+    if args.extract_memories:
+        if args.confirm != EXTRACT_MEMORY_CONFIRM:
+            print(f"拒绝执行：memory extraction 必须传入 --confirm {EXTRACT_MEMORY_CONFIRM}。", file=sys.stderr)
+            return 2
+        try:
+            from memo.core.config import config
+            db_path = Path(config.db_path).resolve()
+            expected = (PROJECT_ROOT / "data" / "memo_source_aware.db").resolve()
+            if db_path != expected:
+                raise ValueError(f"memory extraction 只允许写入干净新主库 {expected}，当前为 {db_path}")
+            result = extract_memory_units_from_source_sessions(db_path, source_agent={"workbuddy": "WorkBuddy", "hanaagent": "HanaAgent", "codex": "Codex", "generic": "GenericTranscript"}.get(args.source, ""), limit=args.limit)
+        except Exception as exc:
+            print(f"memory extraction 失败：{exc}", file=sys.stderr)
+            return 1
+        output = Path(args.output) if args.output else REPORTS_DIR / f"source-aware-extract-memory-{args.source}-{now_stamp()}.json"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print("=" * 72)
+            print("Memo Source-aware Memory Extraction")
+            print("=" * 72)
+            print(f"source: {args.source}")
+            print(f"db_path: {result['db_path']}")
+            print(f"extracted: {json.dumps(result['extracted'], ensure_ascii=False)}")
+            print(f"validation: {json.dumps(result['validation'], ensure_ascii=False)}")
+            print(f"Report written: {output}")
+        return 0
 
     if args.apply_source_only:
         if args.confirm != SOURCE_ONLY_PROD_CONFIRM:

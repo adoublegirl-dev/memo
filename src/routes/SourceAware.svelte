@@ -13,12 +13,16 @@
   let page = 1;
   let pageSize = '30';
   let q = '';
+  let turnFilter = 'primary';
+  let turnPreviewLimit = '80';
 
   $: currentPageSize = Number(pageSize || 30);
   $: total = data?.total || 0;
   $: totalPages = Math.max(1, Math.ceil(total / currentPageSize));
   $: titleSourceItems = data?.stats?.by_title_source || [];
   $: displayTitleSourceItems = data?.stats?.by_display_title_source || [];
+  $: filteredTurns = filterTurns(detail?.turns || []);
+  $: visibleTurns = filteredTurns.slice(0, Number(turnPreviewLimit || 80));
 
   function fmtTime(s) { return s ? String(s).slice(0, 19).replace('T', ' ') : ''; }
   function pct(n) { return `${Math.round((Number(n || 0)) * 100)}%`; }
@@ -30,6 +34,11 @@
       missing: '缺原始标题', generated_fallback: '生成兜底', unknown: '未知'
     };
     return labels[v] || v || '未知';
+  }
+  function filterTurns(turns) {
+    if (turnFilter === 'all') return turns;
+    if (turnFilter === 'tool') return turns.filter(t => t.is_tool_call || t.is_tool_result || t.role === 'tool');
+    return turns.filter(t => t.role === 'user' || (t.role === 'assistant' && t.is_final_answer && !t.is_tool_call && !t.is_tool_result));
   }
   function sourceBadgeClass(v) {
     if (v === 'agent_original' || v === 'db_title' || v === 'session_titles_json_path' || v === 'session_titles_json_id') return 'green';
@@ -197,9 +206,26 @@
       </div>
 
       <div class="modal-section">
-        <h3>Turns 元信息（不展示原文）</h3>
+        <div class="section-head" style="margin:0 0 12px">
+          <div>
+            <h3>Turns 元信息（不展示原文）</h3>
+            <div class="item-meta">当前显示 {visibleTurns.length} 条 / 筛选后 {filteredTurns.length} 条 / 已加载 {detail.turns?.length || 0} 条。详情页默认只预览，不代表数据被截断。</div>
+          </div>
+          <div class="toolbar" style="gap:8px;flex-wrap:wrap">
+            <select class="input" style="width:190px" bind:value={turnFilter}>
+              <option value="primary">只看用户和最终回答</option>
+              <option value="tool">只看 tool/process</option>
+              <option value="all">全部 turns</option>
+            </select>
+            <select class="input" style="width:110px" bind:value={turnPreviewLimit}>
+              <option value="80">前 80</option>
+              <option value="150">前 150</option>
+              <option value="300">前 300</option>
+            </select>
+          </div>
+        </div>
         <div class="list">
-          {#each detail.turns?.slice(0, 80) || [] as t}
+          {#each visibleTurns as t}
             <div class="item">
               <div class="item-title">#{t.turn_index} · {t.role} · {t.source_event_type || 'message'}</div>
               <div class="item-meta">len {t.content_length} · hash {short(t.content_hash, 12)} · {fmtTime(t.timestamp)} · final {t.is_final_answer ? 'yes' : 'no'} · tool {t.tool_name || '—'}</div>
