@@ -245,7 +245,16 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
         {"updated": N, "new": N, "superseded": N, "unchanged": N}
     """
     if not llm_client.available:
-        return {"updated": 0, "new": 0, "superseded": 0, "unchanged": 0}
+        return {
+            "updated": 0,
+            "new": 0,
+            "superseded": 0,
+            "unchanged": 0,
+            "status": "blocked",
+            "reason": "llm_unavailable",
+            "message": "LLM 未配置，无法进行人格增量提炼。请先配置 LLM_API_KEY。",
+            "llm_available": False,
+        }
 
     # 获取上次刷新时间
     row = db.fetchone(
@@ -285,7 +294,17 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
             new_memories = [dict(r) for r in rows]
 
     if not new_memories:
-        return {"updated": 0, "new": 0, "superseded": 0, "unchanged": 0}
+        return {
+            "updated": 0,
+            "new": 0,
+            "superseded": 0,
+            "unchanged": 0,
+            "status": "noop",
+            "reason": "no_new_memories",
+            "message": "没有发现上次刷新后新增的记忆，人格画像无需更新。",
+            "llm_available": True,
+            "candidate_memories": 0,
+        }
 
     # 获取所有活跃断言
     assertions = db.fetchall(
@@ -296,8 +315,24 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
         total = db.fetchone("SELECT COUNT(*) as cnt FROM memory_units WHERE is_superseded = 0")
         if total["cnt"] >= 10:
             logger.info("记忆数达标，自动建基线")
-            return build_persona_baseline()
-        return {"updated": 0, "new": 0, "superseded": 0, "unchanged": 0}
+            result = build_persona_baseline()
+            return {
+                **result,
+                "status": "updated" if result.get("assertions_created") else "noop",
+                "reason": "baseline_created" if result.get("assertions_created") else "baseline_no_changes",
+                "message": f"人格基线提炼完成，新增 {result.get('assertions_created', 0)} 条断言。",
+                "llm_available": True,
+            }
+        return {
+            "updated": 0,
+            "new": 0,
+            "superseded": 0,
+            "unchanged": 0,
+            "status": "noop",
+            "reason": "not_enough_memories_for_baseline",
+            "message": "当前还没有可增量更新的人格基线，且记忆数量不足以自动建立基线。",
+            "llm_available": True,
+        }
 
     updated = 0
     new_assertions = 0
@@ -305,6 +340,8 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
     unchanged = 0
     skipped_memories = 0
     candidate_checks = 0
+    llm_errors = 0
+    last_error = ""
     top_k_assertions = 8
 
     assertion_dicts = [dict(a) for a in assertions]
@@ -417,18 +454,39 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
                     unchanged += 1
 
             except Exception as e:
-                logger.debug(f"增量检查异常: {e}")
+                llm_errors += 1
+                last_error = str(e)
+                logger.warning(f"人格增量检查 LLM 调用异常: {e}")
                 continue
 
     db.commit()
 
-    # 更新时间戳
+    # 更新时间戳。若所有候选 LLM 调用都失败，不推进游标，方便修好 Key 后重试。
     now = datetime.now().isoformat()
-    db.execute(
-        "INSERT OR REPLACE INTO persona_settings (key, value) VALUES (?, ?)",
-        ("last_incremental_at", now),
-    )
-    db.commit()
+    cursor_advanced = candidate_checks == 0 or llm_errors < candidate_checks
+    if cursor_advanced:
+        db.execute(
+            "INSERT OR REPLACE INTO persona_settings (key, value) VALUES (?, ?)",
+            ("last_incremental_at", now),
+        )
+        db.commit()
+
+    if candidate_checks > 0 and llm_errors >= candidate_checks:
+        status = "error"
+        reason = "llm_failed"
+        message = f"人格增量提炼调用 LLM 失败，未推进刷新游标。请检查模型 Base URL / API Key / 模型名。最近错误：{last_error[:220]}"
+    elif updated or new_assertions or superseded_count:
+        status = "updated"
+        reason = "changed"
+        message = f"人格画像已更新：印证 {updated} 条，新增 {new_assertions} 条，推翻 {superseded_count} 条。"
+    elif candidate_checks == 0:
+        status = "noop"
+        reason = "no_persona_relevant_candidates"
+        message = f"扫描了 {len(new_memories)} 条新记忆，但没有命中需要 LLM 判断的人格相关候选。"
+    else:
+        status = "noop"
+        reason = "no_assertion_changes"
+        message = f"已检查 {candidate_checks} 个候选关系，没有发现需要改写的人格断言。"
 
     result_payload = {
         "updated": updated,
@@ -437,7 +495,15 @@ def update_persona_incremental(new_memory_ids: list[str] | None = None) -> dict[
         "unchanged": unchanged,
         "skipped_memories": skipped_memories,
         "candidate_checks": candidate_checks,
+        "llm_errors": llm_errors,
+        "last_error": last_error[:500],
+        "cursor_advanced": cursor_advanced,
+        "candidate_memories": len(new_memories),
         "top_k_assertions": top_k_assertions,
+        "llm_available": True,
+        "status": status,
+        "reason": reason,
+        "message": message,
     }
     try:
         full_scan_estimate = len(new_memories) * len(assertion_dicts)

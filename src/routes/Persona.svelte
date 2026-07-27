@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
   let data = null, active = '', selected = null, draft = null;
+  let refreshLoading = false, refreshResult = null, refreshError = '';
   let form = { dimension:'preference', assertion:'', confidence:0.8, locked:true };
   const labels = { value:'价值观', decision:'决策', identity:'身份', preference:'偏好', sensitivity:'敏感', relationship:'关系', knowledge:'知识边界', communication:'沟通', mental_model:'思维模型', emotion:'情绪' };
 
@@ -14,7 +15,17 @@
   async function lock(a, locked) { await api.personaAction({ action:locked?'lock':'unlock', id:a.id }); await load(); }
   async function remove(a) { if(!confirm('软删除这条人格断言？它不会物理删除，可通过审计记录恢复。')) return; await api.personaAction({ action:'delete', id:a.id, note:'用户在 Dashboard 软删除' }); await load(); }
   async function create() { if(!form.assertion.trim()) return; await api.personaAction({ action:'create', ...form }); form.assertion=''; active=form.dimension; await load(); }
-  async function refresh() { await api.personaAction({ action:'refresh', id:'refresh' }); await load(); }
+  async function refresh() {
+    refreshLoading = true; refreshError = ''; refreshResult = null;
+    try {
+      refreshResult = await api.personaAction({ action:'refresh', id:'refresh' });
+      await load();
+    } catch (e) {
+      refreshError = e.message || String(e);
+    } finally {
+      refreshLoading = false;
+    }
+  }
   async function sensitivity(level) { await api.personaAction({ action:'set_sensitivity', id:String(level) }); await load(); }
   onMount(load);
 </script>
@@ -24,10 +35,24 @@
   <p class="page-subtitle">从长期记忆中提炼出的判断偏好和沟通倾向。支持编辑、锁定、删除、补充自定义断言和查看证据。</p>
 
   <div class="toolbar" style="margin:20px 0">
-    <button class="btn" on:click={refresh}>增量刷新</button>
+    <button class="btn" disabled={refreshLoading} on:click={refresh}>{refreshLoading ? '刷新中…' : '增量刷新'}</button>
     <span class="item-meta">灵敏度</span>
     {#each [1,2,3,4,5] as l}<button class="btn" class:primary={String(l)===(data?.settings?.sensitivity_level || '2')} on:click={() => sensitivity(l)}>{l}</button>{/each}
   </div>
+
+  {#if refreshResult || refreshError}
+    <div class="card card-pad" style={`margin-bottom:18px;color:${refreshError || refreshResult?.status === 'error' || refreshResult?.status === 'blocked' ? 'var(--color-danger)' : refreshResult?.status === 'updated' ? 'var(--color-success)' : 'var(--text-secondary)'}`}>
+      {#if refreshError}
+        人格画像刷新失败：{refreshError}
+      {:else}
+        <strong>{refreshResult.message || '人格画像刷新完成。'}</strong>
+        <div class="item-meta" style="margin-top:6px">
+          状态：{refreshResult.status || 'ok'} · 原因：{refreshResult.reason || '-'} · 候选记忆：{refreshResult.candidate_memories ?? '-'} · LLM 检查：{refreshResult.candidate_checks ?? 0} · LLM 错误：{refreshResult.llm_errors ?? 0}
+          {#if refreshResult.cursor_advanced === false} · 刷新游标未推进，可修复配置后重试{/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <div class="card card-pad" style="margin-bottom:18px">
     <div class="section-head"><h2>新增自定义断言</h2></div>
