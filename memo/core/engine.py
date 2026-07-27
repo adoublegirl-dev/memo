@@ -4,6 +4,7 @@
 """
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from memo.core.config import config
@@ -1014,6 +1015,215 @@ class Engine:
         self._ensure_init()
         from memo.space.source_sessions import source_session_manager
         return source_session_manager.stats()
+
+    # ── Source-aware Dashboard ──
+
+    def source_aware_dashboard(self, page: int = 1, page_size: int = 30, q: str = "", mode: str = "sessions") -> dict[str, Any]:
+        """Source-aware 审计工作台：source_sessions / missing titles / evidence counts。只读，不返回原文。"""
+        self._ensure_init()
+        page_size = max(1, min(int(page_size or 30), 100))
+        page = max(1, int(page or 1))
+        offset = (page - 1) * page_size
+        q = (q or "").strip()
+        mode = mode or "sessions"
+        schema_status = self._source_aware_schema_status()
+        if not schema_status["ready"]:
+            return {
+                "page": page,
+                "page_size": page_size,
+                "mode": mode,
+                "q": q,
+                "total": 0,
+                "schema_status": schema_status,
+                "stats": self._source_aware_empty_stats(),
+                "sessions": [],
+            }
+        where, params = self._source_aware_session_where(q=q, mode=mode)
+        total_row = db.fetchone(f"SELECT COUNT(*) AS c FROM source_sessions ss{where}", params)
+        total = int(total_row["c"] if total_row else 0)
+        rows = db.fetchall(
+            f"""SELECT ss.id, ss.source_agent, ss.agent_session_id, ss.source_path, ss.source_hash,
+                       ss.original_title, ss.title_source, ss.display_title, ss.display_title_source,
+                       ss.started_at, ss.updated_at, ss.imported_at, ss.message_count, ss.status,
+                       COUNT(DISTINCT st.id) AS turn_count,
+                       COUNT(DISTINCT e.id) AS episode_count,
+                       COUNT(DISTINCT mu.id) AS memory_count,
+                       COUNT(DISTINCT mts.turn_id || ':' || mts.memory_id || ':' || mts.evidence_role) AS evidence_count,
+                       SUM(CASE WHEN st.is_tool_call=1 THEN 1 ELSE 0 END) AS tool_call_count,
+                       SUM(CASE WHEN st.is_tool_result=1 THEN 1 ELSE 0 END) AS tool_result_count
+                FROM source_sessions ss
+                LEFT JOIN source_turns st ON st.source_session_id=ss.id
+                LEFT JOIN episodes e ON e.source_session_id=ss.id
+                LEFT JOIN memory_units mu ON mu.source_session_id=ss.id
+                LEFT JOIN memory_turn_sources mts ON mts.memory_id=mu.id
+                {where}
+                GROUP BY ss.id
+                ORDER BY COALESCE(ss.updated_at, ss.imported_at, ss.created_at) DESC
+                LIMIT ? OFFSET ?""",
+            params + (page_size, offset),
+        )
+        stats = self._source_aware_stats()
+        return {
+            "page": page,
+            "page_size": page_size,
+            "mode": mode,
+            "q": q,
+            "total": total,
+            "schema_status": schema_status,
+            "stats": stats,
+            "sessions": [self._source_aware_session_row(r) for r in rows],
+        }
+
+    def source_aware_session_detail(self, source_session_id: str) -> dict[str, Any] | None:
+        """Source Session 详情：元信息 + turn/episode/memory 证据概览，不返回 raw content。"""
+        self._ensure_init()
+        if not self._source_aware_schema_status()["ready"]:
+            return None
+        row = db.fetchone("SELECT * FROM source_sessions WHERE id=?", (source_session_id,))
+        if not row:
+            return None
+        turns = [dict(r) for r in db.fetchall(
+            """SELECT id, agent_turn_id, parent_turn_id, role, content_hash,
+                      COALESCE(CAST(json_extract(metadata_json, '$.content_length') AS INTEGER), length(content), 0) AS content_length,
+                      timestamp, turn_index, is_final_answer, is_tool_call, is_tool_result, tool_name, source_event_type
+               FROM source_turns WHERE source_session_id=? ORDER BY turn_index LIMIT 300""",
+            (source_session_id,),
+        )]
+        episodes = [dict(r) for r in db.fetchall(
+            """SELECT e.id, e.title, e.user_intent, e.start_turn_index, e.end_turn_index, e.status, e.confidence,
+                      COUNT(et.turn_id) AS turn_count,
+                      COUNT(mu.id) AS memory_count
+               FROM episodes e
+               LEFT JOIN episode_turns et ON et.episode_id=e.id
+               LEFT JOIN memory_units mu ON mu.episode_id=e.id
+               WHERE e.source_session_id=?
+               GROUP BY e.id
+               ORDER BY e.start_turn_index, e.created_at""",
+            (source_session_id,),
+        )]
+        memories = [dict(r) for r in db.fetchall(
+            """SELECT mu.id, mu.title, mu.summary, mu.memory_type, mu.memory_granularity, mu.speaker_scope,
+                      mu.source_confidence, mu.is_canonical, mu.created_at, mu.updated_at,
+                      COUNT(mts.turn_id) AS evidence_count
+               FROM memory_units mu
+               LEFT JOIN memory_turn_sources mts ON mts.memory_id=mu.id
+               WHERE mu.source_session_id=?
+               GROUP BY mu.id
+               ORDER BY mu.created_at DESC
+               LIMIT 100""",
+            (source_session_id,),
+        )]
+        return {"session": self._source_aware_session_row(row), "turns": turns, "episodes": episodes, "memory_units": memories}
+
+    def source_aware_memory_evidence(self, memory_id: str) -> dict[str, Any] | None:
+        """Memory → evidence chain：memory_turn_sources → source_turns → source_session。只返回 turn 元信息。"""
+        self._ensure_init()
+        if not self._source_aware_schema_status()["ready"]:
+            return None
+        memory = db.fetchone(
+            """SELECT id, title, summary, memory_type, source_session_id, episode_id, memory_granularity,
+                      speaker_scope, source_confidence, is_canonical, created_at, updated_at
+               FROM memory_units WHERE id=?""",
+            (memory_id,),
+        )
+        if not memory:
+            return None
+        evidence = [dict(r) for r in db.fetchall(
+            """SELECT mts.evidence_role, mts.weight, mts.created_at,
+                      st.id AS turn_id, st.role, st.content_hash,
+                      COALESCE(CAST(json_extract(st.metadata_json, '$.content_length') AS INTEGER), length(st.content), 0) AS content_length,
+                      st.timestamp, st.turn_index, st.is_final_answer, st.is_tool_call, st.is_tool_result,
+                      st.tool_name, st.source_event_type,
+                      ss.id AS source_session_id, ss.source_agent, ss.agent_session_id,
+                      ss.original_title, ss.title_source, ss.display_title, ss.display_title_source
+               FROM memory_turn_sources mts
+               JOIN source_turns st ON st.id=mts.turn_id
+               JOIN source_sessions ss ON ss.id=st.source_session_id
+               WHERE mts.memory_id=?
+               ORDER BY st.turn_index, mts.evidence_role""",
+            (memory_id,),
+        )]
+        session = None
+        if memory["source_session_id"]:
+            srow = db.fetchone("SELECT * FROM source_sessions WHERE id=?", (memory["source_session_id"],))
+            session = self._source_aware_session_row(srow) if srow else None
+        episode = None
+        if memory["episode_id"]:
+            erow = db.fetchone("SELECT id, title, user_intent, start_turn_index, end_turn_index, status, confidence FROM episodes WHERE id=?", (memory["episode_id"],))
+            episode = dict(erow) if erow else None
+        return {"memory": dict(memory), "source_session": session, "episode": episode, "evidence": evidence}
+
+    def _source_aware_schema_status(self) -> dict[str, Any]:
+        required = {
+            "source_sessions": {"agent_session_id", "source_hash", "original_title", "title_source", "display_title", "display_title_source"},
+            "source_turns": {"source_session_id", "content", "content_hash", "metadata_json", "turn_index"},
+            "episodes": {"source_session_id", "start_turn_id", "end_turn_id"},
+            "memory_turn_sources": {"memory_id", "turn_id", "evidence_role"},
+        }
+        missing: dict[str, list[str]] = {}
+        for table, cols in required.items():
+            found = {r[1] for r in db.fetchall(f"PRAGMA table_info({table})")}
+            if not found:
+                missing[table] = ["<table>"]
+            else:
+                absent = sorted(cols - found)
+                if absent:
+                    missing[table] = absent
+        return {"ready": not missing, "missing": missing, "message": "ready" if not missing else "source-aware schema incomplete; run guarded migration/repair before production import"}
+
+    def _source_aware_empty_stats(self) -> dict[str, Any]:
+        return {
+            "source_sessions": 0,
+            "missing_original_titles": 0,
+            "memories_with_evidence": 0,
+            "tool_turn_ratio": 0,
+            "by_agent": [],
+            "by_title_source": [],
+            "by_display_title_source": [],
+        }
+
+    def _source_aware_session_where(self, q: str = "", mode: str = "sessions") -> tuple[str, tuple]:
+        where: list[str] = []
+        params: list[Any] = []
+        if mode == "missing_titles":
+            where.append("(COALESCE(ss.title_source,'')='missing' OR COALESCE(ss.display_title_source,'')!='agent_original')")
+        if q:
+            where.append("(COALESCE(ss.display_title,'') LIKE ? OR COALESCE(ss.original_title,'') LIKE ? OR COALESCE(ss.source_agent,'') LIKE ? OR COALESCE(ss.agent_session_id,'') LIKE ?)")
+            params.extend([f"%{q}%"] * 4)
+        return (" WHERE " + " AND ".join(where) if where else "", tuple(params))
+
+    def _source_aware_stats(self) -> dict[str, Any]:
+        total = db.fetchone("SELECT COUNT(*) AS c FROM source_sessions")
+        missing = db.fetchone("SELECT COUNT(*) AS c FROM source_sessions WHERE COALESCE(title_source,'')='missing'")
+        evidence = db.fetchone("SELECT COUNT(DISTINCT memory_id) AS c FROM memory_turn_sources")
+        turns = db.fetchone("SELECT COUNT(*) AS total, SUM(CASE WHEN is_tool_call=1 OR is_tool_result=1 THEN 1 ELSE 0 END) AS toolish FROM source_turns")
+        by_agent = db.fetchall("SELECT source_agent, COUNT(*) AS c FROM source_sessions GROUP BY source_agent ORDER BY c DESC LIMIT 12")
+        by_title_source = db.fetchall("SELECT title_source, COUNT(*) AS c FROM source_sessions GROUP BY title_source ORDER BY c DESC")
+        by_display_title_source = db.fetchall("SELECT display_title_source, COUNT(*) AS c FROM source_sessions GROUP BY display_title_source ORDER BY c DESC")
+        total_turns = int(turns["total"] if turns and turns["total"] is not None else 0)
+        toolish = int(turns["toolish"] if turns and turns["toolish"] is not None else 0)
+        return {
+            "source_sessions": int(total["c"] if total else 0),
+            "missing_original_titles": int(missing["c"] if missing else 0),
+            "memories_with_evidence": int(evidence["c"] if evidence else 0),
+            "tool_turn_ratio": (toolish / total_turns) if total_turns else 0,
+            "by_agent": [dict(r) for r in by_agent],
+            "by_title_source": [dict(r) for r in by_title_source],
+            "by_display_title_source": [dict(r) for r in by_display_title_source],
+        }
+
+    def _source_aware_session_row(self, row) -> dict[str, Any]:
+        data = dict(row)
+        if data.get("source_path"):
+            try:
+                home = str(Path.home())
+                if str(data["source_path"]).lower().startswith(home.lower()):
+                    data["source_path"] = "~" + str(data["source_path"])[len(home):]
+            except Exception:
+                pass
+        data["has_original_title"] = bool(data.get("original_title"))
+        data["is_missing_title"] = data.get("title_source") == "missing" or data.get("display_title_source") != "agent_original"
+        return data
 
     # ── 记忆治理 ──
 

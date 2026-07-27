@@ -1166,6 +1166,26 @@ class MemoHandler(BaseHTTPRequestHandler):
                 q=self._get_query_param("q", ""),
                 tab=self._get_query_param("tab", "source_groups"),
             ))
+        elif path == "/api/source-aware":
+            self._json(engine.source_aware_dashboard(
+                page=int(self._get_query_param("page", "1")),
+                page_size=int(self._get_query_param("page_size", "30")),
+                q=self._get_query_param("q", ""),
+                mode=self._get_query_param("mode", "sessions"),
+            ))
+        elif path.startswith("/api/source-aware/session/"):
+            source_id = path.split("/")[-1]
+            result = engine.source_aware_session_detail(source_id)
+            if not result:
+                self._json({"error": "source-aware session not found"}, 404); return
+            self._json(result)
+        elif path.startswith("/api/source-aware/memory/") and path.endswith("/evidence"):
+            parts = path.split("/")
+            memory_id = parts[-2] if len(parts) >= 2 else ""
+            result = engine.source_aware_memory_evidence(memory_id)
+            if not result:
+                self._json({"error": "memory evidence not found"}, 404); return
+            self._json(result)
         elif path == "/api/memory/link":
             self._handle_memory_link()
         else:
