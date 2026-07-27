@@ -1170,6 +1170,9 @@ class Engine:
         if not self._history_processing_schema_ready():
             return {"error": "history processing schema not ready; restart Memo to run migrations"}
         action = action or "overview"
+        row = self._history_latest_job()
+        if row and row["status"] == "running" and action not in {"pause"}:
+            return {"error": "history processing job is already running; wait for it to finish or pause after the current step", **self.history_processing_overview()}
         if action == "scan":
             report = self._history_detect_sources()
             job_id = self._history_create_or_update_job(selected_sources=report.get("detected_supported_sources", []), detect_report=report)
@@ -1204,6 +1207,8 @@ class Engine:
         status = row["status"]
         step = row["current_step"]
         selected = json.loads(row["selected_sources_json"] or "[]")
+        if status == "running":
+            return {"error": "history processing job is already running; duplicate continue is blocked", **self.history_processing_overview()}
         if status == "done" or step == "done":
             return self.history_processing_overview()
         if not selected and step != "detect":

@@ -67,8 +67,9 @@ function resolveMemoRoot() {
 }
 
 const ROOT = resolveMemoRoot();
-const DASHBOARD_BASE = process.env.MEMO_DASHBOARD_URL || 'http://127.0.0.1:9121';
 const BOOT_URL = process.env.MEMO_BOOT_URL || 'http://127.0.0.1:9120';
+const DASHBOARD_BASE = process.env.MEMO_DASHBOARD_URL || BOOT_URL;
+const DASHBOARD_FALLBACKS = Array.from(new Set([DASHBOARD_BASE, BOOT_URL, 'http://127.0.0.1:9121']));
 const POLL_INTERVAL_MS = Number(process.env.MEMO_COMPANION_POLL_MS || 60000);
 const AUTO_START_SERVICES = process.env.MEMO_COMPANION_AUTO_START !== '0';
 const ICON_PATH = path.join(__dirname, 'assets', process.platform === 'win32' ? 'memo-companion.ico' : 'memo-companion.png');
@@ -174,6 +175,18 @@ function openDashboard(hash = '') {
   shell.openExternal(url);
 }
 
+async function fetchDashboardJson(pathname, fallback = null) {
+  for (const base of DASHBOARD_FALLBACKS) {
+    const data = await fetchJson(`${base}${pathname}`, null);
+    if (data) return data;
+  }
+  return fallback;
+}
+
+async function fetchDashboardHealth() {
+  return fetchDashboardJson('/api/health', null);
+}
+
 function buildTrayMenu() {
   const paused = notificationsPausedUntil > Date.now();
   return Menu.buildFromTemplate([
@@ -253,7 +266,7 @@ function isTodayTodo(todo) {
 }
 
 async function collectSnapshot() {
-  const health = await fetchJson(`${DASHBOARD_BASE}/api/health`, null);
+  const health = await fetchDashboardHealth();
   if (!health || !health.ok) {
     return {
       ok: false,
@@ -271,9 +284,9 @@ async function collectSnapshot() {
   }
 
   const [todosRaw, candidatesRaw, memoriesRaw] = await Promise.all([
-    fetchJson(`${DASHBOARD_BASE}/api/todos?include_done=false&limit=80`, []),
-    fetchJson(`${DASHBOARD_BASE}/api/space/candidates?status=pending&limit=80`, {}),
-    fetchJson(`${DASHBOARD_BASE}/api/memories?limit=20`, []),
+    fetchDashboardJson('/api/todos?include_done=false&limit=80', []),
+    fetchDashboardJson('/api/space/candidates?status=pending&limit=80', {}),
+    fetchDashboardJson('/api/memories?limit=20', []),
   ]);
 
   const todos = asArray(todosRaw);
@@ -489,7 +502,7 @@ function setLoginItemEnabled(enabled) {
 
 async function ensureServicesOnLaunch() {
   if (!AUTO_START_SERVICES) return;
-  const health = await fetchJson(`${DASHBOARD_BASE}/api/health`, null);
+  const health = await fetchDashboardHealth();
   if (!health || !health.ok) {
     await startMemoServices();
   }

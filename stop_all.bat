@@ -12,6 +12,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$names=@('boot','dashboard','watcher');" ^
   "foreach($name in $names){ $file=Join-Path $pidDir ($name+'.pid'); if(Test-Path $file){ $pidText=(Get-Content $file -ErrorAction SilentlyContinue | Select-Object -First 1); if($pidText -match '^\d+$'){ Stop-Process -Id ([int]$pidText) -Force -ErrorAction SilentlyContinue }; Remove-Item $file -Force -ErrorAction SilentlyContinue }};" ^
   "$ports=@(9120,9121); foreach($port in $ports){ $listeners=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue; foreach($c in $listeners){ Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }};" ^
+  "$root=[IO.Path]::GetFullPath('%ROOT%'); $procs=Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($root) -and ($_.CommandLine -match 'scripts\\(boot_server|memo_dashboard|memo_watcher)\.py') }; foreach($p in $procs){ Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue };" ^
   "Start-Sleep -Seconds 2;" ^
   "$still=@(); foreach($port in $ports){ if(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue){ $still+=$port }}; if($still.Count -gt 0){ Write-Host ('WARNING: Ports still in use: ' + ($still -join ', ')); exit 1 } else { Write-Host 'Memo services stopped.' }"
 
