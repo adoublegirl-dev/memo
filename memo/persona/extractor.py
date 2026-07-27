@@ -52,13 +52,14 @@ def _merge_or_insert_assertion(
     evidences: list[str] | None = None,
     signal_level: int = 0,
     actor: str = "persona",
+    merge_existing: bool = True,
 ) -> tuple[str, bool]:
     """同维人格断言去重：相似则合并证据和置信度，否则新增。"""
     evidences = evidences or []
     rows = db.fetchall(
         "SELECT * FROM persona_assertions WHERE dimension = ? AND is_superseded = 0 AND locked = 0",
         (dimension,),
-    )
+    ) if merge_existing else []
     if rows:
         new_vec = embedding_model.encode(assertion_text)
         best = None
@@ -148,8 +149,11 @@ def _build_dimension_prompt(dimension: str, description: str, memories: list[dic
 请只输出 JSON 数组，不要有其他内容。"""
 
 
-def build_persona_baseline() -> dict[str, Any]:
+def build_persona_baseline(reset_existing: bool = False) -> dict[str, Any]:
     """批量提炼：从采样记忆建人格基线。
+
+    Args:
+        reset_existing: True 时重建系统生成的人格基线。先生成新断言，成功后再归档旧的系统断言；自定义/锁定断言保留。
 
     Returns:
         {"assertions_created": N, "dimensions_covered": [...], "total_confidence": float}
@@ -163,9 +167,17 @@ def build_persona_baseline() -> dict[str, Any]:
         logger.info("无可用记忆，跳过基线构建")
         return {"assertions_created": 0, "dimensions_covered": [], "total_confidence": 0.0}
 
+    old_system_rows = db.fetchall(
+        "SELECT id, assertion FROM persona_assertions WHERE is_superseded = 0 AND COALESCE(is_custom,0) = 0 AND COALESCE(locked,0) = 0"
+    ) if reset_existing else []
+    old_system_ids = [r["id"] for r in old_system_rows]
+
     total_created = 0
     dimensions_covered = []
     total_conf = 0.0
+    created_ids: list[str] = []
+    llm_errors = 0
+    last_error = ""
 
     for dim_key, dim_desc in DIMENSIONS:
         logger.info(f"提炼维度: {dim_key}")
@@ -193,16 +205,18 @@ def build_persona_baseline() -> dict[str, Any]:
 
                 confidence = float(a.get("confidence", BASELINE_CONFIDENCE_SINGLE))
                 evidences = a.get("evidences", [])
-                _, created = _merge_or_insert_assertion(
+                assertion_id, created = _merge_or_insert_assertion(
                     dim_key,
                     assertion_text,
                     confidence,
                     evidences=evidences,
                     signal_level=2,
-                    actor="persona_baseline",
+                    actor="persona_rebuild" if reset_existing else "persona_baseline",
+                    merge_existing=not reset_existing,
                 )
                 if created:
                     total_created += 1
+                    created_ids.append(assertion_id)
                 total_conf += confidence
 
             db.commit()
@@ -210,11 +224,25 @@ def build_persona_baseline() -> dict[str, Any]:
             logger.info(f"  维度 {dim_key}: {len(assertions)} 条断言")
 
         except Exception as e:
+            llm_errors += 1
+            last_error = str(e)
             logger.error(f"维度 {dim_key} 提炼失败: {e}")
             continue
 
-    # 更新配置
+    # 重建模式：只有成功生成新断言后，才归档旧系统断言，避免 Key/模型故障把画像清空。
     now = datetime.now().isoformat()
+    archived_old = 0
+    if reset_existing and total_created > 0 and old_system_ids:
+        placeholders = ",".join("?" * len(old_system_ids))
+        db.execute(
+            f"UPDATE persona_assertions SET is_superseded=1, superseded_by=?, updated_at=? WHERE id IN ({placeholders})",
+            tuple([f"persona_rebuild:{now}", now] + old_system_ids),
+        )
+        archived_old = len(old_system_ids)
+        for row in old_system_rows:
+            _audit_persona(row["id"], "rebuild_archive", row["assertion"], "", "persona_rebuild", "重建人格基线时归档旧系统断言")
+
+    # 更新配置
     db.execute(
         "INSERT OR REPLACE INTO persona_settings (key, value) VALUES (?, ?)",
         ("last_baseline_at", now),
@@ -228,10 +256,28 @@ def build_persona_baseline() -> dict[str, Any]:
     avg_conf = total_conf / total_created if total_created > 0 else 0.0
     logger.info(f"基线完成: {total_created} 条断言, 覆盖 {len(dimensions_covered)} 维, 均置信度 {avg_conf:.2f}")
 
+    status = "updated" if total_created > 0 else ("error" if llm_errors else "noop")
+    reason = "baseline_rebuilt" if reset_existing and total_created > 0 else "baseline_created" if total_created > 0 else "llm_failed" if llm_errors else "no_assertions_created"
+    message = (
+        f"人格基线重建完成：新增 {total_created} 条断言，归档旧系统断言 {archived_old} 条。"
+        if reset_existing and total_created > 0 else
+        f"人格基线提炼完成：新增 {total_created} 条断言。"
+        if total_created > 0 else
+        f"人格基线提炼失败或无有效输出。最近错误：{last_error[:220]}"
+        if llm_errors else
+        "人格基线提炼完成，但模型没有返回可用断言。"
+    )
     return {
         "assertions_created": total_created,
         "dimensions_covered": dimensions_covered,
         "total_confidence": round(avg_conf, 3),
+        "archived_old": archived_old,
+        "created_ids": created_ids,
+        "llm_errors": llm_errors,
+        "last_error": last_error[:500],
+        "status": status,
+        "reason": reason,
+        "message": message,
     }
 
 

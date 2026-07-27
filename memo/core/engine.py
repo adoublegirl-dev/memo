@@ -803,15 +803,15 @@ class Engine:
 
     # ── 人格引擎 ──
 
-    def build_persona_baseline(self) -> dict[str, Any]:
-        """批量建人格基线（首次运行）。
+    def build_persona_baseline(self, reset_existing: bool = False) -> dict[str, Any]:
+        """批量建人格基线。
 
         采样 L2+L1+高价值 L0 记忆 → 10 维逐维提炼 → 初始断言。
-        仅需运行一次，后续用 run_lifecycle() 做增量更新。
+        reset_existing=True 时用于 Dashboard 的“重建人格基线”：先生成新断言，成功后归档旧系统断言。
         """
         self._ensure_init()
         from memo.persona.extractor import build_persona_baseline as _build
-        return _build()
+        return _build(reset_existing=reset_existing)
 
     def update_persona(self) -> dict[str, Any]:
         """增量更新人格断言。"""

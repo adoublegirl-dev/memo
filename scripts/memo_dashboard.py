@@ -1473,6 +1473,12 @@ class MemoHandler(BaseHTTPRequestHandler):
             from memo.core.engine import engine as _eng
             result = _eng.update_persona()
             self._json(result); return
+        elif action == "rebuild_baseline":
+            if not body.get("confirm"):
+                self._json({"error": "rebuild confirmation required"}, 400); return
+            from memo.core.engine import engine as _eng
+            result = _eng.build_persona_baseline(reset_existing=True)
+            self._json(result); return
         elif action == "set_sensitivity":
             db.execute("INSERT OR REPLACE INTO persona_settings (key, value) VALUES ('sensitivity_level', ?)", (str(aid),))
             db.commit()
