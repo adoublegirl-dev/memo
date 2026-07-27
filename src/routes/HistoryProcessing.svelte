@@ -28,7 +28,7 @@
   $: selectedSources = Array.from(selected);
   $: isRunning = job.status === 'running';
   $: llmBlocked = job.current_step === 'llm_enhance' && progress.blocking_reason;
-  $: canContinue = state?.schema_ready && !loading && !isRunning && job.status !== 'done' && !(llmBlocked && job.status === 'paused');
+  $: canContinue = state?.schema_ready && !loading && !isRunning && job.status !== 'done';
 
   function applyModelFromState(nextState) {
     const saved = nextState?.job?.model_config;
@@ -177,7 +177,7 @@
 
   <div class="card card-pad" style="margin-top:18px">
     <h2>4. 执行 / 继续</h2>
-    <p class="item-meta">每次点击会执行当前阶段并写入状态。运行中会自动刷新；为避免数据库锁定，运行中不能重复启动。</p>
+    <p class="item-meta">每次点击会执行当前阶段并写入状态。LLM 增强会按批次处理；运行中自动刷新，为避免数据库锁定，运行中不能重复启动。</p>
     <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:12px">
       <button class="btn primary" disabled={!canContinue || selectedSources.length === 0} on:click={() => act('continue')}>{isRunning ? '处理中，请稍等' : loading ? '执行中' : '继续下一步'}</button>
       <button class="btn" disabled={loading || !job.id || !isRunning} on:click={() => act('pause')}>暂停</button>

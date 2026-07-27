@@ -5,6 +5,8 @@
 
 import json
 import uuid
+import urllib.error
+import urllib.request
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -1108,8 +1110,13 @@ class Engine:
         percent = int(round((completed / denominator) * 100))
         if status == "running" and step != "done":
             percent = min(99, int(round(((idx + 0.35) / denominator) * 100)))
+        progress_json = job.get("progress") or {}
+        llm_progress = progress_json.get("llm_enhance") or {}
+        if step == "llm_enhance" and llm_progress.get("total"):
+            llm_ratio = min(1.0, max(0.0, float(llm_progress.get("processed") or 0) / max(1, float(llm_progress.get("total") or 1))))
+            percent = int(round(((4 + llm_ratio) / denominator) * 100))
         blocking_reason = ""
-        if step == "llm_enhance":
+        if step == "llm_enhance" and llm_progress.get("status") == "blocked":
             blocking_reason = "LLM 增强执行器尚未接入；基础处理已可用，当前不会真实调用模型。"
         return {
             "steps": steps,
@@ -1155,7 +1162,7 @@ class Engine:
                 "llm_enhance": "LLM 增强（最后一步）",
                 "done": "完成",
             },
-            "llm_note": "LLM 增强永远在规则质量处理之后执行；当前版本先完成基础导入与规则处理。LLM 执行器尚未接入时，页面会明确提示等待接入，不再重复追加执行记录。",
+            "llm_note": "LLM 增强永远在规则质量处理之后执行；已接入 OpenAI 兼容执行器。每次继续会按批次处理并实时落库进度，失败后可继续。暂不支持 Anthropic/Gemini/Ollama 的真实调用。"
         }
 
     def _history_normalize_model_config(self, model_config: dict[str, Any] | None, current_row=None) -> dict[str, Any]:
@@ -1181,6 +1188,171 @@ class Engine:
             "concurrency": max(1, min(int(model_config.get("concurrency") or 1), 8)),
             "batch_size": max(1, min(int(model_config.get("batch_size") or 20), 100)),
         }
+
+    def _history_llm_call_openai_compatible(self, model: dict[str, Any], messages: list[dict[str, str]]) -> str:
+        base_url = (model.get("base_url") or "").rstrip("/")
+        api_key = model.get("api_key") or ""
+        model_name = model.get("model") or ""
+        if not base_url or not api_key or not model_name:
+            raise ValueError("LLM 模型配置不完整：需要 base_url / api_key / model")
+        url = f"{base_url}/v1/chat/completions"
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": 0.1,
+            "response_format": {"type": "json_object"},
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="ignore")[:500]
+            raise RuntimeError(f"LLM HTTP {exc.code}: {body}") from exc
+        return data["choices"][0]["message"]["content"]
+
+    def _history_llm_enhance_batch(self, model: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        provider = model.get("provider") or "openai-compatible"
+        if provider != "openai-compatible":
+            raise ValueError(f"当前仅已接入 OpenAI 兼容执行器，暂不支持 {provider}")
+        items = [
+            {
+                "id": r["id"],
+                "title": r.get("title") or "",
+                "summary": r.get("summary") or "",
+                "summary_detail": r.get("summary_detail") or "",
+                "memory_type": r.get("memory_type") or "FACT",
+                "retention_class": r.get("retention_class") or "",
+                "recall_policy": r.get("recall_policy") or "",
+                "flags": r.get("auto_flags_json") or "{}",
+            }
+            for r in rows
+        ]
+        system = (
+            "你是 Memo 记忆系统的长期记忆质量增强器。只处理给定 JSON，必须返回严格 JSON。"
+            "目标：把粗糙的小颗粒 memory 改写成适合长期检索的标题和摘要；不要编造未给出的事实。"
+            "memory_type 只能使用 FACT / DECISION / PREFERENCE / EVENT / REASONING。"
+            "recall_policy 只能使用 include / downrank / exclude_default / exclude。"
+        )
+        user = {
+            "task": "enhance_memory_units",
+            "requirements": [
+                "返回对象包含 key: results，值为数组。",
+                "每个 result 必须包含 id,title,summary,summary_detail,memory_type,recall_policy,quality_score,note。",
+                "title 使用中文，简洁具体，不超过 32 字。",
+                "summary 使用中文，概括稳定事实，不超过 140 字。",
+                "summary_detail 可更完整但仍要克制，不超过 500 字。",
+                "对临时命令、工具噪音、一次性调试过程，recall_policy 应为 exclude 或 exclude_default。",
+                "对项目状态、产品决策、用户偏好、长期事实，recall_policy 应为 include 或 downrank。",
+                "quality_score 为 0 到 1。",
+            ],
+            "items": items,
+        }
+        content = self._history_llm_call_openai_compatible(
+            model,
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
+            ],
+        )
+        try:
+            parsed = json.loads(content)
+        except Exception as exc:
+            raise RuntimeError(f"LLM 返回不是 JSON: {content[:300]}") from exc
+        results = parsed.get("results") if isinstance(parsed, dict) else None
+        if not isinstance(results, list):
+            raise RuntimeError(f"LLM 返回缺少 results 数组: {content[:300]}")
+        return [r for r in results if isinstance(r, dict) and r.get("id")]
+
+    def _history_run_llm_enhance(self, job_id: str, progress: dict[str, Any], limit: int = 100000) -> dict[str, Any]:
+        row = db.fetchone("SELECT model_config_json FROM history_processing_jobs WHERE id=?", (job_id,))
+        model = json.loads(row["model_config_json"] or "{}") if row else {}
+        batch_size = max(1, min(int(model.get("batch_size") or 20), 100))
+        existing = progress.get("llm_enhance") or {}
+        processed_ids = set(existing.get("processed_ids") or [])
+        rows = [dict(r) for r in db.fetchall(
+            """SELECT mu.id, mu.title, mu.summary, mu.summary_detail, mu.memory_type,
+                      mqr.retention_class, mqr.recall_policy, mqr.auto_flags_json
+                 FROM memory_units mu
+                 JOIN memory_quality_reviews mqr ON mqr.memory_id = mu.id
+                 WHERE COALESCE(mqr.needs_llm,0)=1
+                 ORDER BY mu.created_at ASC
+                 LIMIT ?""",
+            (int(limit or 100000),),
+        )]
+        pending = [r for r in rows if r["id"] not in processed_ids]
+        total = int(existing.get("total") or len(rows))
+        done_before = len(processed_ids)
+        if not pending:
+            progress["llm_enhance"] = {**existing, "status": "done", "total": total, "processed": done_before, "failed": int(existing.get("failed") or 0)}
+            db.execute(
+                "UPDATE history_processing_jobs SET progress_json=?, current_step='done', status='done', finished_at=?, updated_at=?, last_error='' WHERE id=?",
+                (json.dumps(progress, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), datetime.now().isoformat(timespec="seconds"), job_id),
+            )
+            self._history_job_event(job_id, "llm_enhance", "LLM 增强完成", progress["llm_enhance"])
+            return progress["llm_enhance"]
+        batch = pending[:batch_size]
+        enhanced = self._history_llm_enhance_batch(model, batch)
+        allowed_types = {"FACT", "DECISION", "PREFERENCE", "EVENT", "REASONING"}
+        allowed_policies = {"include", "downrank", "exclude_default", "exclude"}
+        by_id = {r["id"]: r for r in batch}
+        success = 0
+        now = datetime.now().isoformat(timespec="seconds")
+        for item in enhanced:
+            mid = str(item.get("id") or "")
+            if mid not in by_id:
+                continue
+            title = str(item.get("title") or by_id[mid].get("title") or "")[:120]
+            summary = str(item.get("summary") or by_id[mid].get("summary") or "")[:1000]
+            detail = str(item.get("summary_detail") or summary)[:3000]
+            memory_type = str(item.get("memory_type") or by_id[mid].get("memory_type") or "FACT").upper()
+            if memory_type not in allowed_types:
+                memory_type = "FACT"
+            policy = str(item.get("recall_policy") or by_id[mid].get("recall_policy") or "include")
+            if policy not in allowed_policies:
+                policy = "include"
+            try:
+                quality = max(0.0, min(float(item.get("quality_score", 0.75)), 1.0))
+            except Exception:
+                quality = 0.75
+            note = str(item.get("note") or "LLM enhanced")[:1000]
+            db.execute(
+                """UPDATE memory_units
+                   SET title=?, summary=?, summary_detail=?, memory_type=?, confidence=MAX(COALESCE(confidence,0), ?), updated_at=?
+                   WHERE id=?""",
+                (title, summary, detail, memory_type, quality, now, mid),
+            )
+            db.execute(
+                """UPDATE memory_quality_reviews
+                   SET recall_policy=?, quality_score=?, needs_llm=0,
+                       processor_version='llm_enhance_v1', note=?, updated_at=?, reviewed_at=?
+                   WHERE memory_id=?""",
+                (policy, quality, note, now, now, mid),
+            )
+            processed_ids.add(mid)
+            success += 1
+        failed = int(existing.get("failed") or 0) + max(0, len(batch) - success)
+        progress["llm_enhance"] = {
+            "status": "running" if len(processed_ids) < total else "done",
+            "total": total,
+            "processed": len(processed_ids),
+            "failed": failed,
+            "batch_size": batch_size,
+            "processed_ids": sorted(processed_ids),
+            "last_batch_at": now,
+        }
+        final = len(processed_ids) >= total
+        db.execute(
+            "UPDATE history_processing_jobs SET progress_json=?, current_step=?, status=?, finished_at=CASE WHEN ? THEN ? ELSE finished_at END, updated_at=?, last_error='' WHERE id=?",
+            (json.dumps(progress, ensure_ascii=False), "done" if final else "llm_enhance", "done" if final else "ready", 1 if final else 0, now, now, job_id),
+        )
+        self._history_job_event(job_id, "llm_enhance", f"LLM 增强批次完成：{len(processed_ids)}/{total}", {k: v for k, v in progress["llm_enhance"].items() if k != "processed_ids"})
+        return progress["llm_enhance"]
 
     def _history_create_or_update_job(self, selected_sources: list[str] | None = None, detect_report: dict[str, Any] | None = None, model_config: dict[str, Any] | None = None) -> str:
         now = datetime.now().isoformat(timespec="seconds")
@@ -1310,18 +1482,7 @@ class Engine:
                 db.execute("UPDATE history_processing_jobs SET progress_json=?, current_step='llm_enhance', status='paused', updated_at=? WHERE id=?", (json.dumps(progress, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), job_id))
                 self._history_job_event(job_id, "quality_rules", "规则质量处理完成；LLM 增强是最后一步，等待执行器接入", result)
             elif step == "llm_enhance":
-                message = "LLM 增强执行器尚未接入；不会重复执行。基础导入、记忆抽取和规则质量处理已完成。"
-                already_logged = db.fetchone(
-                    "SELECT 1 FROM history_processing_job_events WHERE job_id=? AND event_type='llm_enhance_blocked' LIMIT 1",
-                    (job_id,),
-                )
-                if not already_logged:
-                    self._history_job_event(job_id, "llm_enhance_blocked", message)
-                progress["llm_enhance"] = {"status": "blocked", "reason": "executor_not_implemented"}
-                db.execute(
-                    "UPDATE history_processing_jobs SET progress_json=?, status='paused', last_error=?, updated_at=? WHERE id=?",
-                    (json.dumps(progress, ensure_ascii=False), message, datetime.now().isoformat(timespec="seconds"), job_id),
-                )
+                self._history_run_llm_enhance(job_id, progress, limit=limit)
             db.commit()
         except Exception as exc:
             db.execute("UPDATE history_processing_jobs SET status='failed', last_error=?, updated_at=? WHERE id=?", (str(exc), datetime.now().isoformat(timespec="seconds"), job_id))
