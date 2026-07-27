@@ -26,10 +26,10 @@ def test_source_aware_migration_creates_turn_episode_and_evidence_tables(tmp_pat
 
     apply_all_migrations(conn)
 
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 17
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 18
 
     source_session_cols = table_columns(conn, "source_sessions")
-    assert {"agent_session_id", "source_hash", "original_title", "title_source", "display_title"}.issubset(source_session_cols)
+    assert {"agent_session_id", "source_hash", "original_title", "title_source", "display_title", "display_title_source"}.issubset(source_session_cols)
 
     assert {"id", "source_session_id", "role", "content_hash", "turn_index", "is_tool_call", "is_tool_result"}.issubset(
         table_columns(conn, "source_turns")

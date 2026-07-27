@@ -16,9 +16,10 @@ def test_parse_generic_jsonl_counts_roles_and_tools(tmp_path: Path):
     ]
     transcript.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in lines), encoding="utf-8")
 
-    turns = parse_generic_jsonl(transcript)
+    turns, first_user_text = parse_generic_jsonl(transcript)
 
     assert len(turns) == 4
+    assert "长期记忆系统" in first_user_text
     assert turns[0].role == "user"
     assert turns[1].is_final_answer is True
     assert any(t.is_tool_call for t in turns)
@@ -90,9 +91,29 @@ def test_apply_to_test_db_writes_evidence_chain_to_test_database(tmp_path: Path)
 
     result = apply_to_test_db("generic", db_path, path=str(transcript), limit=1)
 
-    assert result["validation"]["schema_version"] == 17
+    assert result["validation"]["schema_version"] == 18
     assert result["validation"]["source_sessions"] == 1
     assert result["validation"]["source_turns"] >= 1
     assert result["validation"]["episodes"] >= 1
     assert result["validation"]["memory_units"] >= 1
     assert result["validation"]["evidence_links"] >= 1
+
+
+def test_apply_to_test_db_uses_first_user_turn_display_title_for_missing_original_title(tmp_path: Path):
+    transcript = tmp_path / "session.txt"
+    transcript.write_text(
+        "User: 这是一个没有原始标题的测试会话，需要用首个用户问题作为展示标题\nAssistant: 好。",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "source_aware_display_test.db"
+
+    result = apply_to_test_db("generic", db_path, path=str(transcript), limit=1)
+
+    assert result["validation"]["schema_version"] == 18
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT original_title, display_title, display_title_source FROM source_sessions LIMIT 1").fetchone()
+    conn.close()
+    assert row[0] == ""
+    assert "没有原始标题" in row[1]
+    assert row[2] == "first_user_turn"

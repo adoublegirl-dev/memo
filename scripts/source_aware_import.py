@@ -174,6 +174,7 @@ class SourceSessionDraft:
     has_original_title: bool
     original_title: str = ""
     display_title: str = ""
+    display_title_source: str = "unknown"
     created_at: str = ""
     updated_at: str = ""
     turns: list[SourceTurnDraft] = field(default_factory=list)
@@ -215,6 +216,16 @@ class DryRunReport:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def compact_display_title(text: str, fallback: str, max_len: int = 36) -> tuple[str, str]:
+    cleaned = " ".join(str(text or "").replace("\r", " ").replace("\n", " ").split())
+    for prefix in ["User:", "用户：", "用户:", "Human:"]:
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+    if cleaned:
+        return cleaned[:max_len] + ("…" if len(cleaned) > max_len else ""), "first_user_turn"
+    return fallback[:max_len] + ("…" if len(fallback) > max_len else ""), "file_name"
 
 
 class BaseAdapter:
@@ -307,6 +318,7 @@ class HanaAgentAdapter(BaseAdapter):
         title_source, has_title, original_title = self._title_source_for(path)
         turns: list[SourceTurnDraft] = []
         risks: list[str] = []
+        first_user_text = ""
         agent_session_id = path.stem.split("_")[-1] if "_" in path.stem else path.stem
         try:
             with path.open("r", encoding="utf-8", errors="replace") as f:
@@ -333,6 +345,8 @@ class HanaAgentAdapter(BaseAdapter):
                         role = "tool"
                     if role not in {"user", "assistant", "tool", "system"}:
                         role = "unknown"
+                    if role == "user" and not first_user_text and text.strip():
+                        first_user_text = text.strip()
                     if role == "unknown" and typ not in {"model_change", "thinking_level_change"}:
                         continue
                     turns.append(SourceTurnDraft(
@@ -351,8 +365,11 @@ class HanaAgentAdapter(BaseAdapter):
                     ))
         except Exception as exc:
             raise RuntimeError(f"无法读取 HanaAgent JSONL: {exc}") from exc
-        if not has_title:
-            risks.append("HanaAgent 会话未匹配 path 标题或 sess_* summary 时间范围标题；如果只能生成 fallback，必须标记 generated_fallback。")
+        if has_title:
+            display_title, display_title_source = original_title, "agent_original"
+        else:
+            display_title, display_title_source = compact_display_title(first_user_text, path.stem)
+            risks.append("HanaAgent 会话未匹配 path 标题或 sess_* summary 时间范围标题；display_title 仅作为展示兜底，不写入 original_title。")
         return SourceSessionDraft(
             source_agent="HanaAgent",
             agent_session_id=agent_session_id,
@@ -361,7 +378,8 @@ class HanaAgentAdapter(BaseAdapter):
             title_source=title_source,
             has_original_title=has_title,
             original_title=original_title,
-            display_title=original_title if has_title else path.stem,
+            display_title=display_title,
+            display_title_source=display_title_source,
             updated_at=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
             turns=turns,
             risks=risks,
@@ -407,8 +425,9 @@ class WorkBuddyAdapter(BaseAdapter):
         normalized = sid.replace("-", "")
         original_title = self.titles.get(sid) or self.titles.get(normalized) or ""
         has_title = bool(original_title)
-        turns = parse_workbuddy_jsonl(path)
-        risks = [] if has_title else ["WorkBuddy JSONL 未能按文件名关联 workbuddy.db.sessions 标题。"]
+        turns, first_user_text = parse_workbuddy_jsonl(path)
+        risks = [] if has_title else ["WorkBuddy JSONL 未能按文件名关联 workbuddy.db.sessions 标题；display_title 仅作为展示兜底。"]
+        display_title, display_title_source = (original_title, "agent_original") if has_title else compact_display_title(first_user_text, sid)
         return SourceSessionDraft(
             source_agent="WorkBuddy",
             agent_session_id=sid,
@@ -417,7 +436,8 @@ class WorkBuddyAdapter(BaseAdapter):
             title_source="db_title" if has_title else "missing",
             has_original_title=has_title,
             original_title=original_title,
-            display_title=original_title if has_title else sid,
+            display_title=display_title,
+            display_title_source=display_title_source,
             updated_at=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
             turns=turns,
             risks=risks,
@@ -439,7 +459,8 @@ class CodexAdapter(BaseAdapter):
         return sorted(files, key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
 
     def load_session(self, path: Path) -> SourceSessionDraft:
-        turns = parse_generic_jsonl(path)
+        turns, first_user_text = parse_generic_jsonl(path)
+        display_title, display_title_source = compact_display_title(first_user_text, path.stem)
         return SourceSessionDraft(
             source_agent="Codex",
             agent_session_id=path.stem,
@@ -448,7 +469,8 @@ class CodexAdapter(BaseAdapter):
             title_source="generated_fallback",
             has_original_title=False,
             original_title="",
-            display_title=path.stem,
+            display_title=display_title,
+            display_title_source=display_title_source,
             updated_at=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
             turns=turns,
             risks=["Codex JSONL 未发现稳定真实 UI 标题；只能生成 fallback display_title，不能写入 original_title。"],
@@ -474,9 +496,10 @@ class GenericTranscriptAdapter(BaseAdapter):
 
     def load_session(self, path: Path) -> SourceSessionDraft:
         if path.suffix.lower() == ".jsonl":
-            turns = parse_generic_jsonl(path)
+            turns, first_user_text = parse_generic_jsonl(path)
         else:
-            turns = parse_plain_text_transcript(path)
+            turns, first_user_text = parse_plain_text_transcript(path)
+        display_title, display_title_source = compact_display_title(first_user_text, path.stem)
         return SourceSessionDraft(
             source_agent="GenericTranscript",
             agent_session_id=path.stem,
@@ -485,7 +508,8 @@ class GenericTranscriptAdapter(BaseAdapter):
             title_source="file_name",
             has_original_title=False,
             original_title="",
-            display_title=path.stem,
+            display_title=display_title,
+            display_title_source=display_title_source,
             updated_at=datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"),
             turns=turns,
             risks=["Generic transcript 只使用文件名/路径作为来源，无法证明真实 Agent UI 标题。"],
@@ -526,8 +550,9 @@ def normalize_content(content: Any) -> tuple[str, bool, bool, str]:
     return "", False, False, ""
 
 
-def parse_workbuddy_jsonl(path: Path) -> list[SourceTurnDraft]:
+def parse_workbuddy_jsonl(path: Path) -> tuple[list[SourceTurnDraft], str]:
     turns: list[SourceTurnDraft] = []
+    first_user_text = ""
     with path.open("r", encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
@@ -552,6 +577,8 @@ def parse_workbuddy_jsonl(path: Path) -> list[SourceTurnDraft]:
                 role = "assistant" if typ == "reasoning" else "system"
             if role not in {"user", "assistant", "tool", "system"}:
                 role = "unknown"
+            if role == "user" and not first_user_text and text.strip():
+                first_user_text = text.strip()
             turns.append(SourceTurnDraft(
                 agent_turn_id=str(obj.get("id") or ""),
                 parent_turn_id=str(obj.get("parentId") or obj.get("parent_id") or ""),
@@ -566,11 +593,12 @@ def parse_workbuddy_jsonl(path: Path) -> list[SourceTurnDraft]:
                 tool_name=tool_name,
                 source_event_type=typ,
             ))
-    return turns
+    return turns, first_user_text
 
 
-def parse_generic_jsonl(path: Path) -> list[SourceTurnDraft]:
+def parse_generic_jsonl(path: Path) -> tuple[list[SourceTurnDraft], str]:
     turns: list[SourceTurnDraft] = []
+    first_user_text = ""
     with path.open("r", encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
@@ -593,6 +621,8 @@ def parse_generic_jsonl(path: Path) -> list[SourceTurnDraft]:
                 role = "tool"
             if role not in {"user", "assistant", "tool", "system"}:
                 role = "unknown"
+            if role == "user" and not first_user_text and text.strip():
+                first_user_text = text.strip()
             turns.append(SourceTurnDraft(
                 agent_turn_id=str(obj.get("id") or obj.get("turn_id") or ""),
                 parent_turn_id=str(obj.get("parentId") or obj.get("parent_id") or ""),
@@ -607,22 +637,26 @@ def parse_generic_jsonl(path: Path) -> list[SourceTurnDraft]:
                 tool_name=tool_name,
                 source_event_type=typ,
             ))
-    return turns
+    return turns, first_user_text
 
 
-def parse_plain_text_transcript(path: Path) -> list[SourceTurnDraft]:
+def parse_plain_text_transcript(path: Path) -> tuple[list[SourceTurnDraft], str]:
     text = path.read_text(encoding="utf-8", errors="replace")
     turns: list[SourceTurnDraft] = []
     current_role = "unknown"
     current: list[str] = []
+    first_user_text = ""
 
     def flush() -> None:
-        nonlocal current, current_role
+        nonlocal current, current_role, first_user_text
         if not current:
             return
         content = "\n".join(current).strip()
+        normalized_role = current_role if current_role in {"user", "assistant", "tool", "system"} else "unknown"
+        if normalized_role == "user" and not first_user_text and content:
+            first_user_text = content
         turns.append(SourceTurnDraft(
-            role=current_role if current_role in {"user", "assistant", "tool", "system"} else "unknown",
+            role=normalized_role,
             content_hash=stable_hash(content) if content else "",
             content_length=len(content),
             turn_index=len(turns),
@@ -632,23 +666,24 @@ def parse_plain_text_transcript(path: Path) -> list[SourceTurnDraft]:
         current = []
 
     for line in text.splitlines():
-        lower = line.strip().lower()
+        clean_line = line.strip().lstrip("\ufeff")
+        lower = clean_line.lower()
         if lower.startswith(("user:", "human:")):
             flush()
             current_role = "user"
-            current.append(line.split(":", 1)[1].strip() if ":" in line else "")
+            current.append(clean_line.split(":", 1)[1].strip() if ":" in clean_line else "")
         elif lower.startswith(("assistant:", "ai:")):
             flush()
             current_role = "assistant"
-            current.append(line.split(":", 1)[1].strip() if ":" in line else "")
+            current.append(clean_line.split(":", 1)[1].strip() if ":" in clean_line else "")
         elif lower.startswith("tool:"):
             flush()
             current_role = "tool"
-            current.append(line.split(":", 1)[1].strip() if ":" in line else "")
+            current.append(clean_line.split(":", 1)[1].strip() if ":" in clean_line else "")
         else:
-            current.append(line)
+            current.append(clean_line)
     flush()
-    return turns
+    return turns, first_user_text
 
 
 def adapter_for(source: str, path: str = "") -> BaseAdapter:
@@ -745,9 +780,9 @@ def insert_source_session(conn: sqlite3.Connection, session: SourceSessionDraft)
     conn.execute(
         """INSERT OR REPLACE INTO source_sessions
            (id, source_type, source_agent, external_session_id, agent_session_id, source_path,
-            source_hash, original_title, title_source, display_title, started_at, updated_at,
+            source_hash, original_title, title_source, display_title, display_title_source, started_at, updated_at,
             imported_at, message_count, content_hash, status, metadata_json, created_at)
-           VALUES (?, 'agent_session', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
+           VALUES (?, 'agent_session', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)""",
         (
             source_id,
             session.source_agent,
@@ -758,6 +793,7 @@ def insert_source_session(conn: sqlite3.Connection, session: SourceSessionDraft)
             session.original_title if session.has_original_title else "",
             session.title_source,
             session.display_title,
+            session.display_title_source,
             session.created_at,
             session.updated_at,
             now,
