@@ -12,6 +12,7 @@ const els = {
   settingsBtn: $('settingsBtn'),
   settingsMenu: $('settingsMenu'),
   openDashboardBtn: $('openDashboardBtn'),
+  historyProcessingBtn: $('historyProcessingBtn'),
   refreshBtn: $('refreshBtn'),
   startBtn: $('startBtn'),
   restartBtn: $('restartBtn'),
@@ -89,6 +90,7 @@ document.addEventListener('click', (event) => {
   }
 });
 els.openDashboardBtn.addEventListener('click', () => window.memoCompanion.openDashboard(''));
+els.historyProcessingBtn.addEventListener('click', () => window.memoCompanion.openDashboard('history-processing'));
 els.refreshBtn.addEventListener('click', refresh);
 async function runServiceAction(button, label, action) {
   button.disabled = true;

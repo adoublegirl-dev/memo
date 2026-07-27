@@ -177,6 +177,7 @@ function buildTrayMenu() {
   return Menu.buildFromTemplate([
     { label: '显示/隐藏 Memo 助手', click: toggleWindow },
     { label: '打开 Memo Dashboard', click: () => openDashboard('') },
+    { label: '处理历史 Agent 会话', click: () => openDashboard('history-processing') },
     { label: '刷新状态', click: refreshAndSend },
     { type: 'separator' },
     { label: '启动 Memo 服务', click: startMemoServices },
