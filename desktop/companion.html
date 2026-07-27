@@ -79,6 +79,7 @@
             <button id="stopBtn" class="danger-menu-item">停止服务</button>
             <button id="mcpGuideBtn">MCP配置</button>
             <button id="checkUpdateBtn">检查更新</button>
+            <button id="updateServiceBtn">更新 Memo 服务</button>
           </div>
           <label class="settings-toggle">
             <span>开机自动启动助手</span>
@@ -112,10 +113,11 @@
             </div>
             <button class="icon-button" id="closeUpdateGuideBtn">×</button>
           </div>
-          <p class="modal-note">当前先提供版本检查和下载页入口；后续可扩展为自动下载包并引导安装。</p>
+          <p class="modal-note">可检查桌面助手新版本，也可更新当前 Memo 服务代码。服务更新会先停止服务、归档数据库和 .env，再执行 git pull，并重启服务。</p>
           <div class="path-box" id="updateStatusText">点击“检查更新”获取最新版本。</div>
           <div class="modal-actions">
             <button id="runCheckUpdateBtn" class="primary-action">检查更新</button>
+            <button id="runUpdateServiceBtn" class="secondary-action">更新 Memo 服务</button>
             <button id="openReleasePageBtn" class="secondary-action">打开下载页</button>
           </div>
         </section>

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('memoCompanion', {
   copyMcpConfig: (text) => ipcRenderer.invoke('memo:copyMcpConfig', text),
   openMemoRoot: () => ipcRenderer.invoke('memo:openMemoRoot'),
   checkForUpdates: () => ipcRenderer.invoke('memo:checkForUpdates'),
+  updateMemoService: () => ipcRenderer.invoke('memo:updateMemoService'),
   openReleasePage: () => ipcRenderer.invoke('memo:openReleasePage'),
   onSnapshot: (callback) => {
     const listener = (_event, snapshot) => callback(snapshot);

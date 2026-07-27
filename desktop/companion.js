@@ -31,6 +31,8 @@ const els = {
   closeUpdateGuideBtn: $('closeUpdateGuideBtn'),
   updateStatusText: $('updateStatusText'),
   runCheckUpdateBtn: $('runCheckUpdateBtn'),
+  runUpdateServiceBtn: $('runUpdateServiceBtn'),
+  updateServiceBtn: $('updateServiceBtn'),
   openReleasePageBtn: $('openReleasePageBtn'),
 };
 
@@ -49,6 +51,7 @@ function actionText(action) {
   if (action === 'starting') return '正在启动 Memo 服务…';
   if (action === 'stopping') return '正在停止 Memo 服务…';
   if (action === 'restarting') return '正在重启 Memo 服务…';
+  if (action === 'updating') return '正在更新 Memo 服务…';
   return '';
 }
 
@@ -57,6 +60,7 @@ function setBusy(action) {
   els.startBtn.disabled = busy;
   els.restartBtn.disabled = busy;
   els.stopBtn.disabled = busy;
+  els.updateServiceBtn.disabled = busy;
   els.refreshBtn.disabled = busy;
 }
 
@@ -127,6 +131,12 @@ async function runServiceAction(button, label, action) {
 els.startBtn.addEventListener('click', () => runServiceAction(els.startBtn, '启动服务', () => window.memoCompanion.startServices()));
 els.restartBtn.addEventListener('click', () => runServiceAction(els.restartBtn, '重启', () => window.memoCompanion.restartServices()));
 els.stopBtn.addEventListener('click', () => runServiceAction(els.stopBtn, '停止', () => window.memoCompanion.stopServices()));
+els.updateServiceBtn.addEventListener('click', (event) => {
+  event.stopPropagation();
+  setSettingsOpen(false);
+  els.updateStatusText.textContent = '更新会先停止服务、归档数据库，再拉取 GitHub 最新代码并重启服务。';
+  setModal(els.updateGuide, true);
+});
 els.mcpGuideBtn.addEventListener('click', async (event) => {
   event.stopPropagation();
   setSettingsOpen(false);
@@ -158,6 +168,22 @@ els.runCheckUpdateBtn.addEventListener('click', async () => {
     els.updateStatusText.textContent = result.message;
   } finally {
     els.runCheckUpdateBtn.disabled = false;
+  }
+});
+els.runUpdateServiceBtn.addEventListener('click', async () => {
+  if (!confirm('将停止 Memo 服务、归档当前数据库和 .env、拉取 GitHub 最新代码并重启服务。继续吗？')) return;
+  els.runUpdateServiceBtn.disabled = true;
+  els.runCheckUpdateBtn.disabled = true;
+  els.openReleasePageBtn.disabled = true;
+  els.updateStatusText.textContent = '正在更新 Memo 服务，请不要关闭窗口…';
+  try {
+    const result = await window.memoCompanion.updateMemoService();
+    els.updateStatusText.textContent = result.message || (result.ok ? 'Memo 服务已更新。' : 'Memo 服务更新失败。');
+    setTimeout(refresh, 3500);
+  } finally {
+    els.runUpdateServiceBtn.disabled = false;
+    els.runCheckUpdateBtn.disabled = false;
+    els.openReleasePageBtn.disabled = false;
   }
 });
 els.openReleasePageBtn.addEventListener('click', () => window.memoCompanion.openReleasePage());

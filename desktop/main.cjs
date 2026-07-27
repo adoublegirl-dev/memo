@@ -82,6 +82,7 @@ let pollTimer = null;
 let lastSnapshot = null;
 let notificationsPausedUntil = 0;
 let serviceAction = 'idle';
+let serviceUpdateRunning = false;
 let loginItemEnabledCache = false;
 let loginItemUserSelected = false;
 
@@ -387,6 +388,92 @@ async function restartMemoServices() {
   return runBat('start_all.bat', 'restarting');
 }
 
+function runCommand(command, args = [], options = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd || ROOT,
+      env: { ...process.env, ...(options.env || {}) },
+      windowsHide: true,
+      shell: Boolean(options.shell),
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (data) => { stdout += data.toString(); });
+    child.stderr?.on('data', (data) => { stderr += data.toString(); });
+    child.on('error', (error) => resolve({ ok: false, code: -1, stdout, stderr: stderr || String(error.message || error) }));
+    child.on('exit', (code) => resolve({ ok: code === 0, code, stdout, stderr }));
+  });
+}
+
+function compactOutput(text, max = 2200) {
+  const clean = String(text || '').trim();
+  if (clean.length <= max) return clean;
+  return `${clean.slice(0, 900)}\n...\n${clean.slice(-1200)}`;
+}
+
+async function updateMemoService() {
+  if (serviceUpdateRunning) {
+    return { ok: false, message: 'Memo 服务更新已在进行中，请稍候。' };
+  }
+  serviceUpdateRunning = true;
+  serviceAction = 'updating';
+  refreshAndSend();
+  const steps = [];
+  const finish = async (result) => {
+    serviceUpdateRunning = false;
+    serviceAction = 'idle';
+    setTimeout(refreshAndSend, 2500);
+    return result;
+  };
+
+  try {
+    if (!fs.existsSync(path.join(ROOT, '.git'))) {
+      return await finish({ ok: false, message: `当前 Memo 路径不是 Git 仓库，无法自动更新：${ROOT}` });
+    }
+
+    steps.push('停止 Memo 服务');
+    await runBat('stop_all.bat', 'updating');
+
+    steps.push('归档当前数据库和 .env');
+    const archiveScript = path.join(ROOT, 'scripts', 'archive_current_db.py');
+    if (fs.existsSync(archiveScript)) {
+      const archive = await runCommand(getPythonCommand(), [archiveScript, '--apply', '--confirm', 'ARCHIVE', '--label', 'desktop-update'], { cwd: ROOT });
+      if (!archive.ok) {
+        return await finish({ ok: false, message: `数据库归档失败，已停止更新。\n${compactOutput(archive.stderr || archive.stdout)}` });
+      }
+    } else {
+      steps.push('未找到 archive_current_db.py，跳过脚本归档');
+    }
+
+    steps.push('拉取 GitHub 最新代码');
+    const pull = await runCommand('git', ['-c', 'http.proxy=', '-c', 'https.proxy=', 'pull', '--ff-only', 'origin', 'main'], { cwd: ROOT });
+    if (!pull.ok) {
+      await runBat('start_all.bat', 'updating');
+      return await finish({ ok: false, message: `git pull 失败，已尝试重新启动服务。\n${compactOutput(pull.stderr || pull.stdout)}` });
+    }
+
+    steps.push('编译检查');
+    const pycheck = await runCommand(getPythonCommand(), ['-m', 'py_compile', path.join(ROOT, 'scripts', 'memo_dashboard.py'), path.join(ROOT, 'memo', 'core', 'engine.py')], { cwd: ROOT });
+    if (!pycheck.ok) {
+      await runBat('start_all.bat', 'updating');
+      return await finish({ ok: false, message: `代码编译检查失败，已尝试重新启动服务。\n${compactOutput(pycheck.stderr || pycheck.stdout)}` });
+    }
+
+    steps.push('启动 Memo 服务');
+    const start = await runBat('start_all.bat', 'updating');
+    const ok = Boolean(start.ok);
+    return await finish({
+      ok,
+      message: ok
+        ? `Memo 服务已更新并重启。\n执行步骤：${steps.join(' → ')}\n${compactOutput(pull.stdout)}`
+        : `Memo 服务代码已更新，但启动脚本返回异常。请查看 data/logs。`,
+    });
+  } catch (error) {
+    try { await runBat('start_all.bat', 'updating'); } catch (_) {}
+    return await finish({ ok: false, message: `Memo 服务更新失败：${error?.message || error}` });
+  }
+}
+
 function getLoginItemEnabled() {
   if (loginItemUserSelected) return loginItemEnabledCache;
   try {
@@ -520,6 +607,7 @@ ipcMain.handle('memo:getMcpConfig', () => buildMcpConfig());
 ipcMain.handle('memo:copyMcpConfig', (_event, text) => copyMcpConfig(text));
 ipcMain.handle('memo:openMemoRoot', () => openMemoRoot());
 ipcMain.handle('memo:checkForUpdates', () => checkForUpdates());
+ipcMain.handle('memo:updateMemoService', () => updateMemoService());
 ipcMain.handle('memo:openReleasePage', () => openReleasePage());
 
 app.whenReady().then(() => {
