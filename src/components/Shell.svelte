@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { route, navigate, theme, setTheme, initRouter } from '../lib/stores.js';
-  import { LayoutDashboard, Share2, Brain, Fingerprint, CheckCircle2, Layers, Moon, Sun, Search, Sparkles, ShieldCheck, GitBranch } from '@lucide/svelte';
+  import { LayoutDashboard, Share2, Brain, Fingerprint, CheckCircle2, Layers, Moon, Sun, Search, Sparkles, ShieldCheck, GitBranch, History } from '@lucide/svelte';
 
   const nav = [
     ['/', LayoutDashboard, '总览'],
@@ -9,6 +9,7 @@
     ['/memories', Brain, '记忆管理'],
     ['/governance', ShieldCheck, '治理审计'],
     ['/source-aware', GitBranch, 'Source-aware'],
+    ['/history-processing', History, '历史处理'],
     ['/spaces', Layers, '空间'],
     ['/persona', Fingerprint, '人格'],
     ['/todos', CheckCircle2, '待办'],

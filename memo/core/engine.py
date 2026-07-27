@@ -4,6 +4,7 @@
 """
 
 import json
+import uuid
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -1052,6 +1053,207 @@ class Engine:
         self._ensure_init()
         from memo.space.source_sessions import source_session_manager
         return source_session_manager.stats()
+
+    # ── 历史会话处理任务 ──
+
+    def _history_processing_schema_ready(self) -> bool:
+        try:
+            cols = {r[1] for r in db.fetchall("PRAGMA table_info(history_processing_jobs)")}
+        except Exception:
+            return False
+        return {"id", "status", "current_step", "selected_sources_json", "detect_report_json", "model_config_json", "progress_json"}.issubset(cols)
+
+    def _history_job_event(self, job_id: str, event_type: str, message: str = "", payload: dict[str, Any] | None = None) -> None:
+        db.execute(
+            """INSERT INTO history_processing_job_events (id, job_id, event_type, message, payload_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("hp_evt_" + uuid.uuid4().hex[:16], job_id, event_type, message or "", json.dumps(payload or {}, ensure_ascii=False), datetime.now().isoformat(timespec="seconds")),
+        )
+
+    def _history_job_row(self, row) -> dict[str, Any]:
+        if not row:
+            return {}
+        data = dict(row)
+        for key in ["selected_sources_json", "detect_report_json", "model_config_json", "progress_json"]:
+            out_key = key[:-5] if key.endswith("_json") else key
+            try:
+                data[out_key] = json.loads(data.get(key) or "{}")
+            except Exception:
+                data[out_key] = {} if key != "selected_sources_json" else []
+        model = data.get("model_config") or {}
+        if model.get("api_key"):
+            model = dict(model)
+            model["api_key"] = "***"
+            data["model_config"] = model
+        return data
+
+    def _history_latest_job(self):
+        return db.fetchone("SELECT * FROM history_processing_jobs ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC LIMIT 1")
+
+    def history_processing_overview(self) -> dict[str, Any]:
+        """历史 Agent 会话处理中心状态。"""
+        self._ensure_init()
+        ready = self._history_processing_schema_ready()
+        job = self._history_job_row(self._history_latest_job()) if ready else {}
+        events = []
+        if job.get("id"):
+            events = [dict(r) for r in db.fetchall(
+                "SELECT event_type, message, payload_json, created_at FROM history_processing_job_events WHERE job_id=? ORDER BY datetime(created_at) DESC LIMIT 30",
+                (job["id"],),
+            )]
+        return {
+            "schema_ready": ready,
+            "job": job,
+            "events": events,
+            "supported_sources": [
+                {"id": "hanaagent", "label": "HanaAgent"},
+                {"id": "workbuddy", "label": "WorkBuddy"},
+                {"id": "codex", "label": "Codex"},
+            ],
+            "steps": ["detect", "source_import", "memory_extract", "quality_rules", "llm_enhance", "done"],
+            "step_labels": {
+                "detect": "检测历史源",
+                "source_import": "导入原始会话/轮次",
+                "memory_extract": "保守抽取记忆",
+                "quality_rules": "规则质量处理",
+                "llm_enhance": "LLM 增强（最后一步）",
+                "done": "完成",
+            },
+            "llm_note": "LLM 增强永远在规则质量处理之后执行；当前版本先完成基础导入与规则处理，LLM 执行器待接入。",
+        }
+
+    def _history_create_or_update_job(self, selected_sources: list[str] | None = None, detect_report: dict[str, Any] | None = None, model_config: dict[str, Any] | None = None) -> str:
+        now = datetime.now().isoformat(timespec="seconds")
+        row = self._history_latest_job()
+        job_id = row["id"] if row else "hp_job_" + uuid.uuid4().hex[:12]
+        allowed = {"hanaagent", "workbuddy", "codex"}
+        selected = [s for s in (selected_sources or []) if s in allowed]
+        if row:
+            updates = ["updated_at=?"]
+            params: list[Any] = [now]
+            if selected_sources is not None:
+                updates.append("selected_sources_json=?")
+                params.append(json.dumps(selected, ensure_ascii=False))
+            if detect_report is not None:
+                updates.append("detect_report_json=?")
+                params.append(json.dumps(detect_report, ensure_ascii=False))
+            if model_config is not None:
+                updates.append("model_config_json=?")
+                params.append(json.dumps(model_config, ensure_ascii=False))
+            params.append(job_id)
+            db.execute(f"UPDATE history_processing_jobs SET {', '.join(updates)} WHERE id=?", tuple(params))
+        else:
+            db.execute(
+                """INSERT INTO history_processing_jobs
+                   (id, status, current_step, selected_sources_json, detect_report_json, model_config_json, progress_json, created_at, updated_at)
+                   VALUES (?, 'draft', 'detect', ?, ?, ?, '{}', ?, ?)""",
+                (job_id, json.dumps(selected, ensure_ascii=False), json.dumps(detect_report or {}, ensure_ascii=False), json.dumps(model_config or {}, ensure_ascii=False), now, now),
+            )
+        db.commit()
+        return job_id
+
+    def _history_detect_sources(self) -> dict[str, Any]:
+        from scripts.detect_agent_sources import build_report
+        report = build_report([])
+        source_map = {"HanaAgent": "hanaagent", "WorkBuddy": "workbuddy", "Codex": "codex"}
+        detected_sources = []
+        for item in report.get("agents", []):
+            sid = source_map.get(item.get("agent"))
+            if sid and item.get("detected") and int(item.get("session_count") or 0) > 0:
+                detected_sources.append(sid)
+        report["detected_supported_sources"] = detected_sources
+        return report
+
+    def history_processing_action(self, action: str, **kwargs) -> dict[str, Any]:
+        """历史会话处理动作。同步执行单步，状态落库，可中断后继续。"""
+        self._ensure_init()
+        if not self._history_processing_schema_ready():
+            return {"error": "history processing schema not ready; restart Memo to run migrations"}
+        action = action or "overview"
+        if action == "scan":
+            report = self._history_detect_sources()
+            job_id = self._history_create_or_update_job(selected_sources=report.get("detected_supported_sources", []), detect_report=report)
+            self._history_job_event(job_id, "scan", "历史源检测完成", {"sources": report.get("detected_supported_sources", [])})
+            db.execute("UPDATE history_processing_jobs SET status='ready', current_step='source_import', updated_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), job_id))
+            db.commit()
+            return self.history_processing_overview()
+        if action == "save_config":
+            job_id = self._history_create_or_update_job(selected_sources=kwargs.get("selected_sources"), model_config=kwargs.get("model_config") or {})
+            self._history_job_event(job_id, "config", "已保存历史处理配置", {"selected_sources": kwargs.get("selected_sources") or []})
+            db.commit()
+            return self.history_processing_overview()
+        if action == "pause":
+            row = self._history_latest_job()
+            if not row:
+                return {"error": "no job"}
+            db.execute("UPDATE history_processing_jobs SET status='paused', updated_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), row["id"]))
+            self._history_job_event(row["id"], "pause", "任务已暂停")
+            db.commit()
+            return self.history_processing_overview()
+        if action in {"start", "continue", "run_next"}:
+            return self._history_run_next_step(limit=int(kwargs.get("limit") or 100000))
+        return {"error": f"unknown action: {action}"}
+
+    def _history_run_next_step(self, limit: int = 100000) -> dict[str, Any]:
+        row = self._history_latest_job()
+        if not row:
+            report = self._history_detect_sources()
+            job_id = self._history_create_or_update_job(selected_sources=report.get("detected_supported_sources", []), detect_report=report)
+            row = db.fetchone("SELECT * FROM history_processing_jobs WHERE id=?", (job_id,))
+        job_id = row["id"]
+        status = row["status"]
+        step = row["current_step"]
+        selected = json.loads(row["selected_sources_json"] or "[]")
+        if status == "done" or step == "done":
+            return self.history_processing_overview()
+        if not selected and step != "detect":
+            return {"error": "no selected sources; run scan or choose sources first"}
+        now = datetime.now().isoformat(timespec="seconds")
+        db.execute("UPDATE history_processing_jobs SET status='running', started_at=COALESCE(started_at, ?), updated_at=?, last_error='' WHERE id=?", (now, now, job_id))
+        db.commit()
+        progress = json.loads(row["progress_json"] or "{}")
+        try:
+            if step == "detect":
+                report = self._history_detect_sources()
+                selected = report.get("detected_supported_sources", [])
+                db.execute(
+                    "UPDATE history_processing_jobs SET detect_report_json=?, selected_sources_json=?, current_step='source_import', status='ready', updated_at=? WHERE id=?",
+                    (json.dumps(report, ensure_ascii=False), json.dumps(selected, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), job_id),
+                )
+                self._history_job_event(job_id, "detect", "检测完成", {"sources": selected})
+            elif step == "source_import":
+                from scripts.source_aware_import import apply_to_production_source_only
+                results = {}
+                for source in selected:
+                    results[source] = apply_to_production_source_only(source, limit=limit)
+                progress["source_import"] = results
+                db.execute("UPDATE history_processing_jobs SET progress_json=?, current_step='memory_extract', status='ready', updated_at=? WHERE id=?", (json.dumps(progress, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), job_id))
+                self._history_job_event(job_id, "source_import", "source-only 导入完成", {"sources": selected})
+            elif step == "memory_extract":
+                from scripts.source_aware_import import extract_memory_units_from_source_sessions
+                source_agent = {"hanaagent": "HanaAgent", "workbuddy": "WorkBuddy", "codex": "Codex"}
+                db_path = Path(config.db_path).resolve()
+                results = {}
+                for source in selected:
+                    results[source] = extract_memory_units_from_source_sessions(db_path, source_agent=source_agent[source], limit=limit)
+                progress["memory_extract"] = results
+                db.execute("UPDATE history_processing_jobs SET progress_json=?, current_step='quality_rules', status='ready', updated_at=? WHERE id=?", (json.dumps(progress, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), job_id))
+                self._history_job_event(job_id, "memory_extract", "保守记忆抽取完成", {"sources": selected})
+            elif step == "quality_rules":
+                result = self.apply_source_aware_quality_rules(dry_run=False)
+                progress["quality_rules"] = result
+                db.execute("UPDATE history_processing_jobs SET progress_json=?, current_step='llm_enhance', status='paused', updated_at=? WHERE id=?", (json.dumps(progress, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), job_id))
+                self._history_job_event(job_id, "quality_rules", "规则质量处理完成；LLM 增强是最后一步，当前待接入执行器", result)
+            elif step == "llm_enhance":
+                self._history_job_event(job_id, "llm_enhance", "LLM 增强为最后一步；当前版本已预留配置，执行器待接入")
+                db.execute("UPDATE history_processing_jobs SET status='paused', updated_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), job_id))
+            db.commit()
+        except Exception as exc:
+            db.execute("UPDATE history_processing_jobs SET status='failed', last_error=?, updated_at=? WHERE id=?", (str(exc), datetime.now().isoformat(timespec="seconds"), job_id))
+            self._history_job_event(job_id, "error", str(exc))
+            db.commit()
+            return {"error": str(exc), **self.history_processing_overview()}
+        return self.history_processing_overview()
 
     # ── Source-aware Dashboard ──
 

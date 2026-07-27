@@ -1195,6 +1195,10 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._json(engine.source_aware_memory_quality(
                 limit=int(self._get_query_param("limit", "20")),
             ))
+        elif path == "/api/history-processing":
+            self._json(engine.history_processing_overview())
+        elif path == "/api/history-processing/action":
+            self._handle_history_processing_action()
         elif path == "/api/source-aware/session-review/action":
             self._handle_source_session_review_action()
         elif path.startswith("/api/source-aware/session/"):
@@ -1214,6 +1218,21 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._handle_memory_link()
         else:
             self._json({"error": "not found"}, 404)
+
+    def _handle_history_processing_action(self):
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        body = _j.loads(self.rfile.read(length)) if length > 0 else {}
+        action = body.get("action", "")
+        result = engine.history_processing_action(
+            action,
+            selected_sources=body.get("selected_sources"),
+            model_config=body.get("model_config") or {},
+            limit=int(body.get("limit") or 100000),
+        )
+        if result.get("error"):
+            self._json(result, 400); return
+        self._json(result)
 
     def _handle_source_session_review_action(self):
         import json as _j
