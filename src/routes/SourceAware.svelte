@@ -25,6 +25,8 @@
   $: qualityFlags = quality?.flags || {};
   $: duplicateGroups = quality?.samples?.duplicate_title_groups || [];
   $: temporarySamples = quality?.samples?.temporary_task_like_hits || [];
+  $: reviewStatusItems = quality?.review_summary?.by_status || [];
+  $: reviewRetentionItems = quality?.review_summary?.by_retention || [];
   $: filteredTurns = filterTurns(detail?.turns || []);
   $: visibleTurns = filteredTurns.slice(0, Number(turnPreviewLimit || 80));
 
@@ -116,6 +118,14 @@
       <div class="card stat-card"><GitBranch size={18}/><div><strong>{qualityFlags.duplicate_title_groups ?? '—'}</strong><span>重复标题组</span></div></div>
       <div class="card stat-card"><Link2 size={18}/><div><strong>{quality?.counts?.memories_with_evidence ?? '—'}</strong><span>有证据记忆</span></div></div>
       <div class="card stat-card"><AlertTriangle size={18}/><div><strong>{qualityFlags.missing_original_titles ?? '—'}</strong><span>缺原始标题会话</span></div></div>
+    </div>
+    <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:12px">
+      {#if quality?.review_summary?.ready}
+        {#each reviewStatusItems as item}<span class="badge">状态：{item.review_status} · {item.c}</span>{/each}
+        {#each reviewRetentionItems as item}<span class="badge">保留类：{item.retention_class} · {item.c}</span>{/each}
+      {:else}
+        <span class="badge gold">规则处理表尚未迁移</span>
+      {/if}
     </div>
     <div class="grid cols-2" style="margin-top:12px">
       <div class="item">

@@ -87,6 +87,31 @@ def test_source_aware_dashboard_lists_missing_titles_and_counts():
     assert row["evidence_count"] >= 1
 
 
+def test_source_aware_quality_rules_apply_review_table_and_recall_gate():
+    ids = _seed_source_aware_fixture()
+    temp_id = f"memory_temp_{ids['memory_id']}"
+    db.execute(
+        """INSERT INTO memory_units
+           (id, session_id, title, summary, raw_text, memory_type, source_session_id, episode_id,
+            source_turn_start_id, source_turn_end_id, memory_granularity, speaker_scope, source_confidence, is_canonical)
+           SELECT ?, session_id, '帮我安装测试工具', '帮我安装测试工具', '', 'FACT', source_session_id, episode_id,
+                  source_turn_start_id, source_turn_end_id, 'episode', 'user_claim', 0.5, 1
+           FROM memory_units WHERE id=?""",
+        (temp_id, ids["memory_id"]),
+    )
+    db.commit()
+
+    result = engine.apply_source_aware_quality_rules(dry_run=False)
+    temp_review = db.fetchone("SELECT * FROM memory_quality_reviews WHERE memory_id=?", (temp_id,))
+    clean_review = db.fetchone("SELECT * FROM memory_quality_reviews WHERE memory_id=?", (ids["memory_id"],))
+
+    assert result["applied"] >= 2
+    assert temp_review["retention_class"] == "temporary_task"
+    assert temp_review["recall_policy"] == "exclude_default"
+    assert clean_review["recall_policy"] in {"include", "downrank"}
+    assert engine._memory_quality_gate(temp_id)["participates"] is False
+
+
 def test_source_aware_memory_quality_returns_readonly_flags():
     ids = _seed_source_aware_fixture()
 

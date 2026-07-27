@@ -3,6 +3,7 @@
 所有外部调用通过 Engine 进行，不直接访问底层 store。
 """
 
+import json
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -627,6 +628,11 @@ class Engine:
                     explanation_reasons.append("你已经把它标为重要，因此会优先保留")
                 if getattr(mem, "status", "active") == "expired":
                     explanation_reasons.append("它已被标记为过期，只会低权重参考")
+                quality_gate = self._memory_quality_gate(mem_id)
+                if not quality_gate["participates"]:
+                    continue
+                adjusted_score *= quality_gate["score_multiplier"]
+                explanation_reasons.extend(quality_gate["reasons"])
                 if from_current_space:
                     explanation_reasons.append("它属于当前 Space，和当前工作场景更接近")
                 if current_session_id and mem.session_id == current_session_id:
@@ -674,11 +680,41 @@ class Engine:
                         "pinned": getattr(mem, "pinned", False),
                         "from_current_space": from_current_space,
                         "from_current_session": mem.session_id == current_session_id if current_session_id else False,
+                        "quality_review": quality_gate.get("review"),
                     },
                 })
 
         enriched.sort(key=lambda x: x["score"], reverse=True)
         return enriched[:top_k]
+
+    def _memory_quality_gate(self, memory_id: str) -> dict[str, Any]:
+        """规则质量处理的召回闸门。只影响排序/默认参与，不删除原始记忆。"""
+        try:
+            row = db.fetchone("SELECT review_status, retention_class, recall_policy, quality_score, auto_flags_json FROM memory_quality_reviews WHERE memory_id=?", (memory_id,))
+        except Exception:
+            row = None
+        if not row:
+            return {"participates": True, "score_multiplier": 1.0, "reasons": [], "review": None}
+        review = dict(row)
+        policy = review.get("recall_policy") or "include"
+        retention = review.get("retention_class") or "candidate"
+        if policy in {"exclude", "exclude_default"}:
+            return {
+                "participates": False,
+                "score_multiplier": 0.0,
+                "reasons": [f"这条记忆已被规则处理标记为 {retention}，默认不参与召回"],
+                "review": review,
+            }
+        multiplier = 1.0
+        reasons: list[str] = []
+        if policy == "downrank":
+            multiplier *= 0.45
+            reasons.append("这条记忆被规则标记为候选重复或需复核，召回时会降权")
+        score = float(review.get("quality_score") or 0.5)
+        multiplier *= max(0.25, min(1.2, 0.5 + score))
+        if retention == "long_term":
+            reasons.append("这条记忆已通过规则处理，暂定为可进入长期召回")
+        return {"participates": True, "score_multiplier": multiplier, "reasons": reasons, "review": review}
 
     def _channel_vector(self, query: str, top_k: int = 20) -> dict[str, float]:
         """通道①：向量语义检索。"""
@@ -1098,6 +1134,130 @@ class Engine:
             "sessions": [self._source_aware_session_row(r) for r in rows],
         }
 
+    def apply_source_aware_quality_rules(self, dry_run: bool = True, limit: int | None = None) -> dict[str, Any]:
+        """对 source-aware memory 执行规则自动处理。
+
+        dry_run=True 只返回计划；dry_run=False 写入 memory_quality_reviews。
+        不删除、不合并、不改写原始 memory 内容。
+        """
+        self._ensure_init()
+        schema_status = self._source_aware_schema_status()
+        quality_ready = self._memory_quality_schema_ready()
+        if not schema_status["ready"] or not quality_ready:
+            return {"dry_run": dry_run, "applied": 0, "error": "schema not ready", "source_schema": schema_status, "quality_schema_ready": quality_ready}
+        rows = [dict(r) for r in db.fetchall(
+            """SELECT mu.id, mu.title, mu.summary, mu.source_session_id, mu.episode_id,
+                      COUNT(mts.turn_id) AS evidence_count
+               FROM memory_units mu
+               LEFT JOIN memory_turn_sources mts ON mts.memory_id=mu.id
+               WHERE mu.source_session_id IS NOT NULL
+               GROUP BY mu.id
+               ORDER BY mu.created_at DESC"""
+        )]
+        if limit:
+            rows = rows[: max(1, int(limit))]
+        duplicate_counts = self._source_aware_duplicate_counts()
+        now = datetime.now().isoformat()
+        plans = []
+        summary = defaultdict(int)
+        for row in rows:
+            plan = self._quality_rule_plan(row, duplicate_counts)
+            plans.append(plan)
+            summary[plan["review_status"]] += 1
+            summary[plan["retention_class"]] += 1
+            summary[plan["recall_policy"]] += 1
+            if not dry_run:
+                db.execute(
+                    """INSERT INTO memory_quality_reviews
+                       (memory_id, review_status, retention_class, recall_policy, quality_score, auto_flags_json,
+                        duplicate_group_key, duplicate_count, needs_llm, processor_version, note, reviewed_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'rules-v1', ?, ?, ?)
+                       ON CONFLICT(memory_id) DO UPDATE SET
+                         review_status=excluded.review_status,
+                         retention_class=excluded.retention_class,
+                         recall_policy=excluded.recall_policy,
+                         quality_score=excluded.quality_score,
+                         auto_flags_json=excluded.auto_flags_json,
+                         duplicate_group_key=excluded.duplicate_group_key,
+                         duplicate_count=excluded.duplicate_count,
+                         needs_llm=excluded.needs_llm,
+                         processor_version=excluded.processor_version,
+                         note=excluded.note,
+                         reviewed_at=excluded.reviewed_at,
+                         updated_at=excluded.updated_at""",
+                    (
+                        plan["memory_id"], plan["review_status"], plan["retention_class"], plan["recall_policy"],
+                        plan["quality_score"], json.dumps(plan["flags"], ensure_ascii=False), plan["duplicate_group_key"],
+                        plan["duplicate_count"], int(plan["needs_llm"]), plan["note"], now, now,
+                    ),
+                )
+        if not dry_run:
+            db.commit()
+        return {"dry_run": dry_run, "processed": len(plans), "applied": 0 if dry_run else len(plans), "summary": dict(summary), "samples": plans[:20]}
+
+    def _memory_quality_schema_ready(self) -> bool:
+        try:
+            cols = {r[1] for r in db.fetchall("PRAGMA table_info(memory_quality_reviews)")}
+        except Exception:
+            return False
+        return {"memory_id", "review_status", "retention_class", "recall_policy", "quality_score", "auto_flags_json"}.issubset(cols)
+
+    def _source_aware_duplicate_counts(self) -> dict[str, int]:
+        rows = db.fetchall("SELECT id, title FROM memory_units WHERE source_session_id IS NOT NULL")
+        counts: dict[str, int] = defaultdict(int)
+        for row in rows:
+            key = self._quality_normalize_title(row["title"] or "")
+            if key:
+                counts[key] += 1
+        return counts
+
+    def _quality_normalize_title(self, text: str) -> str:
+        return "".join(ch for ch in (text or "").lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")[:80]
+
+    def _quality_rule_plan(self, row: dict[str, Any], duplicate_counts: dict[str, int]) -> dict[str, Any]:
+        text = f"{row.get('title') or ''}\n{row.get('summary') or ''}".lower()
+        pollution_tokens = ("<system-reminder", "<command-name>", "<local-command-", "[hana_reminder", "[use skill:", "tool_call", "tool_result", "command-caveat", "user-context")
+        temporary_tokens = ("帮我安装", "打开", "访问", "检查一下", "跑一下", "修一下", "这个路径", "这个文件", "当前这个项目")
+        flags: list[str] = []
+        flags.extend([f"pollution:{t}" for t in pollution_tokens if t in text])
+        flags.extend([f"temporary:{t}" for t in temporary_tokens if t in text])
+        evidence_count = int(row.get("evidence_count") or 0)
+        if evidence_count <= 0:
+            flags.append("low_evidence")
+        duplicate_key = self._quality_normalize_title(row.get("title") or "")
+        duplicate_count = duplicate_counts.get(duplicate_key, 1) if duplicate_key else 1
+        if duplicate_count > 1:
+            flags.append("duplicate_candidate")
+
+        if any(f.startswith("pollution:") for f in flags):
+            review_status, retention_class, recall_policy, score, needs_llm = "auto_rejected", "noise", "exclude", 0.05, False
+            note = "规则命中系统/工具污染，默认排除召回。"
+        elif any(f.startswith("temporary:") for f in flags):
+            review_status, retention_class, recall_policy, score, needs_llm = "auto_muted", "temporary_task", "exclude_default", 0.25, False
+            note = "规则命中临时执行任务，默认不进入长期召回。"
+        elif "low_evidence" in flags:
+            review_status, retention_class, recall_policy, score, needs_llm = "auto_flagged", "candidate", "downrank", 0.35, True
+            note = "证据链不足，需要复核。"
+        elif "duplicate_candidate" in flags:
+            review_status, retention_class, recall_policy, score, needs_llm = "auto_flagged", "project_state", "downrank", 0.55, True
+            note = "疑似重复记忆，等待 LLM 或人工合并建议。"
+        else:
+            review_status, retention_class, recall_policy, score, needs_llm = "auto_accepted", "long_term", "include", 0.82, True
+            note = "规则未发现污染/临时任务/证据缺失，暂定长期候选；后续可由 LLM 优化摘要和类型。"
+        return {
+            "memory_id": row["id"],
+            "title": row.get("title"),
+            "review_status": review_status,
+            "retention_class": retention_class,
+            "recall_policy": recall_policy,
+            "quality_score": score,
+            "flags": flags,
+            "duplicate_group_key": duplicate_key if duplicate_count > 1 else "",
+            "duplicate_count": duplicate_count,
+            "needs_llm": needs_llm,
+            "note": note,
+        }
+
     def source_aware_memory_quality(self, limit: int = 20) -> dict[str, Any]:
         """Source-aware memory 质量审计：只读返回候选风险，不修改数据库。"""
         self._ensure_init()
@@ -1186,6 +1346,12 @@ class Engine:
             "source_sessions": int(db.fetchone("SELECT COUNT(*) AS c FROM source_sessions")["c"]),
             "missing_original_titles": int(db.fetchone("SELECT COUNT(*) AS c FROM source_sessions WHERE COALESCE(title_source,'')='missing'")["c"]),
         }
+        review_summary: dict[str, Any] = {"ready": self._memory_quality_schema_ready(), "by_status": [], "by_retention": [], "by_recall_policy": []}
+        if review_summary["ready"]:
+            review_summary["by_status"] = [dict(r) for r in db.fetchall("SELECT review_status, COUNT(*) AS c FROM memory_quality_reviews GROUP BY review_status ORDER BY c DESC")]
+            review_summary["by_retention"] = [dict(r) for r in db.fetchall("SELECT retention_class, COUNT(*) AS c FROM memory_quality_reviews GROUP BY retention_class ORDER BY c DESC")]
+            review_summary["by_recall_policy"] = [dict(r) for r in db.fetchall("SELECT recall_policy, COUNT(*) AS c FROM memory_quality_reviews GROUP BY recall_policy ORDER BY c DESC")]
+            counts["quality_reviewed"] = int(db.fetchone("SELECT COUNT(*) AS c FROM memory_quality_reviews")["c"])
         flags = {
             "pollution_pattern_hits": len(pollution_hits),
             "temporary_task_like_hits": len(temporary_hits),
@@ -1197,6 +1363,7 @@ class Engine:
             "schema_status": schema_status,
             "counts": counts,
             "flags": flags,
+            "review_summary": review_summary,
             "samples": {
                 "pollution_pattern_hits": pollution_hits[:limit],
                 "temporary_task_like_hits": temporary_hits[:limit],
