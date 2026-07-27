@@ -1195,6 +1195,8 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._json(engine.source_aware_memory_quality(
                 limit=int(self._get_query_param("limit", "20")),
             ))
+        elif path == "/api/source-aware/session-review/action":
+            self._handle_source_session_review_action()
         elif path.startswith("/api/source-aware/session/"):
             source_id = path.split("/")[-1]
             result = engine.source_aware_session_detail(source_id)
@@ -1212,6 +1214,21 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._handle_memory_link()
         else:
             self._json({"error": "not found"}, 404)
+
+    def _handle_source_session_review_action(self):
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        body = _j.loads(self.rfile.read(length)) if length > 0 else {}
+        source_session_id = body.get("source_session_id", "")
+        review_status = body.get("review_status", "")
+        note = body.get("note", "")
+        postponed_until = body.get("postponed_until", "")
+        if not source_session_id or not review_status:
+            self._json({"error": "missing source_session_id or review_status"}, 400); return
+        result = engine.source_session_review_update(source_session_id, review_status, note=note, postponed_until=postponed_until)
+        if result.get("error"):
+            self._json(result, 400); return
+        self._json(result)
 
     def _handle_space_action(self):
         import json as _j

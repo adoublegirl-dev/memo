@@ -26,7 +26,7 @@ def test_source_aware_migration_creates_turn_episode_and_evidence_tables(tmp_pat
 
     apply_all_migrations(conn)
 
-    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 19
+    assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 20
 
     source_session_cols = table_columns(conn, "source_sessions")
     assert {"agent_session_id", "source_hash", "original_title", "title_source", "display_title", "display_title_source"}.issubset(source_session_cols)
@@ -41,6 +41,9 @@ def test_source_aware_migration_creates_turn_episode_and_evidence_tables(tmp_pat
     assert {"memory_id", "turn_id", "evidence_role", "weight"}.issubset(table_columns(conn, "memory_turn_sources"))
     assert {"memory_id", "review_status", "retention_class", "recall_policy", "quality_score", "auto_flags_json"}.issubset(
         table_columns(conn, "memory_quality_reviews")
+    )
+    assert {"source_session_id", "review_status", "review_note", "manual_done_count", "manual_progress_count"}.issubset(
+        table_columns(conn, "source_session_review_states")
     )
 
     memory_cols = table_columns(conn, "memory_units")

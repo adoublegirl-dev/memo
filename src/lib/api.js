@@ -32,6 +32,7 @@ export const api = {
   governance: (params = {}) => request(`/api/governance?${new URLSearchParams(params)}`),
   sourceAware: (params = {}) => request(`/api/source-aware?${new URLSearchParams(params)}`),
   sourceAwareMemoryQuality: (params = {}) => request(`/api/source-aware/memory-quality?${new URLSearchParams(params)}`),
+  sourceSessionReviewAction: (body) => request('/api/source-aware/session-review/action', { method: 'POST', body: JSON.stringify(body) }),
   sourceAwareSession: (id) => request(`/api/source-aware/session/${encodeURIComponent(id)}`),
   sourceAwareEvidence: (memoryId) => request(`/api/source-aware/memory/${encodeURIComponent(memoryId)}/evidence`),
   memoryLink: (body) => request('/api/memory/link', { method: 'POST', body: JSON.stringify(body) }),

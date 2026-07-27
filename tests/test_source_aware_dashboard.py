@@ -112,6 +112,19 @@ def test_source_aware_quality_rules_apply_review_table_and_recall_gate():
     assert engine._memory_quality_gate(temp_id)["participates"] is False
 
 
+def test_source_session_review_state_can_be_updated_and_listed():
+    ids = _seed_source_aware_fixture()
+
+    updated = engine.source_session_review_update(ids["source_id"], "in_review", note="处理到一半")
+    overview = engine.source_aware_dashboard(page_size=10)
+    row = next(s for s in overview["sessions"] if s["id"] == ids["source_id"])
+
+    assert updated["updated"] is True
+    assert row["session_review_status"] == "in_review"
+    assert row["effective_review_status"] == "in_review"
+    assert row["session_review_note"] == "处理到一半"
+
+
 def test_source_aware_memory_quality_returns_readonly_flags():
     ids = _seed_source_aware_fixture()
 

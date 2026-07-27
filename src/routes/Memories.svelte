@@ -5,8 +5,9 @@
   let q = '', status = 'active', memories = [], loading = false, error = '';
   let sourceSessionId = '', sourceSessions = [];
   let page = 1, pageSize = '50', total = 0, breakdown = null;
-  let selected = null, detailLoading = false, actionBusy = false, toast = null;
+  let selected = null, detailLoading = false, actionBusy = false, sessionReviewBusy = false, toast = null;
   const statusLabels = { active:'可引用', expired:'已过期', wrong:'已标错', muted:'不引用', deleted:'已删除' };
+  const sessionReviewLabels = { new:'未处理', rule_processed:'规则已处理', needs_review:'需复核', needs_llm:'需 LLM', in_review:'处理中', done:'已完成', postponed:'暂缓', has_issue:'有问题' };
   const typeLabels = { FACT:'事实', DECISION:'决策', PREFERENCE:'偏好', EVENT:'事件', REASONING:'推理' };
   $: totalPages = Math.max(1, Math.ceil(total / Number(pageSize || 50)));
   $: selectedSourceSession = sourceSessions.find(s => s.id === sourceSessionId);
@@ -94,6 +95,15 @@
   }
 
   async function clearSourceSession() { sourceSessionId = ''; page = 1; await load(); }
+  async function setSessionReviewStatus(review_status) {
+    if (!selectedSourceSession) return;
+    const note = review_status === 'postponed' || review_status === 'has_issue' ? (prompt('可选：记录这个会话的处理备注', selectedSourceSession.session_review_note || '') || '') : (selectedSourceSession.session_review_note || '');
+    sessionReviewBusy = true;
+    try {
+      await api.sourceSessionReviewAction({ source_session_id: selectedSourceSession.id, review_status, note });
+      await loadSourceSessions();
+    } finally { sessionReviewBusy = false; }
+  }
 
   onMount(async () => { await Promise.all([loadSourceSessions(), load()]); });
 </script>
@@ -133,9 +143,19 @@
     <div class="item-meta" style="margin-top:12px">当前筛选共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
     {#if selectedSourceSession}
       <div class="hint-card" style="margin-top:12px">
-        当前按来源会话筛选：<strong>{selectedSourceSession.display_title || selectedSourceSession.agent_session_id}</strong>
-        · {selectedSourceSession.source_agent} · memories {selectedSourceSession.memory_count || 0} · evidence {selectedSourceSession.evidence_count || 0}
-        <button class="btn" style="margin-left:8px" on:click={clearSourceSession}>清除会话筛选</button>
+        <div><strong>当前按来源会话筛选：</strong>{selectedSourceSession.display_title || selectedSourceSession.agent_session_id}</div>
+        <div class="item-meta" style="margin-top:6px">
+          {selectedSourceSession.source_agent} · memories {selectedSourceSession.memory_count || 0} · 已规则处理 {selectedSourceSession.quality_reviewed_count || 0} · 长期 {selectedSourceSession.long_term_count || 0} · 临时 {selectedSourceSession.temporary_task_count || 0} · 噪声 {selectedSourceSession.noise_count || 0} · 需LLM {selectedSourceSession.needs_llm_count || 0}
+        </div>
+        <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:10px">
+          <span class="badge green">状态：{sessionReviewLabels[selectedSourceSession.effective_review_status] || selectedSourceSession.effective_review_status || '未处理'}</span>
+          {#if selectedSourceSession.session_review_note}<span class="badge">备注：{selectedSourceSession.session_review_note}</span>{/if}
+          <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('in_review')}>标记处理中</button>
+          <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('done')}>标记已完成</button>
+          <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('postponed')}>暂缓</button>
+          <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('needs_llm')}>需 LLM</button>
+          <button class="btn" on:click={clearSourceSession}>清除会话筛选</button>
+        </div>
       </div>
     {/if}
   </div>

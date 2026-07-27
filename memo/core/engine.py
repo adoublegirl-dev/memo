@@ -1102,6 +1102,18 @@ class Engine:
                     JOIN memory_turn_sources mts ON mts.memory_id=mu.id
                     WHERE mu.source_session_id IS NOT NULL
                     GROUP BY mu.source_session_id
+                ), quality_counts AS (
+                    SELECT mu.source_session_id,
+                           SUM(CASE WHEN mqr.retention_class='long_term' THEN 1 ELSE 0 END) AS long_term_count,
+                           SUM(CASE WHEN mqr.retention_class='temporary_task' THEN 1 ELSE 0 END) AS temporary_task_count,
+                           SUM(CASE WHEN mqr.retention_class='noise' THEN 1 ELSE 0 END) AS noise_count,
+                           SUM(CASE WHEN mqr.retention_class='project_state' THEN 1 ELSE 0 END) AS project_state_count,
+                           SUM(CASE WHEN mqr.needs_llm=1 THEN 1 ELSE 0 END) AS needs_llm_count,
+                           COUNT(mqr.memory_id) AS quality_reviewed_count
+                    FROM memory_units mu
+                    LEFT JOIN memory_quality_reviews mqr ON mqr.memory_id=mu.id
+                    WHERE mu.source_session_id IS NOT NULL
+                    GROUP BY mu.source_session_id
                 )
                 SELECT ss.id, ss.source_agent, ss.agent_session_id, ss.source_path, ss.source_hash,
                        ss.original_title, ss.title_source, ss.display_title, ss.display_title_source,
@@ -1111,12 +1123,27 @@ class Engine:
                        COALESCE(mc.memory_count, 0) AS memory_count,
                        COALESCE(evc.evidence_count, 0) AS evidence_count,
                        COALESCE(tc.tool_call_count, 0) AS tool_call_count,
-                       COALESCE(tc.tool_result_count, 0) AS tool_result_count
+                       COALESCE(tc.tool_result_count, 0) AS tool_result_count,
+                       COALESCE(qc.long_term_count, 0) AS long_term_count,
+                       COALESCE(qc.temporary_task_count, 0) AS temporary_task_count,
+                       COALESCE(qc.noise_count, 0) AS noise_count,
+                       COALESCE(qc.project_state_count, 0) AS project_state_count,
+                       COALESCE(qc.needs_llm_count, 0) AS needs_llm_count,
+                       COALESCE(qc.quality_reviewed_count, 0) AS quality_reviewed_count,
+                       COALESCE(srs.review_status, '') AS session_review_status,
+                       COALESCE(srs.review_note, '') AS session_review_note,
+                       COALESCE(srs.manual_done_count, 0) AS manual_done_count,
+                       COALESCE(srs.manual_progress_count, 0) AS manual_progress_count,
+                       COALESCE(srs.postponed_until, '') AS postponed_until,
+                       COALESCE(srs.reviewed_at, '') AS session_reviewed_at,
+                       COALESCE(srs.updated_at, '') AS session_review_updated_at
                 FROM source_sessions ss
                 LEFT JOIN turn_counts tc ON tc.source_session_id=ss.id
                 LEFT JOIN episode_counts ec ON ec.source_session_id=ss.id
                 LEFT JOIN memory_counts mc ON mc.source_session_id=ss.id
                 LEFT JOIN evidence_counts evc ON evc.source_session_id=ss.id
+                LEFT JOIN quality_counts qc ON qc.source_session_id=ss.id
+                LEFT JOIN source_session_review_states srs ON srs.source_session_id=ss.id
                 {where}
                 ORDER BY COALESCE(ss.updated_at, ss.imported_at, ss.created_at) DESC
                 LIMIT ? OFFSET ?""",
@@ -1460,6 +1487,7 @@ class Engine:
             "source_turns": {"source_session_id", "content", "content_hash", "metadata_json", "turn_index"},
             "episodes": {"source_session_id", "start_turn_id", "end_turn_id"},
             "memory_turn_sources": {"memory_id", "turn_id", "evidence_role"},
+            "source_session_review_states": {"source_session_id", "review_status", "review_note", "manual_done_count", "manual_progress_count"},
         }
         missing: dict[str, list[str]] = {}
         for table, cols in required.items():
@@ -1513,8 +1541,47 @@ class Engine:
             "by_display_title_source": [dict(r) for r in by_display_title_source],
         }
 
+    def source_session_review_update(self, source_session_id: str, review_status: str, note: str = "", postponed_until: str = "") -> dict[str, Any]:
+        """更新来源会话处理队列状态。只写处理状态，不改原始 source/memory。"""
+        self._ensure_init()
+        allowed = {"new", "rule_processed", "needs_review", "needs_llm", "in_review", "done", "postponed", "has_issue"}
+        if review_status not in allowed:
+            return {"error": f"invalid review_status: {review_status}"}
+        existing = db.fetchone("SELECT id FROM source_sessions WHERE id=?", (source_session_id,))
+        if not existing:
+            return {"error": "source session not found"}
+        now = datetime.now().isoformat()
+        db.execute(
+            """INSERT INTO source_session_review_states
+               (source_session_id, review_status, review_note, postponed_until, reviewed_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(source_session_id) DO UPDATE SET
+                 review_status=excluded.review_status,
+                 review_note=excluded.review_note,
+                 postponed_until=excluded.postponed_until,
+                 reviewed_at=excluded.reviewed_at,
+                 updated_at=excluded.updated_at""",
+            (source_session_id, review_status, note or "", postponed_until or None, now, now),
+        )
+        db.commit()
+        row = db.fetchone("SELECT * FROM source_session_review_states WHERE source_session_id=?", (source_session_id,))
+        return {"updated": True, "state": dict(row) if row else {}}
+
+    def _infer_source_session_review_status(self, data: dict[str, Any]) -> str:
+        if data.get("session_review_status"):
+            return data["session_review_status"]
+        memory_count = int(data.get("memory_count") or 0)
+        if memory_count <= 0:
+            return "rule_processed"
+        if int(data.get("needs_llm_count") or 0) > 0:
+            return "needs_llm"
+        if int(data.get("noise_count") or 0) or int(data.get("temporary_task_count") or 0) or int(data.get("project_state_count") or 0):
+            return "needs_review"
+        return "rule_processed"
+
     def _source_aware_session_row(self, row) -> dict[str, Any]:
         data = dict(row)
+        data["effective_review_status"] = self._infer_source_session_review_status(data)
         if data.get("source_path"):
             try:
                 home = str(Path.home())
