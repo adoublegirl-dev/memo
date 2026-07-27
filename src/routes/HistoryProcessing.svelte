@@ -28,6 +28,7 @@
   $: selectedSources = Array.from(selected);
   $: isRunning = job.status === 'running';
   $: llmBlocked = job.current_step === 'llm_enhance' && progress.blocking_reason;
+  $: llmProgress = job.progress?.llm_enhance || {};
   $: canContinue = state?.schema_ready && !loading && !isRunning && job.status !== 'done';
 
   function applyModelFromState(nextState) {
@@ -102,7 +103,7 @@
         <h2>处理进度</h2>
         <div class="item-meta">
           当前：{progress.current_label || stepLabels[job.current_step] || '检测历史源'} · {statusLabels[job.status] || '未开始'}
-          {#if isRunning} · 页面每 2.5 秒自动刷新{/if}
+          {#if isRunning} · 后台处理中，页面每 2.5 秒自动刷新{/if}
         </div>
       </div>
       <div class="progress-percent">{progress.percent ?? 0}%</div>
@@ -113,6 +114,13 @@
         <div class="step-pill" class:active={job.current_step === step} class:done={stepIndex(job.current_step) > i || job.current_step === 'done'}>{i + 1}. {stepLabels[step]}</div>
       {/each}
     </div>
+    {#if job.current_step === 'llm_enhance' && llmProgress.total}
+      <div class="hint-card" style="margin-top:12px">
+        LLM 子进度：{llmProgress.processed || 0}/{llmProgress.total}；每批 {llmProgress.batch_size || model.batch_size || 20} 条自动续跑。
+        {#if llmProgress.failed}失败/跳过：{llmProgress.failed} 条。{/if}
+        {#if llmProgress.pause_requested} 已请求暂停，当前批次完成后停止。{/if}
+      </div>
+    {/if}
     {#if progress.blocking_reason}<div class="hint-card" style="margin-top:12px;color:var(--color-warning)">{progress.blocking_reason}</div>{/if}
     <div class="hint-card" style="margin-top:12px">{state?.llm_note}</div>
   </div>
@@ -177,9 +185,9 @@
 
   <div class="card card-pad" style="margin-top:18px">
     <h2>4. 执行 / 继续</h2>
-    <p class="item-meta">每次点击会执行当前阶段并写入状态。LLM 增强会按批次处理；运行中自动刷新，为避免数据库锁定，运行中不能重复启动。</p>
+    <p class="item-meta">点击一次会启动当前阶段。进入 LLM 增强后，系统会按“每批处理条数”在后台自动续跑到完成；暂停会在当前批次结束后生效。</p>
     <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:12px">
-      <button class="btn primary" disabled={!canContinue || selectedSources.length === 0} on:click={() => act('continue')}>{isRunning ? '处理中，请稍等' : loading ? '执行中' : '继续下一步'}</button>
+      <button class="btn primary" disabled={!canContinue || selectedSources.length === 0} on:click={() => act('continue')}>{isRunning ? '后台处理中' : loading ? '启动中' : '启动 / 继续处理'}</button>
       <button class="btn" disabled={loading || !job.id || !isRunning} on:click={() => act('pause')}>暂停</button>
       <button class="btn" disabled={loading} on:click={() => load()}>刷新状态</button>
     </div>

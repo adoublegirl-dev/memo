@@ -4,6 +4,7 @@
 """
 
 import json
+import threading
 import uuid
 import urllib.error
 import urllib.request
@@ -49,6 +50,8 @@ class Engine:
 
     def __init__(self):
         self._initialized = False
+        self._history_worker_lock = threading.Lock()
+        self._history_worker_thread: threading.Thread | None = None
 
     def init(self) -> None:
         """初始化：执行数据库迁移、加载向量索引。"""
@@ -1107,14 +1110,29 @@ class Engine:
         idx = steps.index(step) if step in steps else 0
         denominator = max(1, len(steps) - 1)
         completed = denominator if step == "done" or status == "done" else max(0, min(idx, denominator))
-        percent = int(round((completed / denominator) * 100))
-        if status == "running" and step != "done":
-            percent = min(99, int(round(((idx + 0.35) / denominator) * 100)))
+        # Fixed stage bands keep the displayed progress monotonic and understandable.
+        # The last step (LLM enhance) owns 80%..100%; batch_size is internal throughput,
+        # not a user-visible need to click one batch at a time.
+        stage_floor = {
+            "detect": 0,
+            "source_import": 15,
+            "memory_extract": 35,
+            "quality_rules": 60,
+            "llm_enhance": 80,
+            "done": 100,
+        }
+        percent = stage_floor.get(step, 0)
+        if status == "done" or step == "done":
+            percent = 100
         progress_json = job.get("progress") or {}
         llm_progress = progress_json.get("llm_enhance") or {}
-        if step == "llm_enhance" and llm_progress.get("total"):
-            llm_ratio = min(1.0, max(0.0, float(llm_progress.get("processed") or 0) / max(1, float(llm_progress.get("total") or 1))))
-            percent = int(round(((4 + llm_ratio) / denominator) * 100))
+        if step == "llm_enhance":
+            total = float(llm_progress.get("total") or 0)
+            if total > 0:
+                llm_ratio = min(1.0, max(0.0, float(llm_progress.get("processed") or 0) / max(1.0, total)))
+                percent = int(round(80 + llm_ratio * 20))
+            else:
+                percent = 80
         blocking_reason = ""
         if step == "llm_enhance" and llm_progress.get("status") == "blocked":
             blocking_reason = "LLM 增强执行器尚未接入；基础处理已可用，当前不会真实调用模型。"
@@ -1162,7 +1180,7 @@ class Engine:
                 "llm_enhance": "LLM 增强（最后一步）",
                 "done": "完成",
             },
-            "llm_note": "LLM 增强永远在规则质量处理之后执行；已接入 OpenAI 兼容执行器。每次继续会按批次处理并实时落库进度，失败后可继续。暂不支持 Anthropic/Gemini/Ollama 的真实调用。"
+            "llm_note": "LLM 增强永远在规则质量处理之后执行；已接入 OpenAI 兼容执行器。点击继续后会在后台按批次自动处理到完成或暂停，并实时落库进度。暂不支持 Anthropic/Gemini/Ollama 的真实调用。"
         }
 
     def _history_normalize_model_config(self, model_config: dict[str, Any] | None, current_row=None) -> dict[str, Any]:
@@ -1269,7 +1287,7 @@ class Engine:
             raise RuntimeError(f"LLM 返回缺少 results 数组: {content[:300]}")
         return [r for r in results if isinstance(r, dict) and r.get("id")]
 
-    def _history_run_llm_enhance(self, job_id: str, progress: dict[str, Any], limit: int = 100000) -> dict[str, Any]:
+    def _history_run_llm_enhance(self, job_id: str, progress: dict[str, Any], limit: int = 100000, keep_running: bool = False) -> dict[str, Any]:
         row = db.fetchone("SELECT model_config_json FROM history_processing_jobs WHERE id=?", (job_id,))
         model = json.loads(row["model_config_json"] or "{}") if row else {}
         batch_size = max(1, min(int(model.get("batch_size") or 20), 100))
@@ -1303,6 +1321,7 @@ class Engine:
         by_id = {r["id"]: r for r in batch}
         success = 0
         now = datetime.now().isoformat(timespec="seconds")
+        attempted_ids = {str(r["id"]) for r in batch}
         for item in enhanced:
             mid = str(item.get("id") or "")
             if mid not in by_id:
@@ -1336,20 +1355,23 @@ class Engine:
             )
             processed_ids.add(mid)
             success += 1
+        processed_ids.update(attempted_ids)
         failed = int(existing.get("failed") or 0) + max(0, len(batch) - success)
+        final = len(processed_ids) >= total
+        next_status = "done" if final else ("running" if keep_running else "ready")
         progress["llm_enhance"] = {
-            "status": "running" if len(processed_ids) < total else "done",
+            "status": next_status,
             "total": total,
             "processed": len(processed_ids),
             "failed": failed,
             "batch_size": batch_size,
             "processed_ids": sorted(processed_ids),
             "last_batch_at": now,
+            "pause_requested": bool(existing.get("pause_requested")),
         }
-        final = len(processed_ids) >= total
         db.execute(
             "UPDATE history_processing_jobs SET progress_json=?, current_step=?, status=?, finished_at=CASE WHEN ? THEN ? ELSE finished_at END, updated_at=?, last_error='' WHERE id=?",
-            (json.dumps(progress, ensure_ascii=False), "done" if final else "llm_enhance", "done" if final else "ready", 1 if final else 0, now, now, job_id),
+            (json.dumps(progress, ensure_ascii=False), "done" if final else "llm_enhance", next_status, 1 if final else 0, now, now, job_id),
         )
         self._history_job_event(job_id, "llm_enhance", f"LLM 增强批次完成：{len(processed_ids)}/{total}", {k: v for k, v in progress["llm_enhance"].items() if k != "processed_ids"})
         return progress["llm_enhance"]
@@ -1396,6 +1418,71 @@ class Engine:
         report["detected_supported_sources"] = detected_sources
         return report
 
+    def _history_llm_worker_is_running(self) -> bool:
+        with self._history_worker_lock:
+            return bool(self._history_worker_thread and self._history_worker_thread.is_alive())
+
+    def _history_start_llm_enhance_worker(self, job_id: str, limit: int = 100000) -> bool:
+        with self._history_worker_lock:
+            if self._history_worker_thread and self._history_worker_thread.is_alive():
+                return False
+            thread = threading.Thread(
+                target=self._history_llm_enhance_worker,
+                args=(job_id, int(limit or 100000)),
+                name="memo-history-llm-enhance",
+                daemon=True,
+            )
+            self._history_worker_thread = thread
+            thread.start()
+            return True
+
+    def _history_llm_enhance_worker(self, job_id: str, limit: int = 100000) -> None:
+        """Run LLM enhancement batches until completion, pause, or failure.
+
+        The HTTP action only starts this worker and returns quickly. Batch size remains
+        the internal LLM payload size; users should not need to click once per batch.
+        """
+        try:
+            self._ensure_init()
+            self._history_job_event(job_id, "llm_enhance", "LLM 增强后台任务已启动")
+            db.commit()
+            while True:
+                row = db.fetchone("SELECT * FROM history_processing_jobs WHERE id=?", (job_id,))
+                if not row:
+                    return
+                progress = json.loads(row["progress_json"] or "{}")
+                llm_progress = progress.get("llm_enhance") or {}
+                if bool(progress.get("pause_requested")) or bool(llm_progress.get("pause_requested")):
+                    now = datetime.now().isoformat(timespec="seconds")
+                    progress.pop("pause_requested", None)
+                    progress["llm_enhance"] = {**llm_progress, "status": "paused", "pause_requested": False}
+                    db.execute(
+                        "UPDATE history_processing_jobs SET progress_json=?, status='paused', current_step='llm_enhance', updated_at=? WHERE id=?",
+                        (json.dumps(progress, ensure_ascii=False), now, job_id),
+                    )
+                    self._history_job_event(job_id, "pause", "LLM 增强已在当前批次后暂停")
+                    db.commit()
+                    return
+                if row["status"] not in {"running", "ready"}:
+                    return
+                result = self._history_run_llm_enhance(job_id, progress, limit=limit, keep_running=True)
+                db.commit()
+                if result.get("status") == "done":
+                    return
+        except Exception as exc:
+            now = datetime.now().isoformat(timespec="seconds")
+            db.execute(
+                "UPDATE history_processing_jobs SET status='failed', last_error=?, updated_at=? WHERE id=?",
+                (str(exc), now, job_id),
+            )
+            self._history_job_event(job_id, "error", str(exc))
+            db.commit()
+            logger.exception("历史 LLM 增强后台任务失败")
+        finally:
+            with self._history_worker_lock:
+                if self._history_worker_thread is threading.current_thread():
+                    self._history_worker_thread = None
+
     def history_processing_action(self, action: str, **kwargs) -> dict[str, Any]:
         """历史会话处理动作。同步执行单步，状态落库，可中断后继续。"""
         self._ensure_init()
@@ -1404,7 +1491,7 @@ class Engine:
         action = action or "overview"
         row = self._history_latest_job()
         if row and row["status"] == "running" and action not in {"pause"}:
-            return {"error": "history processing job is already running; wait for it to finish or pause after the current step", **self.history_processing_overview()}
+            return self.history_processing_overview()
         if action == "scan":
             report = self._history_detect_sources()
             job_id = self._history_create_or_update_job(selected_sources=report.get("detected_supported_sources", []), detect_report=report)
@@ -1421,8 +1508,19 @@ class Engine:
             row = self._history_latest_job()
             if not row:
                 return {"error": "no job"}
-            db.execute("UPDATE history_processing_jobs SET status='paused', updated_at=? WHERE id=?", (datetime.now().isoformat(timespec="seconds"), row["id"]))
-            self._history_job_event(row["id"], "pause", "任务已暂停")
+            now = datetime.now().isoformat(timespec="seconds")
+            if row["status"] == "running" and row["current_step"] == "llm_enhance":
+                progress = json.loads(row["progress_json"] or "{}")
+                llm_progress = progress.get("llm_enhance") or {}
+                progress["llm_enhance"] = {**llm_progress, "pause_requested": True}
+                db.execute(
+                    "UPDATE history_processing_jobs SET progress_json=?, updated_at=? WHERE id=?",
+                    (json.dumps(progress, ensure_ascii=False), now, row["id"]),
+                )
+                self._history_job_event(row["id"], "pause", "已请求暂停；当前 LLM 批次完成后停止")
+            else:
+                db.execute("UPDATE history_processing_jobs SET status='paused', updated_at=? WHERE id=?", (now, row["id"]))
+                self._history_job_event(row["id"], "pause", "任务已暂停")
             db.commit()
             return self.history_processing_overview()
         if action in {"start", "continue", "run_next"}:
@@ -1479,10 +1577,20 @@ class Engine:
             elif step == "quality_rules":
                 result = self.apply_source_aware_quality_rules(dry_run=False)
                 progress["quality_rules"] = result
-                db.execute("UPDATE history_processing_jobs SET progress_json=?, current_step='llm_enhance', status='paused', updated_at=? WHERE id=?", (json.dumps(progress, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), job_id))
-                self._history_job_event(job_id, "quality_rules", "规则质量处理完成；LLM 增强是最后一步，等待执行器接入", result)
+                db.execute("UPDATE history_processing_jobs SET progress_json=?, current_step='llm_enhance', status='ready', updated_at=? WHERE id=?", (json.dumps(progress, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), job_id))
+                self._history_job_event(job_id, "quality_rules", "规则质量处理完成；LLM 增强是最后一步，等待执行", result)
             elif step == "llm_enhance":
-                self._history_run_llm_enhance(job_id, progress, limit=limit)
+                llm_progress = progress.get("llm_enhance") or {}
+                progress.pop("pause_requested", None)
+                progress["llm_enhance"] = {**llm_progress, "status": "running", "pause_requested": False}
+                db.execute(
+                    "UPDATE history_processing_jobs SET progress_json=?, current_step='llm_enhance', status='running', updated_at=?, last_error='' WHERE id=?",
+                    (json.dumps(progress, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), job_id),
+                )
+                self._history_job_event(job_id, "llm_enhance", "LLM 增强自动批处理已启动；将按批次持续处理到完成或暂停")
+                db.commit()
+                self._history_start_llm_enhance_worker(job_id, limit=limit)
+                return self.history_processing_overview()
             db.commit()
         except Exception as exc:
             db.execute("UPDATE history_processing_jobs SET status='failed', last_error=?, updated_at=? WHERE id=?", (str(exc), datetime.now().isoformat(timespec="seconds"), job_id))
