@@ -2,18 +2,15 @@
 chcp 65001 >nul
 setlocal
 
-set ROOT=%~dp0
-set PID_DIR=%ROOT%data\pids
+set "ROOT=%~dp0"
+set "PYTHON_EXE=%ROOT%.venv\Scripts\python.exe"
+if not exist "%PYTHON_EXE%" set "PYTHON_EXE=python"
 
 echo Stopping Memo services...
-
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$pidDir='%PID_DIR%';" ^
-  "$names=@('boot','dashboard','watcher');" ^
-  "foreach($name in $names){ $file=Join-Path $pidDir ($name+'.pid'); if(Test-Path $file){ $pidText=(Get-Content $file -ErrorAction SilentlyContinue | Select-Object -First 1); if($pidText -match '^\d+$'){ Stop-Process -Id ([int]$pidText) -Force -ErrorAction SilentlyContinue }; Remove-Item $file -Force -ErrorAction SilentlyContinue }};" ^
-  "$ports=@(9120,9121); foreach($port in $ports){ $listeners=Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue; foreach($c in $listeners){ Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }};" ^
-  "$root=[IO.Path]::GetFullPath('%ROOT%'); $procs=Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($root) -and ($_.CommandLine -match 'scripts\\(boot_server|memo_dashboard|memo_watcher)\.py') }; foreach($p in $procs){ Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue };" ^
-  "Start-Sleep -Seconds 2;" ^
-  "$still=@(); foreach($port in $ports){ if(Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue){ $still+=$port }}; if($still.Count -gt 0){ Write-Host ('WARNING: Ports still in use: ' + ($still -join ', ')); exit 1 } else { Write-Host 'Memo services stopped.' }"
-
-exit /b %ERRORLEVEL%
+"%PYTHON_EXE%" "%ROOT%scripts\service_control.py" --stop
+if errorlevel 1 (
+  echo ERROR: Memo services could not be stopped completely. Check data\logs and ports 9120/9121.
+  exit /b 1
+)
+echo Memo services stopped.
+exit /b 0

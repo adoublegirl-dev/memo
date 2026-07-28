@@ -2,6 +2,9 @@
 chcp 65001 >nul
 setlocal
 
+set "OPEN_BROWSER=1"
+if /I "%~1"=="--no-browser" set "OPEN_BROWSER=0"
+
 set ROOT=%~dp0
 set PID_DIR=%ROOT%data\pids
 set LOG_DIR=%ROOT%data\logs
@@ -41,7 +44,8 @@ REM 首先启动轻量启动页，占用 9120，避免浏览器在服务预热�
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$script=Join-Path $env:ROOT 'scripts\boot_server.py'; $out=Join-Path $env:LOG_DIR 'boot.out.log'; $err=Join-Path $env:LOG_DIR 'boot.err.log'; $pidFile=Join-Path $env:PID_DIR 'boot.pid'; $args='-u \"' + $script + '\"'; $p=Start-Process -FilePath $env:PYTHON_EXE -ArgumentList $args -WorkingDirectory $env:ROOT -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden; Set-Content -Encoding ascii $pidFile $p.Id"
 
 REM 立刻打开启动页。真正 Dashboard 在 9121 预热，ready 后由 boot server 代理到 9120。
-powershell -NoProfile -Command "Start-Sleep -Milliseconds 700; Start-Process 'http://localhost:9120'"
+REM 自动化与桌面启动器可传 --no-browser，服务进程不依赖浏览器生命周期。
+if "%OPEN_BROWSER%"=="1" powershell -NoProfile -Command "Start-Sleep -Milliseconds 700; Start-Process 'http://localhost:9120'"
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:MEMO_DASHBOARD_PORT='9121'; $script=Join-Path $env:ROOT 'scripts\memo_dashboard.py'; $out=Join-Path $env:LOG_DIR 'dashboard.out.log'; $err=Join-Path $env:LOG_DIR 'dashboard.err.log'; $pidFile=Join-Path $env:PID_DIR 'dashboard.pid'; $args='-u \"' + $script + '\"'; $p=Start-Process -FilePath $env:PYTHON_EXE -ArgumentList $args -WorkingDirectory $env:ROOT -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden; Set-Content -Encoding ascii $pidFile $p.Id"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$script=Join-Path $env:ROOT 'scripts\memo_watcher.py'; $out=Join-Path $env:LOG_DIR 'watcher.out.log'; $err=Join-Path $env:LOG_DIR 'watcher.err.log'; $pidFile=Join-Path $env:PID_DIR 'watcher.pid'; $args='-u \"' + $script + '\"'; $p=Start-Process -FilePath $env:PYTHON_EXE -ArgumentList $args -WorkingDirectory $env:ROOT -RedirectStandardOutput $out -RedirectStandardError $err -PassThru -WindowStyle Hidden; Set-Content -Encoding ascii $pidFile $p.Id"

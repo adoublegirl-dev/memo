@@ -388,19 +388,45 @@ function runBat(scriptName, actionLabel) {
   });
 }
 
-function startMemoServices() {
-  return runBat('start_all.bat', 'starting');
+async function waitForMemoServices(timeoutSeconds = 45) {
+  const waiter = path.join(ROOT, 'scripts', 'wait_for_services.py');
+  if (!fs.existsSync(waiter)) return { ok: false, message: '缺少服务就绪检查脚本。' };
+  const result = await runCommand(getPythonCommand(), [waiter, '--timeout', String(timeoutSeconds)], { cwd: ROOT });
+  const raw = String(result.stdout || result.stderr || '').trim();
+  try {
+    const status = JSON.parse(raw);
+    return { ok: Boolean(result.ok && status.ok), message: status.ok ? 'Memo 服务已就绪。' : compactOutput(JSON.stringify(status, null, 2)) };
+  } catch (_) {
+    return { ok: false, message: compactOutput(raw || '服务就绪检查没有返回有效结果。') };
+  }
 }
 
-function stopMemoServices() {
-  return runBat('stop_all.bat', 'stopping');
+async function startMemoServices() {
+  const started = await runBat('start_all.bat', 'starting');
+  if (!started.ok) return { ok: false, message: '启动脚本执行失败。' };
+  serviceAction = 'starting';
+  refreshAndSend();
+  const ready = await waitForMemoServices();
+  serviceAction = 'idle';
+  refreshAndSend();
+  return ready;
+}
+
+async function stopMemoServices() {
+  const stopped = await runBat('stop_all.bat', 'stopping');
+  return stopped.ok ? { ok: true, message: 'Memo 服务已停止。' } : { ok: false, message: '停止 Memo 服务失败，端口可能仍被占用。' };
 }
 
 async function restartMemoServices() {
   serviceAction = 'restarting';
   refreshAndSend();
-  await runBat('stop_all.bat', 'restarting');
-  return runBat('start_all.bat', 'restarting');
+  const stopped = await runBat('stop_all.bat', 'restarting');
+  if (!stopped.ok) {
+    serviceAction = 'idle';
+    refreshAndSend();
+    return { ok: false, message: '停止旧服务失败，因此未继续重启。请查看端口 9120/9121。' };
+  }
+  return startMemoServices();
 }
 
 function runCommand(command, args = [], options = {}) {
@@ -524,12 +550,16 @@ async function updateMemoService() {
 
     steps.push('启动 Memo 服务');
     const start = await runBat('start_all.bat', 'updating');
-    const ok = Boolean(start.ok);
+    if (!start.ok) {
+      return await finish({ ok: false, message: 'Memo 服务代码已更新，但启动脚本返回异常。请查看 data/logs。' });
+    }
+    steps.push('确认 9120 启动页与 9121 Dashboard 均已就绪');
+    const ready = await waitForMemoServices(60);
     return await finish({
-      ok,
-      message: ok
-        ? `Memo 服务已更新并重启。\n更新模式：${isGitRuntime ? 'Git 源码版' : 'exe 安装版安全覆盖'}\n执行步骤：${steps.join(' → ')}\n${compactOutput(updateOutput)}`
-        : `Memo 服务代码已更新，但启动脚本返回异常。请查看 data/logs。`,
+      ok: ready.ok,
+      message: ready.ok
+        ? `Memo 服务已更新并重启，启动页和 Dashboard 均已就绪。\n更新模式：${isGitRuntime ? 'Git 源码版' : 'exe 安装版安全覆盖'}\n执行步骤：${steps.join(' → ')}\n${compactOutput(updateOutput)}`
+        : `Memo 服务代码已更新，但未能完成启动。\n${ready.message}`,
     });
   } catch (error) {
     try { await runBat('start_all.bat', 'updating'); } catch (_) {}
