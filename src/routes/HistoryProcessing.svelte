@@ -26,7 +26,8 @@
   $: progress = state?.job_progress || {};
   $: detectAgents = job.detect_report?.agents || [];
   $: selectedSources = Array.from(selected);
-  $: isRunning = job.status === 'running';
+  $: staleRunning = Boolean(state?.stale_running);
+  $: isRunning = job.status === 'running' && !staleRunning;
   $: llmBlocked = job.current_step === 'llm_enhance' && progress.blocking_reason;
   $: llmProgress = job.progress?.llm_enhance || {};
   $: scanProgress = job.progress?.scan || {};
@@ -105,7 +106,7 @@
         <h2>处理进度</h2>
         <div class="item-meta">
           当前：{progress.current_label || stepLabels[job.current_step] || '检测历史源'} · {statusLabels[job.status] || '未开始'}
-          {#if isRunning} · 后台处理中，页面每 2.5 秒自动刷新{/if}
+          {#if staleRunning} · 后台任务已中断，可恢复处理{:else if isRunning} · 后台处理中，页面每 2.5 秒自动刷新{/if}
         </div>
       </div>
       <div class="progress-percent">{progress.percent ?? 0}%</div>
@@ -133,6 +134,7 @@
         {#if llmProgress.pause_requested} 已请求暂停，当前批次完成后停止。{/if}
       </div>
     {/if}
+    {#if staleRunning}<div class="hint-card" style="margin-top:12px;color:var(--color-warning)">检测到服务重启后后台 worker 已停止。点击“恢复处理”会从 {llmProgress.processed || 0}/{llmProgress.total || 0} 继续，不会重复处理已完成记录。</div>{/if}
     {#if progress.blocking_reason}<div class="hint-card" style="margin-top:12px;color:var(--color-warning)">{progress.blocking_reason}</div>{/if}
     <div class="hint-card" style="margin-top:12px">{state?.llm_note}</div>
   </div>
@@ -199,7 +201,7 @@
     <h2>4. 执行 / 继续</h2>
     <p class="item-meta">点击一次会启动当前阶段。进入 LLM 增强后，系统会按“每批处理条数”在后台自动续跑到完成；暂停会在当前批次结束后生效。</p>
     <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:12px">
-      <button class="btn primary" disabled={!canContinue || selectedSources.length === 0} on:click={() => act('continue')}>{noNewHistory ? '当前已是最新' : isRunning ? '后台处理中' : loading ? '启动中' : '启动 / 继续处理'}</button>
+      <button class="btn primary" disabled={!canContinue || selectedSources.length === 0} on:click={() => act('continue')}>{noNewHistory ? '当前已是最新' : staleRunning ? '恢复处理' : isRunning ? '后台处理中' : loading ? '启动中' : '启动 / 继续处理'}</button>
       <button class="btn" disabled={loading || !job.id || !isRunning} on:click={() => act('pause')}>暂停</button>
       <button class="btn" disabled={loading} on:click={() => load()}>刷新状态</button>
     </div>

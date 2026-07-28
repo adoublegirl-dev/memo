@@ -1241,10 +1241,14 @@ class Engine:
                 (job["id"],),
             )]
         progress_summary = self._history_progress_summary(job) if job else self._history_progress_summary({})
+        worker_running = self._history_llm_worker_is_running() if job.get("current_step") == "llm_enhance" else False
+        stale_running = bool(job.get("status") == "running" and job.get("current_step") == "llm_enhance" and not worker_running)
         return {
             "schema_ready": ready,
             "job": job,
             "job_progress": progress_summary,
+            "worker_running": worker_running,
+            "stale_running": stale_running,
             "events": events,
             "supported_sources": [
                 {"id": "hanaagent", "label": "HanaAgent"},
