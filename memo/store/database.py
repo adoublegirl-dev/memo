@@ -71,8 +71,11 @@ class Database:
         return row["version"] if row else 0
 
     def _set_version(self, version: int) -> None:
+        # 幂等记录 migration 版本。
+        # 安装版/重复启动场景下，初始化可能在同一数据库上再次触发；
+        # 版本号已存在时应视为已记录，而不是让服务启动失败。
         self.conn.execute(
-            "INSERT INTO schema_version (version) VALUES (?)", (version,)
+            "INSERT OR IGNORE INTO schema_version (version) VALUES (?)", (version,)
         )
         self.conn.commit()
 
