@@ -1201,6 +1201,8 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._handle_history_processing_action()
         elif path == "/api/source-aware/session-review/action":
             self._handle_source_session_review_action()
+        elif path == "/api/source-aware/turn-review/action":
+            self._handle_source_turn_review_action()
         elif path.startswith("/api/source-aware/session/"):
             source_id = path.split("/")[-1]
             result = engine.source_aware_session_detail(source_id)
@@ -1239,12 +1241,29 @@ class MemoHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = _j.loads(self.rfile.read(length)) if length > 0 else {}
         source_session_id = body.get("source_session_id", "")
+        source_session_ids = body.get("source_session_ids") or []
         review_status = body.get("review_status", "")
         note = body.get("note", "")
         postponed_until = body.get("postponed_until", "")
-        if not source_session_id or not review_status:
-            self._json({"error": "missing source_session_id or review_status"}, 400); return
-        result = engine.source_session_review_update(source_session_id, review_status, note=note, postponed_until=postponed_until)
+        if not review_status:
+            self._json({"error": "missing review_status"}, 400); return
+        if source_session_ids:
+            result = engine.source_session_review_batch_update(source_session_ids, review_status, note=note, postponed_until=postponed_until)
+        elif source_session_id:
+            result = engine.source_session_review_update(source_session_id, review_status, note=note, postponed_until=postponed_until)
+        else:
+            self._json({"error": "missing source_session_id or source_session_ids"}, 400); return
+        if result.get("error"):
+            self._json(result, 400); return
+        self._json(result)
+
+    def _handle_source_turn_review_action(self):
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        body = _j.loads(self.rfile.read(length)) if length > 0 else {}
+        result = engine.source_turn_review_batch_update(
+            body.get("source_turn_ids") or [], body.get("review_status", ""), note=body.get("note", "")
+        )
         if result.get("error"):
             self._json(result, 400); return
         self._json(result)

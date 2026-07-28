@@ -16,6 +16,11 @@
   let q = '';
   let turnFilter = 'primary';
   let turnPreviewLimit = '80';
+  let selectedSessionIds = new Set();
+  let selectedTurnIds = new Set();
+  let batchNote = '';
+  let turnBatchNote = '';
+  let batchBusy = false;
 
   $: currentPageSize = Number(pageSize || 30);
   $: total = data?.total || 0;
@@ -67,10 +72,24 @@
   }
   async function search() { page = 1; await load(); }
   async function switchMode(next) { mode = next; page = 1; await load(); }
-  async function gotoPage(next) { page = Math.min(Math.max(1, next), totalPages); await load(); }
+  async function gotoPage(next) { page = Math.min(Math.max(1, next), totalPages); selectedSessionIds = new Set(); await load(); }
+  function toggleSession(id) { selectedSessionIds = new Set(selectedSessionIds); selectedSessionIds.has(id) ? selectedSessionIds.delete(id) : selectedSessionIds.add(id); }
+  function togglePageSessions() {
+    const ids = (data?.sessions || []).map(s => s.id);
+    const allSelected = ids.length > 0 && ids.every(id => selectedSessionIds.has(id));
+    selectedSessionIds = new Set(allSelected ? [] : ids);
+  }
+  async function batchSessionReview(review_status) {
+    if (!selectedSessionIds.size || batchBusy) return;
+    batchBusy = true; error = '';
+    try {
+      await api.sourceSessionReviewAction({ source_session_ids: Array.from(selectedSessionIds), review_status, note: batchNote });
+      selectedSessionIds = new Set(); batchNote = ''; await load();
+    } catch (e) { error = e.message; } finally { batchBusy = false; }
+  }
 
   async function openDetail(id) {
-    detailLoading = true; error = '';
+    detailLoading = true; error = ''; selectedTurnIds = new Set(); turnBatchNote = '';
     try { detail = await api.sourceAwareSession(id); }
     catch (e) { error = e.message; }
     finally { detailLoading = false; }
@@ -83,6 +102,20 @@
   }
   function closeDetailBackdrop(e) { if (e.target === e.currentTarget) detail = null; }
   function closeEvidenceBackdrop(e) { if (e.target === e.currentTarget) evidence = null; }
+  function toggleTurn(id) { selectedTurnIds = new Set(selectedTurnIds); selectedTurnIds.has(id) ? selectedTurnIds.delete(id) : selectedTurnIds.add(id); }
+  function toggleVisibleTurns() {
+    const ids = visibleTurns.map(t => t.id);
+    const allSelected = ids.length > 0 && ids.every(id => selectedTurnIds.has(id));
+    selectedTurnIds = new Set(allSelected ? [] : ids);
+  }
+  async function batchTurnReview(review_status) {
+    if (!selectedTurnIds.size || batchBusy) return;
+    batchBusy = true; error = '';
+    try {
+      await api.sourceTurnReviewAction({ source_turn_ids: Array.from(selectedTurnIds), review_status, note: turnBatchNote });
+      selectedTurnIds = new Set(); turnBatchNote = ''; await openDetail(detail.session.id);
+    } catch (e) { error = e.message; } finally { batchBusy = false; }
+  }
 
   onMount(load);
 </script>
@@ -168,6 +201,14 @@
       {#each displayTitleSourceItems as item}<span class="badge {sourceBadgeClass(item.display_title_source)}">展示：{sourceLabel(item.display_title_source)} · {item.c}</span>{/each}
     </div>
     <div class="item-meta" style="margin-top:12px">当前：{mode === 'missing_titles' ? 'Missing Titles 队列' : 'Source Sessions 总览'} · 匹配 {total} 条 · 第 {page} / {totalPages} 页</div>
+    <div class="batch-bar" style="margin-top:12px">
+      <button class="btn" on:click={togglePageSessions}>{(data?.sessions || []).length && (data?.sessions || []).every(s => selectedSessionIds.has(s.id)) ? '取消本页全选' : '全选本页'}</button>
+      <span class="item-meta">已选 {selectedSessionIds.size} 个会话（仅对勾选项生效）</span>
+      <input class="input" bind:value={batchNote} placeholder="统一处理理由（可选）" />
+      <button class="btn" disabled={!selectedSessionIds.size || batchBusy} on:click={() => batchSessionReview('in_review')}>标记处理中</button>
+      <button class="btn primary" disabled={!selectedSessionIds.size || batchBusy} on:click={() => batchSessionReview('done')}>标记完成</button>
+      <button class="btn" disabled={!selectedSessionIds.size || batchBusy} on:click={() => batchSessionReview('needs_review')}>标记待审</button>
+    </div>
   </div>
 
   {#if data?.schema_status && !data.schema_status.ready}
@@ -185,9 +226,12 @@
       {#each data?.sessions || [] as s}
         <div class="card card-pad">
           <div class="item-row">
-            <div style="min-width:0">
+            <div style="display:flex;gap:10px;align-items:flex-start;min-width:0">
+              <input type="checkbox" checked={selectedSessionIds.has(s.id)} on:change={() => toggleSession(s.id)} aria-label="选择会话" />
+              <div style="min-width:0">
               <div class="item-title">{s.display_title || s.agent_session_id || '未命名来源会话'}</div>
               <div class="item-meta">{s.source_agent || 'unknown'} · {short(s.id, 8)} · {fmtTime(s.updated_at || s.imported_at)}</div>
+              </div>
             </div>
             <button class="btn" on:click={() => openDetail(s.id)}><Eye size={15}/> 详情</button>
           </div>
@@ -279,11 +323,27 @@
             </select>
           </div>
         </div>
+        <div class="batch-bar" style="margin:0 0 12px">
+          <button class="btn" on:click={toggleVisibleTurns}>{visibleTurns.length && visibleTurns.every(t => selectedTurnIds.has(t.id)) ? '取消当前全选' : '全选当前显示'}</button>
+          <span class="item-meta">已选 {selectedTurnIds.size} 条（仅对勾选项生效）</span>
+          <input class="input" bind:value={turnBatchNote} placeholder="统一处理理由（可选）" />
+          <button class="btn" disabled={!selectedTurnIds.size || batchBusy} on:click={() => batchTurnReview('in_review')}>标记处理中</button>
+          <button class="btn" disabled={!selectedTurnIds.size || batchBusy} on:click={() => batchTurnReview('done')}>标记完成</button>
+          <button class="btn danger" disabled={!selectedTurnIds.size || batchBusy} on:click={() => batchTurnReview('soft_deleted')}>批量软删除</button>
+        </div>
         <div class="list">
           {#each visibleTurns as t}
-            <div class="item">
-              <div class="item-title">#{t.turn_index} · {t.role} · {t.source_event_type || 'message'}</div>
-              <div class="item-meta">len {t.content_length} · hash {short(t.content_hash, 12)} · {fmtTime(t.timestamp)} · final {t.is_final_answer ? 'yes' : 'no'} · tool {t.tool_name || '—'}</div>
+            <div class="item" class:muted-turn={t.review_status === 'soft_deleted'}>
+              <div class="item-row">
+                <label style="display:flex;gap:10px;align-items:flex-start;min-width:0;cursor:pointer">
+                  <input type="checkbox" checked={selectedTurnIds.has(t.id)} on:change={() => toggleTurn(t.id)} aria-label="选择对话内容" />
+                  <span>
+                    <span class="item-title">#{t.turn_index} · {t.role} · {t.source_event_type || 'message'}</span>
+                    <span class="item-meta" style="display:block">len {t.content_length} · hash {short(t.content_hash, 12)} · {fmtTime(t.timestamp)} · final {t.is_final_answer ? 'yes' : 'no'} · tool {t.tool_name || '—'} · 状态 {t.review_status}</span>
+                    {#if t.review_note}<span class="item-meta" style="display:block">理由：{t.review_note}</span>{/if}
+                  </span>
+                </label>
+              </div>
             </div>
           {:else}<div class="empty card">暂无 turns</div>{/each}
         </div>

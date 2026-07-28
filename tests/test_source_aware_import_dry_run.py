@@ -214,7 +214,7 @@ def test_apply_to_test_db_writes_evidence_chain_to_test_database(tmp_path: Path)
 
     result = apply_to_test_db("generic", db_path, path=str(transcript), limit=1)
 
-    assert result["validation"]["schema_version"] == 21
+    assert result["validation"]["schema_version"] == 22
     assert result["validation"]["source_sessions"] == 1
     assert result["validation"]["source_turns"] >= 1
     assert result["validation"]["episodes"] >= 1
@@ -232,7 +232,7 @@ def test_apply_to_test_db_uses_first_user_turn_display_title_for_missing_origina
 
     result = apply_to_test_db("generic", db_path, path=str(transcript), limit=1)
 
-    assert result["validation"]["schema_version"] == 21
+    assert result["validation"]["schema_version"] == 22
     import sqlite3
     conn = sqlite3.connect(db_path)
     row = conn.execute("SELECT original_title, display_title, display_title_source FROM source_sessions LIMIT 1").fetchone()

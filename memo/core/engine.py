@@ -2112,10 +2112,14 @@ class Engine:
         if not row:
             return None
         turns = [dict(r) for r in db.fetchall(
-            """SELECT id, agent_turn_id, parent_turn_id, role, content_hash,
-                      COALESCE(CAST(json_extract(metadata_json, '$.content_length') AS INTEGER), length(content), 0) AS content_length,
-                      timestamp, turn_index, is_final_answer, is_tool_call, is_tool_result, tool_name, source_event_type
-               FROM source_turns WHERE source_session_id=? ORDER BY turn_index LIMIT 300""",
+            """SELECT st.id, st.agent_turn_id, st.parent_turn_id, st.role, st.content_hash,
+                      COALESCE(CAST(json_extract(st.metadata_json, '$.content_length') AS INTEGER), length(st.content), 0) AS content_length,
+                      st.timestamp, st.turn_index, st.is_final_answer, st.is_tool_call, st.is_tool_result, st.tool_name, st.source_event_type,
+                      COALESCE(trs.review_status, 'active') AS review_status,
+                      COALESCE(trs.review_note, '') AS review_note
+               FROM source_turns st
+               LEFT JOIN source_turn_review_states trs ON trs.source_turn_id=st.id
+               WHERE st.source_session_id=? ORDER BY st.turn_index LIMIT 300""",
             (source_session_id,),
         )]
         episodes = [dict(r) for r in db.fetchall(
@@ -2189,6 +2193,7 @@ class Engine:
             "episodes": {"source_session_id", "start_turn_id", "end_turn_id"},
             "memory_turn_sources": {"memory_id", "turn_id", "evidence_role"},
             "source_session_review_states": {"source_session_id", "review_status", "review_note", "manual_done_count", "manual_progress_count"},
+            "source_turn_review_states": {"source_turn_id", "review_status", "review_note"},
         }
         missing: dict[str, list[str]] = {}
         for table, cols in required.items():
@@ -2267,6 +2272,48 @@ class Engine:
         db.commit()
         row = db.fetchone("SELECT * FROM source_session_review_states WHERE source_session_id=?", (source_session_id,))
         return {"updated": True, "state": dict(row) if row else {}}
+
+    def source_session_review_batch_update(self, source_session_ids: list[str], review_status: str, note: str = "", postponed_until: str = "") -> dict[str, Any]:
+        """Batch update only explicitly selected source-session queue rows."""
+        self._ensure_init()
+        unique_ids = list(dict.fromkeys(str(item).strip() for item in (source_session_ids or []) if str(item).strip()))
+        if not unique_ids:
+            return {"error": "no source sessions selected"}
+        if len(unique_ids) > 200:
+            return {"error": "too many source sessions selected (max 200)"}
+        updated, missing = [], []
+        for source_session_id in unique_ids:
+            result = self.source_session_review_update(source_session_id, review_status, note=note, postponed_until=postponed_until)
+            if result.get("updated"):
+                updated.append(source_session_id)
+            else:
+                missing.append(source_session_id)
+        return {"updated": len(updated), "selected": len(unique_ids), "updated_ids": updated, "missing_ids": missing, "review_status": review_status, "note": note or ""}
+
+    def source_turn_review_batch_update(self, source_turn_ids: list[str], review_status: str, note: str = "") -> dict[str, Any]:
+        """Soft-govern explicitly selected raw turns; never delete or alter original content."""
+        self._ensure_init()
+        allowed = {"active", "in_review", "done", "soft_deleted"}
+        if review_status not in allowed:
+            return {"error": f"invalid turn review_status: {review_status}"}
+        unique_ids = list(dict.fromkeys(str(item).strip() for item in (source_turn_ids or []) if str(item).strip()))
+        if not unique_ids:
+            return {"error": "no source turns selected"}
+        if len(unique_ids) > 500:
+            return {"error": "too many source turns selected (max 500)"}
+        placeholders = ",".join("?" for _ in unique_ids)
+        existing = {row["id"] for row in db.fetchall(f"SELECT id FROM source_turns WHERE id IN ({placeholders})", tuple(unique_ids))}
+        now = datetime.now().isoformat()
+        for turn_id in existing:
+            db.execute(
+                """INSERT INTO source_turn_review_states (source_turn_id, review_status, review_note, reviewed_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(source_turn_id) DO UPDATE SET review_status=excluded.review_status,
+                     review_note=excluded.review_note, reviewed_at=excluded.reviewed_at, updated_at=excluded.updated_at""",
+                (turn_id, review_status, note or "", now, now),
+            )
+        db.commit()
+        return {"updated": len(existing), "selected": len(unique_ids), "updated_ids": sorted(existing), "missing_ids": [item for item in unique_ids if item not in existing], "review_status": review_status, "note": note or ""}
 
     def _infer_source_session_review_status(self, data: dict[str, Any]) -> str:
         if data.get("session_review_status"):

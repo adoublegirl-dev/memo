@@ -2,6 +2,8 @@ const { app, BrowserWindow, Menu, Tray, nativeImage, Notification, ipcMain, shel
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const https = require('https');
+const crypto = require('crypto');
 
 function candidateAncestors(startPath, maxDepth = 6) {
   const result = [];
@@ -640,6 +642,72 @@ function appVersion() {
   }
 }
 
+function compareVersions(left, right) {
+  const normalize = (value) => String(value || '').replace(/^v/, '').split(/[-+]/)[0].split('.').map((n) => Number(n) || 0);
+  const a = normalize(left); const b = normalize(right);
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0) ? 1 : -1;
+  }
+  return 0;
+}
+
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const input = fs.createReadStream(filePath);
+    input.on('data', (chunk) => hash.update(chunk));
+    input.on('end', () => resolve(hash.digest('hex')));
+    input.on('error', reject);
+  });
+}
+
+function downloadFile(url, destination) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { headers: { 'User-Agent': 'Memo-Desktop-Companion' } }, (response) => {
+      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
+        response.resume(); downloadFile(response.headers.location, destination).then(resolve, reject); return;
+      }
+      if (response.statusCode !== 200) { response.resume(); reject(new Error(`下载更新失败：HTTP ${response.statusCode}`)); return; }
+      const output = fs.createWriteStream(destination);
+      response.pipe(output);
+      output.on('finish', () => output.close(() => resolve(destination)));
+      output.on('error', reject);
+    });
+    request.setTimeout(120000, () => request.destroy(new Error('下载更新超时')));
+    request.on('error', reject);
+  });
+}
+
+async function installDesktopUpdate() {
+  const latest = await fetchJson(RELEASE_API, null);
+  if (!latest) return { ok: false, message: '无法连接 GitHub Release 更新源。' };
+  const current = appVersion();
+  const tag = latest.tag_name || latest.name || '';
+  if (compareVersions(tag, current) <= 0) return { ok: true, message: `当前已是最新版本 ${current}。` };
+  const asset = (latest.assets || []).find((item) => /Setup.*\.exe$/i.test(item.name || ''));
+  if (!asset?.browser_download_url) return { ok: false, message: `Release ${tag} 未找到 Windows Setup 安装包。` };
+  const tempDir = path.join(app.getPath('temp'), 'memo-desktop-update');
+  fs.mkdirSync(tempDir, { recursive: true });
+  const target = path.join(tempDir, asset.name);
+  try {
+    if (fs.existsSync(target)) fs.unlinkSync(target);
+    await downloadFile(asset.browser_download_url, target);
+    const size = fs.statSync(target).size;
+    if (size < 1024 * 1024) throw new Error('下载文件异常小，已取消安装。');
+    const publishedDigest = String(asset.digest || '').replace(/^sha256:/i, '').toLowerCase();
+    if (publishedDigest) {
+      const actualDigest = await sha256File(target);
+      if (actualDigest !== publishedDigest) throw new Error('安装包 SHA-256 校验不一致，已取消安装。');
+    }
+    const child = spawn(target, [], { detached: true, stdio: 'ignore', windowsHide: false });
+    child.unref();
+    setTimeout(() => app.quit(), 1200);
+    return { ok: true, message: `已下载 ${tag} 并打开安装程序。请按安装向导完成覆盖安装，安装器会保留本地 data 和 .env。` };
+  } catch (error) {
+    return { ok: false, message: `启动器更新失败：${error?.message || error}` };
+  }
+}
+
 async function checkForUpdates() {
   const current = appVersion();
   const latest = await fetchJson(RELEASE_API, null);
@@ -700,6 +768,7 @@ ipcMain.handle('memo:getMcpConfig', () => buildMcpConfig());
 ipcMain.handle('memo:copyMcpConfig', (_event, text) => copyMcpConfig(text));
 ipcMain.handle('memo:openMemoRoot', () => openMemoRoot());
 ipcMain.handle('memo:checkForUpdates', () => checkForUpdates());
+ipcMain.handle('memo:installDesktopUpdate', () => installDesktopUpdate());
 ipcMain.handle('memo:setWindowAutoHideSuspended', (_event, suspended) => {
   windowAutoHideSuspended = Boolean(suspended);
   if (windowAutoHideSuspended) showWindow();

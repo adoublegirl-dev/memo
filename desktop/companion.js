@@ -31,6 +31,7 @@ const els = {
   closeUpdateGuideBtn: $('closeUpdateGuideBtn'),
   updateStatusText: $('updateStatusText'),
   runCheckUpdateBtn: $('runCheckUpdateBtn'),
+  installDesktopUpdateBtn: $('installDesktopUpdateBtn'),
   runUpdateServiceBtn: $('runUpdateServiceBtn'),
   updateServiceBtn: $('updateServiceBtn'),
   openReleasePageBtn: $('openReleasePageBtn'),
@@ -170,6 +171,18 @@ els.runCheckUpdateBtn.addEventListener('click', async () => {
     els.runCheckUpdateBtn.disabled = false;
   }
 });
+els.installDesktopUpdateBtn.addEventListener('click', async () => {
+  els.installDesktopUpdateBtn.disabled = true;
+  els.updateStatusText.textContent = '正在下载并启动安装器更新，请不要关闭当前窗口…';
+  try {
+    const result = await window.memoCompanion.installDesktopUpdate();
+    els.updateStatusText.textContent = result?.message || (result?.ok ? '已启动安装器更新。' : '启动器更新失败。');
+  } catch (error) {
+    els.updateStatusText.textContent = `启动器更新失败：${error?.message || error}`;
+  } finally {
+    els.installDesktopUpdateBtn.disabled = false;
+  }
+});
 els.runUpdateServiceBtn.addEventListener('click', async () => {
   await window.memoCompanion.setWindowAutoHideSuspended(true);
   const confirmed = confirm('将停止 Memo 服务、归档当前数据库和 .env、拉取 GitHub 最新代码并重启服务。继续吗？');
@@ -179,6 +192,7 @@ els.runUpdateServiceBtn.addEventListener('click', async () => {
   }
   els.runUpdateServiceBtn.disabled = true;
   els.runCheckUpdateBtn.disabled = true;
+  els.installDesktopUpdateBtn.disabled = true;
   els.openReleasePageBtn.disabled = true;
   els.updateStatusText.textContent = '正在更新 Memo 服务，请不要关闭窗口…';
   try {
@@ -190,6 +204,7 @@ els.runUpdateServiceBtn.addEventListener('click', async () => {
   } finally {
     els.runUpdateServiceBtn.disabled = false;
     els.runCheckUpdateBtn.disabled = false;
+    els.installDesktopUpdateBtn.disabled = false;
     els.openReleasePageBtn.disabled = false;
     await window.memoCompanion.setWindowAutoHideSuspended(false);
   }

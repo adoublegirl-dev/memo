@@ -35,6 +35,7 @@ export const api = {
   historyProcessing: () => request('/api/history-processing'),
   historyProcessingAction: (body) => request('/api/history-processing/action', { method: 'POST', body: JSON.stringify(body) }),
   sourceSessionReviewAction: (body) => request('/api/source-aware/session-review/action', { method: 'POST', body: JSON.stringify(body) }),
+  sourceTurnReviewAction: (body) => request('/api/source-aware/turn-review/action', { method: 'POST', body: JSON.stringify(body) }),
   sourceAwareSession: (id) => request(`/api/source-aware/session/${encodeURIComponent(id)}`),
   sourceAwareEvidence: (memoryId) => request(`/api/source-aware/memory/${encodeURIComponent(memoryId)}/evidence`),
   memoryLink: (body) => request('/api/memory/link', { method: 'POST', body: JSON.stringify(body) }),

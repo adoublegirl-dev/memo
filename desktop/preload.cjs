@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('memoCompanion', {
   copyMcpConfig: (text) => ipcRenderer.invoke('memo:copyMcpConfig', text),
   openMemoRoot: () => ipcRenderer.invoke('memo:openMemoRoot'),
   checkForUpdates: () => ipcRenderer.invoke('memo:checkForUpdates'),
+  installDesktopUpdate: () => ipcRenderer.invoke('memo:installDesktopUpdate'),
   updateMemoService: () => ipcRenderer.invoke('memo:updateMemoService'),
   setWindowAutoHideSuspended: (suspended) => ipcRenderer.invoke('memo:setWindowAutoHideSuspended', Boolean(suspended)),
   openReleasePage: () => ipcRenderer.invoke('memo:openReleasePage'),
