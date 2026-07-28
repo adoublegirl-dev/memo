@@ -447,12 +447,37 @@ async function updateMemoService() {
     steps.push('停止 Memo 服务');
     await runBat('stop_all.bat', 'updating');
 
-    steps.push('归档当前数据库和 .env');
+    steps.push('确认 Source-Aware 新库为唯一运行库');
+    const prepareScript = path.join(ROOT, 'scripts', 'prepare_source_aware_runtime.py');
+    if (!fs.existsSync(prepareScript)) {
+      await runBat('start_all.bat', 'updating');
+      return await finish({
+        ok: false,
+        message: '当前安装版缺少 Source-Aware 数据库准备器。请先安装最新 Release；安装后旧 memo.db 将只备份，不会再被服务使用。',
+      });
+    }
+    const prepared = await runCommand(
+      getPythonCommand(),
+      [prepareScript, '--apply', '--confirm', 'PREPARE_SOURCE_AWARE'],
+      { cwd: ROOT },
+    );
+    if (!prepared.ok) {
+      await runBat('start_all.bat', 'updating');
+      return await finish({
+        ok: false,
+        message: `Source-Aware 新库准备失败，未下载或覆盖任何服务文件，更新已安全停止。\n${compactOutput(prepared.stderr || prepared.stdout).replace(/\uFFFD/g, '?')}`,
+      });
+    }
+    steps.push('归档当前 Source-Aware 数据库和 .env');
     const archiveScript = path.join(ROOT, 'scripts', 'archive_current_db.py');
     if (fs.existsSync(archiveScript)) {
       const archive = await runCommand(getPythonCommand(), [archiveScript, '--apply', '--confirm', 'ARCHIVE', '--label', 'desktop-update'], { cwd: ROOT });
       if (!archive.ok) {
-        return await finish({ ok: false, message: `数据库归档失败，已停止更新。\n${compactOutput(archive.stderr || archive.stdout)}` });
+        const archiveDetail = compactOutput(archive.stderr || archive.stdout).replace(/\uFFFD/g, '?');
+        return await finish({
+          ok: false,
+          message: `数据库归档失败，未下载或覆盖任何服务文件，更新已安全停止。\n${archiveDetail}\n\n请确认 Memo 安装目录的 .env 中 MEMO_DB_PATH 指向当前实际数据库后重试。`,
+        });
       }
     } else {
       steps.push('未找到 archive_current_db.py，跳过脚本归档');
@@ -487,7 +512,7 @@ async function updateMemoService() {
         return await finish({ ok: false, message: `安装版服务代码更新失败，已尝试重新启动服务。\n${compactOutput(update.stderr || update.stdout)}` });
       }
       updateOutput = update.stdout;
-      steps.push('保留 data / .env / 数据库 / WAL / SHM');
+      steps.push('保留 data / .env / Source-Aware 数据库 / WAL / SHM');
     }
 
     steps.push('编译检查');

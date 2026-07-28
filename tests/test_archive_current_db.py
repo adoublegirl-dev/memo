@@ -1,6 +1,21 @@
 from pathlib import Path
 
-from scripts.archive_current_db import build_plan, dry_run_report, execute_archive, sha256_file
+from scripts.archive_current_db import PROJECT_ROOT, _db_path_from_env_file, build_plan, dry_run_report, execute_archive, sha256_file
+
+
+def test_archive_reads_source_aware_path_from_install_env(tmp_path: Path):
+    env = tmp_path / ".env"
+    env.write_text("# comment\nMEMO_DB_PATH=data/memo_source_aware.db\n", encoding="utf-8")
+
+    assert _db_path_from_env_file(env) == PROJECT_ROOT / "data" / "memo_source_aware.db"
+
+
+def test_archive_reads_absolute_path_from_install_env(tmp_path: Path):
+    env = tmp_path / ".env"
+    expected = tmp_path / "external" / "memo.db"
+    env.write_text(f'MEMO_DB_PATH="{expected}"\n', encoding="utf-8")
+
+    assert _db_path_from_env_file(env) == expected
 
 
 def test_archive_current_db_dry_run_does_not_create_files(tmp_path: Path):

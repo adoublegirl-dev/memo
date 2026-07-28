@@ -62,18 +62,51 @@ def file_info(path: Path) -> dict[str, Any]:
     }
 
 
+def _db_path_from_env_file(env_path: Path) -> Path | None:
+    """仅读取 MEMO_DB_PATH，避免归档脚本因旧配置模块而退回旧库。"""
+    if not env_path.exists():
+        return None
+    try:
+        for raw_line in env_path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() != "MEMO_DB_PATH":
+                continue
+            value = value.strip().strip("\"'")
+            if not value:
+                return None
+            candidate = Path(value)
+            return candidate if candidate.is_absolute() else PROJECT_ROOT / candidate
+    except OSError:
+        return None
+    return None
+
+
 def resolve_default_db_path() -> Path:
-    """从 Memo 配置解析当前数据库路径。"""
+    """解析当前生产库，优先以安装目录 .env 的 MEMO_DB_PATH 为准。"""
+    # 安装版更新时，先读项目自己的 .env；不能依赖进程环境或历史 config.py。
+    from_env_file = _db_path_from_env_file(PROJECT_ROOT / ".env")
+    if from_env_file:
+        return from_env_file
+
+    raw = os.getenv("MEMO_DB_PATH", "")
+    if raw:
+        p = Path(raw)
+        return p if p.is_absolute() else PROJECT_ROOT / p
+
     try:
         from memo.core.config import config
-
-        return Path(config.db_path)
+        configured = Path(config.db_path)
+        # 旧版 config.py 可能默认 memo.db；没有显式配置时不让它覆盖新版默认库。
+        if configured.name != "memo.db" or configured.exists():
+            return configured
     except Exception:
-        raw = os.getenv("MEMO_DB_PATH", "")
-        if raw:
-            p = Path(raw)
-            return p if p.is_absolute() else PROJECT_ROOT / p
-        return PROJECT_ROOT / "data" / "memo.db"
+        pass
+
+    # 运行库唯一默认值是 source-aware；旧 memo.db 只能由准备器归档，不能再被归档器选为运行库。
+    return PROJECT_ROOT / "data" / "memo_source_aware.db"
 
 
 @dataclass
