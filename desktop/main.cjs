@@ -24,7 +24,8 @@ function isPackagedResourceRoot(candidate) {
 function commonExternalMemoRoots() {
   const roots = [];
   const home = app.getPath('home');
-  const execRoot = path.parse(path.dirname(process.execPath || process.cwd())).root;
+  const execDir = path.dirname(process.execPath || process.cwd());
+  const execRoot = path.parse(execDir).root;
   const cwdRoot = path.parse(process.cwd()).root;
   for (const driveRoot of new Set([execRoot, cwdRoot, 'C:\\', 'D:\\', 'E:\\'].filter(Boolean))) {
     roots.push(path.join(driveRoot, 'memo'));
@@ -32,6 +33,19 @@ function commonExternalMemoRoots() {
   }
   roots.push(path.join(home, 'memo'));
   roots.push(path.join(home, 'Memo'));
+
+  // 安装器常位于项目工作区的相邻目录。扫描少量祖先目录的一层子目录，
+  // 例如从「Memo启动器」找到同级的「Memo_V0.1.0」，避免误用 resources/app。
+  for (const parent of candidateAncestors(execDir, 6)) {
+    try {
+      const children = fs.readdirSync(parent, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && /memo/i.test(entry.name))
+        .slice(0, 40);
+      for (const child of children) roots.push(path.join(parent, child.name));
+    } catch (_) {
+      // 无权限或不存在时跳过。
+    }
+  }
   return roots;
 }
 
@@ -83,6 +97,7 @@ let lastSnapshot = null;
 let notificationsPausedUntil = 0;
 let serviceAction = 'idle';
 let serviceUpdateRunning = false;
+let windowAutoHideSuspended = false;
 let loginItemEnabledCache = false;
 let loginItemUserSelected = false;
 
@@ -138,7 +153,7 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'companion.html'));
   mainWindow.on('blur', () => {
-    hideWindow();
+    if (!windowAutoHideSuspended && !serviceUpdateRunning) hideWindow();
   });
 }
 
@@ -607,6 +622,11 @@ ipcMain.handle('memo:getMcpConfig', () => buildMcpConfig());
 ipcMain.handle('memo:copyMcpConfig', (_event, text) => copyMcpConfig(text));
 ipcMain.handle('memo:openMemoRoot', () => openMemoRoot());
 ipcMain.handle('memo:checkForUpdates', () => checkForUpdates());
+ipcMain.handle('memo:setWindowAutoHideSuspended', (_event, suspended) => {
+  windowAutoHideSuspended = Boolean(suspended);
+  if (windowAutoHideSuspended) showWindow();
+  return windowAutoHideSuspended;
+});
 ipcMain.handle('memo:updateMemoService', () => updateMemoService());
 ipcMain.handle('memo:openReleasePage', () => openReleasePage());
 

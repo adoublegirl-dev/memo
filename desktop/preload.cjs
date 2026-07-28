@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('memoCompanion', {
   openMemoRoot: () => ipcRenderer.invoke('memo:openMemoRoot'),
   checkForUpdates: () => ipcRenderer.invoke('memo:checkForUpdates'),
   updateMemoService: () => ipcRenderer.invoke('memo:updateMemoService'),
+  setWindowAutoHideSuspended: (suspended) => ipcRenderer.invoke('memo:setWindowAutoHideSuspended', Boolean(suspended)),
   openReleasePage: () => ipcRenderer.invoke('memo:openReleasePage'),
   onSnapshot: (callback) => {
     const listener = (_event, snapshot) => callback(snapshot);
