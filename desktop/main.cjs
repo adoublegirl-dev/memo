@@ -442,9 +442,7 @@ async function updateMemoService() {
   };
 
   try {
-    if (!fs.existsSync(path.join(ROOT, '.git'))) {
-      return await finish({ ok: false, message: `当前 Memo 路径不是 Git 仓库，无法自动更新：${ROOT}` });
-    }
+    const isGitRuntime = fs.existsSync(path.join(ROOT, '.git'));
 
     steps.push('停止 Memo 服务');
     await runBat('stop_all.bat', 'updating');
@@ -460,11 +458,36 @@ async function updateMemoService() {
       steps.push('未找到 archive_current_db.py，跳过脚本归档');
     }
 
-    steps.push('拉取 GitHub 最新代码');
-    const pull = await runCommand('git', ['-c', 'http.proxy=', '-c', 'https.proxy=', 'pull', '--ff-only', 'origin', 'main'], { cwd: ROOT });
-    if (!pull.ok) {
-      await runBat('start_all.bat', 'updating');
-      return await finish({ ok: false, message: `git pull 失败，已尝试重新启动服务。\n${compactOutput(pull.stderr || pull.stdout)}` });
+    let updateOutput = '';
+    if (isGitRuntime) {
+      steps.push('拉取 GitHub 最新代码');
+      const pull = await runCommand('git', ['-c', 'http.proxy=', '-c', 'https.proxy=', 'pull', '--ff-only', 'origin', 'main'], { cwd: ROOT });
+      if (!pull.ok) {
+        await runBat('start_all.bat', 'updating');
+        return await finish({ ok: false, message: `git pull 失败，已尝试重新启动服务。\n${compactOutput(pull.stderr || pull.stdout)}` });
+      }
+      updateOutput = pull.stdout;
+    } else {
+      steps.push('下载 GitHub 最新服务代码包');
+      const bundledUpdater = path.join(ROOT, 'scripts', 'update_bundled_runtime.py');
+      if (!fs.existsSync(bundledUpdater)) {
+        await runBat('start_all.bat', 'updating');
+        return await finish({
+          ok: false,
+          message: '当前是 exe 安装版，且旧版本尚不支持安装版在线更新。请先安装最新 Release；以后即可在启动器内更新 Memo 服务。',
+        });
+      }
+      const update = await runCommand(
+        getPythonCommand(),
+        [bundledUpdater, '--apply', '--confirm', 'UPDATE_BUNDLED', '--target-root', ROOT],
+        { cwd: ROOT },
+      );
+      if (!update.ok) {
+        await runBat('start_all.bat', 'updating');
+        return await finish({ ok: false, message: `安装版服务代码更新失败，已尝试重新启动服务。\n${compactOutput(update.stderr || update.stdout)}` });
+      }
+      updateOutput = update.stdout;
+      steps.push('保留 data / .env / 数据库 / WAL / SHM');
     }
 
     steps.push('编译检查');
@@ -480,7 +503,7 @@ async function updateMemoService() {
     return await finish({
       ok,
       message: ok
-        ? `Memo 服务已更新并重启。\n执行步骤：${steps.join(' → ')}\n${compactOutput(pull.stdout)}`
+        ? `Memo 服务已更新并重启。\n更新模式：${isGitRuntime ? 'Git 源码版' : 'exe 安装版安全覆盖'}\n执行步骤：${steps.join(' → ')}\n${compactOutput(updateOutput)}`
         : `Memo 服务代码已更新，但启动脚本返回异常。请查看 data/logs。`,
     });
   } catch (error) {
