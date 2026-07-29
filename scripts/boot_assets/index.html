@@ -1,6 +1,1379 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Memo · 正在启动</title><link rel="stylesheet" href="/boot-assets/style.css"></head><body>
-<canvas id="view"></canvas><div id="fx"></div>
-<main class="shell"><header><small>LOCAL PRIVATE AI CONTEXT HUB</small><h1>MEMO</h1><p>MEMORY CORE INITIALIZATION</p></header>
-<section class="status"><div class="status-head"><div><small>BOOT SEQUENCE</small><h2 id="phase">正在唤醒记忆核心</h2></div><strong id="timer">00:00</strong></div><p id="detail">建立本地私有上下文引擎的初始秩序。</p><div id="steps" class="steps"></div><div class="progress"><i id="bar"></i></div><footer><span id="state">WAITING FOR SERVICES</span><span>PORT 9120 // MEMO</span></footer></section>
-</main><div id="render-error"></div>
-<script src="/boot-assets/shaders.js"></script><script src="/boot-assets/boot.js"></script></body></html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Memo · 正在启动</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    background: #04060a;
+    color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    cursor: pointer;
+  }
+
+  .ambient {
+    position: fixed;
+    inset: 0;
+    z-index: -5;
+    pointer-events: none;
+    background:
+      radial-gradient(55% 36% at 42% 4%, rgba(176, 98, 255, .10), transparent 66%),
+      radial-gradient(46% 34% at 72% 78%, rgba(0, 166, 255, .075), transparent 68%),
+      radial-gradient(38% 30% at 24% 66%, rgba(0, 220, 170, .045), transparent 65%),
+      #04060a;
+    animation: breathe 10s ease-in-out infinite alternate;
+  }
+
+  .aurora {
+    position: fixed;
+    inset: 0;
+    z-index: -4;
+    pointer-events: none;
+    opacity: .16;
+    overflow: hidden;
+  }
+  .aurora::before,
+  .aurora::after {
+    content: "";
+    position: absolute;
+    width: 160%;
+    height: 58%;
+    border-radius: 50%;
+    filter: blur(90px);
+  }
+  .aurora::before {
+    left: -35%; top: -18%;
+    background: linear-gradient(115deg, rgba(170, 80, 255, .35), transparent 42%, rgba(0, 220, 190, .22), transparent 72%);
+    animation: auroraA 22s ease-in-out infinite;
+  }
+  .aurora::after {
+    right: -40%; bottom: -25%;
+    background: linear-gradient(230deg, rgba(0, 145, 255, .28), transparent 38%, rgba(255, 90, 180, .18), transparent 68%);
+    animation: auroraB 26s ease-in-out 6s infinite;
+  }
+
+  canvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+  }
+  #bgCanvas { z-index: -3; filter: blur(2px); }
+  #graphCanvas { z-index: -2; }
+  #fxCanvas { z-index: -1; }
+
+  .content {
+    position: relative;
+    z-index: 2;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 70px 32px 32px;
+    pointer-events: none;
+  }
+  .content-inner {
+    max-width: 760px;
+    opacity: 0; /* 彻底版：视觉文字改由 WebGL 纹理绘制，DOM 仅保留语义 */
+    transform-origin: var(--wave-origin-x, 50%) var(--wave-origin-y, 50%);
+    will-change: transform, filter, text-shadow;
+  }
+  .content-inner.text-water-active,
+  .panel.text-water-active {
+    filter: url(#text-water-filter);
+    text-shadow: 0 0 12px rgba(120, 210, 255, .16);
+  }
+  .heading {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .32em;
+    font-size: clamp(28px, 3.6vw, 48px);
+    font-weight: 800;
+    line-height: 1.08;
+    letter-spacing: -.018em;
+    color: #fff;
+  }
+  .heading span {
+    opacity: 0;
+    transform: translateY(32px);
+    animation: fadeUp .75s cubic-bezier(.22,1,.36,1) forwards;
+  }
+  .sub {
+    margin-top: 26px;
+    max-width: 430px;
+    color: rgba(255,255,255,.62);
+    font-size: 14px;
+    line-height: 1.72;
+    font-weight: 300;
+    opacity: 0;
+    transform: translateY(20px);
+    animation: fadeUp .75s cubic-bezier(.22,1,.36,1) .9s forwards;
+  }
+  .hint {
+    margin-top: 36px;
+    color: rgba(255,255,255,.26);
+    font-size: 12px;
+    letter-spacing: .08em;
+    opacity: 0;
+    transform: translateY(16px);
+    animation: fadeUp .75s cubic-bezier(.22,1,.36,1) 1.3s forwards;
+  }
+
+  .panel {
+    position: fixed;
+    z-index: 4;
+    left: 50%; bottom: 34px;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 7px;
+    user-select: none;
+  }
+  .counter, .themes { display: none !important; }
+  .status { opacity: 1; color: rgba(194,225,255,.42); }
+
+  /* 启动观测框：保留旧版的阶段感，但收敛成与蓝色图谱共用的线框语言。 */
+  .boot-frame {
+    position: fixed;
+    z-index: 5;
+    right: clamp(24px, 4vw, 64px);
+    bottom: clamp(24px, 4vh, 52px);
+    width: min(370px, calc(100vw - 48px));
+    padding: 18px 19px 16px;
+    border: 1px solid rgba(113, 190, 255, .34);
+    background: linear-gradient(135deg, rgba(3, 13, 30, .52), rgba(4, 10, 26, .22));
+    box-shadow: inset 0 0 32px rgba(44, 139, 255, .055), 0 16px 70px rgba(0, 0, 0, .22);
+    backdrop-filter: blur(8px);
+    pointer-events: none;
+    /* WebGL 持续绘制时，呼吸只动画 compositor 友好的 opacity，避免背景/阴影/filter 重绘卡顿。 */
+    will-change: opacity;
+    animation: bootFrameBreathe 7.2s ease-in-out infinite;
+  }
+  @keyframes bootFrameBreathe {
+    0%, 100% { opacity: .82; }
+    50% { opacity: 1; }
+  }
+  .boot-frame::before, .boot-frame::after {
+    content: ''; position: absolute; width: 24px; height: 24px; border-color: rgba(137, 205, 255, .74); pointer-events: none;
+  }
+  .boot-frame::before { left: -1px; top: -1px; border-left: 2px solid; border-top: 2px solid; }
+  .boot-frame::after { right: -1px; bottom: -1px; border-right: 2px solid; border-bottom: 2px solid; }
+  .boot-frame__top { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+  .boot-frame__eyebrow { color:rgba(165,218,255,.54); font:500 9px/1 ui-monospace, "SF Mono", Consolas, monospace; letter-spacing:.25em; }
+  .boot-frame__clock { color:rgba(209,238,255,.7); font:400 12px/1 ui-monospace, "SF Mono", Consolas, monospace; }
+  .boot-frame h2 { margin:10px 0 5px; color:rgba(231,247,255,.94); font-size:17px; font-weight:600; letter-spacing:.025em; }
+  .boot-frame p { margin:0; color:rgba(182,219,250,.54); font-size:12px; line-height:1.65; }
+  .boot-progress { height:2px; margin:15px 0 12px; overflow:hidden; background:rgba(120,191,255,.16); }
+  .boot-progress i { display:block; width:7%; height:100%; background:linear-gradient(90deg, #4baeff, #b8e5ff); box-shadow:0 0 12px #4baeff; transition:width .6s cubic-bezier(.22,1,.36,1); }
+  .boot-steps { display:grid; grid-template-columns:repeat(4, 1fr); gap:7px; }
+  .boot-step { min-width:0; color:rgba(150,197,233,.28); font:500 9px/1.35 ui-monospace, "SF Mono", Consolas, monospace; letter-spacing:.05em; }
+  .boot-step i { display:block; width:5px; height:5px; margin-bottom:6px; border-radius:50%; background:currentColor; box-shadow:none; transition:.3s; }
+  .boot-step.active { color:#7fc6ff; }
+  .boot-step.active i { box-shadow:0 0 10px currentColor; }
+  .boot-step.done { color:rgba(178,226,255,.72); }
+  .boot-step.done i { box-shadow:0 0 7px currentColor; }
+  @media (max-width:680px) { .boot-frame { left:18px; right:18px; bottom:22px; width:auto; } .boot-steps { grid-template-columns:repeat(2, 1fr); row-gap:10px; } }
+  .counter {
+    color: rgba(255,255,255,.44);
+    font-size: 13px;
+    font-weight: 300;
+    opacity: 0; /* 视觉状态文字也交给 WebGL 绘制 */
+  }
+  .status {
+    color: rgba(255,255,255,.22);
+    font-size: 10px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    opacity: 0;
+  }
+  .themes { display: flex; gap: 10px; margin-top: 2px; }
+  .theme-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,.12);
+    background: transparent;
+    cursor: pointer;
+    transition: transform .28s ease, border-color .28s ease, box-shadow .28s ease;
+  }
+  .theme-btn:hover { transform: scale(1.13); border-color: rgba(255,255,255,.45); }
+  .theme-btn.active { border-color: rgba(255,255,255,.8); box-shadow: 0 0 18px currentColor; }
+
+  @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
+
+  @keyframes breathe { from { opacity: .72; } to { opacity: 1; } }
+  @keyframes auroraA {
+    0%, 100% { transform: translate(0,0) rotate(0deg) scale(1); }
+    35% { transform: translate(4%,2%) rotate(2deg) scale(1.08); }
+    70% { transform: translate(-3%,0) rotate(-1.5deg) scale(.95); }
+  }
+  @keyframes auroraB {
+    0%, 100% { transform: translate(0,0) rotate(0deg) scale(1); }
+    40% { transform: translate(-4%,-2%) rotate(-2deg) scale(1.08); }
+    75% { transform: translate(2%,1%) rotate(1.4deg) scale(.96); }
+  }
+</style>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute; pointer-events:none; opacity:0;">
+    <filter id="text-water-filter">
+      <feTurbulence id="text-water-turbulence" type="fractalNoise" baseFrequency="0.012 0.028" numOctaves="2" seed="8" result="noise" />
+      <feDisplacementMap id="text-water-displacement" in="SourceGraphic" in2="noise" scale="0" xChannelSelector="R" yChannelSelector="G" />
+    </filter>
+  </svg>
+  <div class="ambient"></div>
+  <div class="aurora"></div>
+  <canvas id="bgCanvas"></canvas>
+  <canvas id="graphCanvas"></canvas>
+  <canvas id="fxCanvas"></canvas>
+
+  <main class="content">
+    <div class="content-inner">
+      <h1 class="heading" id="heading"></h1>
+      <p class="sub">正在建立本地私有记忆空间，加载检索索引、关联图谱与上下文服务。点击画面可观察知识图谱的响应与重组。</p>
+      <p class="hint">LOCAL PRIVATE MEMORY · STARTING SERVICES</p>
+    </div>
+  </main>
+
+  <div class="panel"><div class="status" id="status">INITIALIZING LOCAL MEMORY SERVICES</div></div>
+  <section class="boot-frame" aria-live="polite">
+    <div class="boot-frame__top"><span class="boot-frame__eyebrow">MEMO BOOT SEQUENCE</span><span class="boot-frame__clock" id="boot-clock">00:00</span></div>
+    <h2 id="boot-phase">正在唤醒记忆空间</h2>
+    <p id="boot-detail">正在建立本地服务连接，请稍候。</p>
+    <div class="boot-progress"><i id="boot-bar"></i></div>
+    <div class="boot-steps" id="boot-steps">
+      <span class="boot-step active"><i></i>本地环境</span><span class="boot-step"><i></i>记忆数据库</span><span class="boot-step"><i></i>检索图谱</span><span class="boot-step"><i></i>工作台就绪</span>
+    </div>
+  </section>
+
+<script>
+const headingText = 'MEMO · 记忆正在苏醒';
+const heading = document.getElementById('heading');
+const content = document.querySelector('.content');
+const contentInner = document.querySelector('.content-inner');
+const panel = document.querySelector('.panel');
+const textTurbulence = document.getElementById('text-water-turbulence');
+const textDisplacement = document.getElementById('text-water-displacement');
+let textRippleRaf = 0;
+const pageStart = performance.now();
+[...headingText].forEach((char, i) => {
+  const span = document.createElement('span');
+  span.textContent = char;
+  span.style.animationDelay = `${0.08 + i * 0.055}s`;
+  span.style.setProperty('--wave-index', i);
+  heading.appendChild(span);
+});
+
+// Memo 启动页固定使用蓝色单主题，不提供主题切换。
+const theme = { node: [92, 176, 255], edge: [56, 126, 235], flow: [150, 216, 255], halo: [92, 176, 255] };
+
+const bgCanvas = document.getElementById('bgCanvas');
+const graphCanvas = document.getElementById('graphCanvas');
+const fxCanvas = document.getElementById('fxCanvas');
+const bg = bgCanvas.getContext('2d');
+
+// 图谱先画到离屏 canvas，再由 WebGL 对整张图谱做水波位移
+const graphSource = document.createElement('canvas');
+const ctx = graphSource.getContext('2d');
+const fx = fxCanvas.getContext('2d');
+const gl = graphCanvas.getContext('webgl', { alpha: true, premultipliedAlpha: false });
+let waterRenderer = null;
+let W = 0, H = 0;
+
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  for (const c of [bgCanvas, graphCanvas, fxCanvas]) {
+    c.width = W;
+    c.height = H;
+  }
+  graphSource.width = W;
+  graphSource.height = H;
+  if (waterRenderer) waterRenderer.resize(W, H);
+  if (!nodes.length) initGraph();
+}
+window.addEventListener('resize', resize);
+
+function rand(min, max) { return min + Math.random() * (max - min); }
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function dist(a, b) { const dx = a.x - b.x, dy = a.y - b.y; return Math.hypot(dx, dy); }
+function easeInOutCubic(t) { return t < .5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2; }
+function easeInOutSine(t) { return -(Math.cos(Math.PI * t) - 1) / 2; }
+function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+
+let nodes = [];
+let clusters = [];
+let chunks = [];
+let ripples = [];
+let sparks = [];
+let flows = [];
+let moduleFlows = [];
+let tendrils = [];
+let refractionDust = [];
+let refractionFibers = [];
+let backgroundGlints = [];
+let retrievalCount = 0;
+let bootReady = false;
+let bootReloadScheduled = false;
+const bootStartedAt = performance.now();
+const bootPhases = [
+  ['正在唤醒记忆空间', '正在建立本地服务连接，请稍候。'],
+  ['连接记忆数据库', '正在检查迁移与本地持久化连接。'],
+  ['加载检索图谱', '正在恢复向量、关键词与关联检索能力。'],
+  ['等待工作台接管', '服务即将就绪，正在完成健康检查。'],
+];
+function renderBootProgress(ready = false) {
+  const elapsed = (performance.now() - bootStartedAt) / 1000;
+  const ratio = ready ? 1 : Math.min(.92, .07 + elapsed / 28);
+  const phase = ready ? 3 : Math.min(3, Math.floor(ratio * 4));
+  const [title, detail] = ready ? ['Memo 服务已就绪', '正在进入 Memo 管理平台。'] : bootPhases[phase];
+  document.getElementById('boot-phase').textContent = title;
+  document.getElementById('boot-detail').textContent = detail;
+  document.getElementById('boot-bar').style.width = `${Math.round(ratio * 100)}%`;
+  const seconds = Math.floor(elapsed);
+  document.getElementById('boot-clock').textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  document.querySelectorAll('.boot-step').forEach((node, index) => node.className = `boot-step ${ready || index < phase ? 'done' : index === phase ? 'active' : ''}`);
+}
+let mode = 'stable';
+let modeUntil = 0;
+let lastTime = performance.now();
+let mouse = { x: -9999, y: -9999, active: false, pulseX: -9999, pulseY: -9999, pulseStart: -9999 };
+
+function interactionOffset(x, y, t) {
+  let ox = 0, oy = 0;
+  if (mouse.active) {
+    const dx = x - mouse.x;
+    const dy = y - mouse.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const radius = 185;
+    if (d < radius) {
+      const f = Math.pow(1 - d / radius, 2);
+      // 鼠标移动是轻微避让，不再像之前强行推散
+      ox += (dx / d) * f * 22;
+      oy += (dy / d) * f * 22;
+    }
+  }
+  // 点击扩散冲击已关闭：避免和 WebGL 水波叠加后看起来像多重快速水波
+  return { x: ox, y: oy };
+}
+
+const NODE_COUNT = 126;
+
+function createShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(shader));
+    gl.deleteShader(shader);
+    return null;
+  }
+  return shader;
+}
+
+function createProgram(gl, vs, fs) {
+  const program = gl.createProgram();
+  gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vs));
+  gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(program));
+    return null;
+  }
+  return program;
+}
+
+class WaterRenderer {
+  constructor(gl) {
+    this.gl = gl;
+    this.drops = [];
+    const vs = `
+      attribute vec2 a_position;
+      varying vec2 v_uv;
+      void main() {
+        v_uv = (a_position + 1.0) * 0.5;
+        gl_Position = vec4(a_position, 0.0, 1.0);
+      }
+    `;
+    const fs = `
+      precision mediump float;
+      varying vec2 v_uv;
+      uniform sampler2D u_texture;
+      uniform vec2 u_resolution;
+      uniform float u_time;
+      uniform int u_count;
+      uniform vec2 u_centers[8];
+      uniform float u_starts[8];
+      uniform float u_strengths[8];
+
+      float easeOut(float t) { return 1.0 - pow(1.0 - t, 3.0); }
+
+      void main() {
+        vec2 pixel = v_uv * u_resolution;
+        vec2 offset = vec2(0.0);
+        for (int i = 0; i < 8; i++) {
+          if (i >= u_count) break;
+          float p = clamp((u_time - u_starts[i]) / 6.20, 0.0, 1.0);
+          if (p <= 0.0 || p >= 1.0) continue;
+          vec2 c = u_centers[i];
+          vec2 dir = pixel - c;
+          float d = length(dir) + 0.001;
+          dir /= d;
+          float radius = easeOut(p) * length(u_resolution) * 0.88;
+          float band = mix(155.0, 42.0, p);
+          float delta = d - radius;
+          float envelope = exp(-(delta * delta) / (2.0 * band * band));
+          // 更低频的双层水波：波距更大，过渡更柔
+          float wave1 = sin(delta * 0.036 - p * 7.6);
+          float wave2 = sin(delta * 0.058 - p * 12.0) * 0.14;
+          float fade = smoothstep(1.0, 0.0, p);
+          float wave = (wave1 + wave2) * envelope * fade * u_strengths[i] * 1.45;
+          offset += dir * wave;
+        }
+        vec2 uv = v_uv + offset / u_resolution;
+        uv = clamp(uv, vec2(0.001), vec2(0.999));
+        vec4 color = texture2D(u_texture, uv);
+        gl_FragColor = color;
+      }
+    `;
+    this.program = createProgram(gl, vs, fs);
+    this.buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+    this.texture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    this.loc = {
+      pos: gl.getAttribLocation(this.program, 'a_position'),
+      tex: gl.getUniformLocation(this.program, 'u_texture'),
+      res: gl.getUniformLocation(this.program, 'u_resolution'),
+      time: gl.getUniformLocation(this.program, 'u_time'),
+      count: gl.getUniformLocation(this.program, 'u_count'),
+      centers: gl.getUniformLocation(this.program, 'u_centers'),
+      starts: gl.getUniformLocation(this.program, 'u_starts'),
+      strengths: gl.getUniformLocation(this.program, 'u_strengths')
+    };
+  }
+  resize(w, h) {
+    this.gl.viewport(0, 0, w, h);
+  }
+  drop(x, y, strength = 50) {
+    this.drops.push({ x, y, start: performance.now() / 1000, strength });
+    this.drops = this.drops.slice(-8);
+  }
+  render(sourceCanvas, now) {
+    const gl = this.gl;
+    gl.clearColor(0,0,0,0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(this.program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    gl.enableVertexAttribArray(this.loc.pos);
+    gl.vertexAttribPointer(this.loc.pos, 2, gl.FLOAT, false, 0, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, sourceCanvas);
+    gl.uniform1i(this.loc.tex, 0);
+    gl.uniform2f(this.loc.res, W, H);
+    gl.uniform1f(this.loc.time, now / 1000);
+    const active = this.drops.filter(d => now / 1000 - d.start < 6.20).slice(-8);
+    this.drops = active;
+    const centers = new Float32Array(16);
+    const starts = new Float32Array(8);
+    const strengths = new Float32Array(8);
+    active.forEach((d, i) => {
+      centers[i*2] = d.x;
+      centers[i*2+1] = H - d.y;
+      starts[i] = d.start;
+      strengths[i] = d.strength;
+    });
+    gl.uniform1i(this.loc.count, active.length);
+    gl.uniform2fv(this.loc.centers, centers);
+    gl.uniform1fv(this.loc.starts, starts);
+    gl.uniform1fv(this.loc.strengths, strengths);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  }
+}
+
+class Cluster {
+  constructor(id, x, y, colorShift = 0) {
+    this.id = id;
+    this.x = x;
+    this.y = y;
+    this.tx = x;
+    this.ty = y;
+    this.radius = rand(88, 132);
+    this.phase = rand(0, Math.PI * 2);
+    this.colorShift = colorShift;
+    this.createdAt = performance.now();
+    this.coreDelay = rand(5100, 6100);
+    this.coreFade = rand(1100, 1700);
+    this.rotationSpeed = rand(.000045, .000115) * (Math.random() > .5 ? 1 : -1);
+    this.cores = Array.from({ length: 1 + Math.floor(Math.random() * 3) }, (_, i) => ({
+      angle: rand(0, Math.PI * 2),
+      radius: rand(0, this.radius * .26),
+      size: rand(4.8, 7.6) * (i === 0 ? 1.18 : .92),
+      phase: rand(0, Math.PI * 2),
+      alpha: rand(.55, .86)
+    }));
+    this.satellites = Array.from({ length: 7 + Math.floor(Math.random() * 8) }, () => ({
+      angle: rand(0, Math.PI * 2),
+      radius: rand(this.radius * .95, this.radius * 1.38),
+      size: rand(.9, 1.7),
+      speed: rand(.00018, .00048) * (Math.random() > .5 ? 1 : -1),
+      phase: rand(0, Math.PI * 2),
+      alpha: rand(.18, .42)
+    }));
+  }
+  update(t) {
+    this.phase += 0.002;
+    this.x += (this.tx - this.x) * 0.012;
+    this.y += (this.ty - this.y) * 0.012;
+    this.x += Math.sin(t * 0.00018 + this.phase) * 0.05;
+    this.y += Math.cos(t * 0.00016 + this.phase) * 0.04;
+  }
+}
+
+class Node {
+  constructor(id, clusterId, localAngle, localRadius) {
+    this.id = id;
+    this.clusterId = clusterId;
+    this.localAngle = localAngle;
+    this.localRadius = localRadius;
+    this.x = 0;
+    this.y = 0;
+    this.tx = 0;
+    this.ty = 0;
+    this.size = rand(1.8, 3.4);
+    this.phase = rand(0, Math.PI * 2);
+    this.orbitSpeed = rand(.000035, .00016) * (Math.random() > .5 ? 1 : -1);
+    this.alpha = rand(.55, .95);
+    this.chunkId = null;
+    this.transition = null;
+  }
+  stableTarget(t) {
+    const c = clusters[this.clusterId % clusters.length];
+    const cSpin = c.rotationSpeed || 0;
+    const depthFactor = .65 + Math.min(1.45, this.localRadius / Math.max(1, c.radius));
+    const orbit = this.localAngle + t * (cSpin + this.orbitSpeed * depthFactor) + Math.sin(t * 0.0007 + this.phase) * 0.24;
+    const rr = this.localRadius + Math.sin(t * 0.0011 + this.phase) * 4;
+    return { x: c.x + Math.cos(orbit) * rr, y: c.y + Math.sin(orbit) * rr };
+  }
+  update(t) {
+    if (this.transition) {
+      const tr = this.transition;
+      const p = clamp((t - tr.start) / tr.duration, 0, 1);
+      const splitEnd = 0.44;
+      let target;
+      if (p < splitEnd) {
+        // 起步加速、离开旧图谱时再刹住
+        const q = easeInOutSine(p / splitEnd);
+        target = {
+          x: tr.fromX + (tr.scatterX - tr.fromX) * q + tr.chunkLocalX,
+          y: tr.fromY + (tr.scatterY - tr.fromY) * q + tr.chunkLocalY
+        };
+      } else {
+        // 汇入新图谱时有明显减速吸附感
+        const q = easeInOutCubic((p - splitEnd) / (1 - splitEnd));
+        target = {
+          x: tr.scatterX + (tr.finalX - tr.scatterX) * q + tr.finalLocalX,
+          y: tr.scatterY + (tr.finalY - tr.scatterY) * q + tr.finalLocalY
+        };
+      }
+      this.x = target.x;
+      this.y = target.y;
+      if (p >= 1) {
+        this.clusterId = tr.finalClusterId;
+        this.localAngle = tr.finalAngle;
+        this.localRadius = tr.finalRadius;
+        this.chunkId = null;
+        this.transition = null;
+      }
+      return;
+    }
+    const target = this.stableTarget(t);
+    const inter = interactionOffset(target.x, target.y, t);
+    this.x += (target.x + inter.x - this.x) * 0.052;
+    this.y += (target.y + inter.y - this.y) * 0.052;
+  }
+}
+
+class Ripple {
+  constructor(x, y, delay = 0) {
+    this.x = x;
+    this.y = y;
+    this.delay = delay;
+    this.age = 0;
+    this.life = 1;
+    this.max = Math.hypot(W, H) * 1.08;
+    this.seed = Math.random() * 1000;
+  }
+  progress() {
+    if (this.age < this.delay) return 0;
+    return Math.min(1, (this.age - this.delay) / 125);
+  }
+  radius() {
+    return this.max * easeOutCubic(this.progress());
+  }
+  update() {
+    this.age++;
+    const p = this.progress();
+    this.r = this.radius();
+    this.life = 1 - p;
+  }
+  displacementAt(x, y) {
+    const p = this.progress();
+    if (p <= 0 || p >= 1) return {x: 0, y: 0};
+    const dx = x - this.x;
+    const dy = y - this.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const r = this.radius();
+    const band = Math.max(34, 62 * (1 - p) + 18);
+    const delta = d - r;
+    const envelope = Math.exp(-(delta * delta) / (2 * band * band));
+    if (envelope < .002) return {x: 0, y: 0};
+    const wave = Math.sin(delta * .13 - p * Math.PI * 7);
+    const amp = 16 * this.life * envelope * wave;
+    return { x: (dx / d) * amp, y: (dy / d) * amp };
+  }
+  drawWavyRing(baseR, alpha, width, wobble, color) {
+    if (baseR <= 0) return;
+    const seg = 180;
+    fx.beginPath();
+    for (let i = 0; i <= seg; i++) {
+      const a = (Math.PI * 2 * i) / seg;
+      const w = Math.sin(a * 9 + this.seed) * wobble + Math.sin(a * 17 + this.seed * .7) * wobble * .45;
+      const rr = baseR + w;
+      const x = this.x + Math.cos(a) * rr;
+      const y = this.y + Math.sin(a) * rr;
+      if (i === 0) fx.moveTo(x, y);
+      else fx.lineTo(x, y);
+    }
+    fx.strokeStyle = color;
+    fx.lineWidth = width;
+    fx.stroke();
+  }
+  draw() {
+    if (this.age < this.delay || this.life <= 0 || this.r <= 0) return;
+    const [r,g,b] = theme.halo;
+    const alpha = this.life;
+
+    // 不再是简单圆圈：绘制多层带噪声的水波波峰
+    this.drawWavyRing(this.r, alpha, 3.6 * alpha + .6, 10 * alpha, `rgba(${r},${g},${b},${alpha * .22})`);
+    this.drawWavyRing(this.r - 34, alpha, 2.4 * alpha + .4, 7 * alpha, `rgba(255,255,255,${alpha * .10})`);
+    this.drawWavyRing(this.r + 42, alpha, 1.7 * alpha + .3, 12 * alpha, `rgba(${r},${g},${b},${alpha * .075})`);
+
+    // 淡淡的波面光晕
+    const inner = Math.max(0.1, this.r - 80);
+    const outer = Math.max(inner + 1, this.r + 90);
+    const grad = fx.createRadialGradient(this.x, this.y, inner, this.x, this.y, outer);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(.5, `rgba(${r},${g},${b},${alpha * .026})`);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    fx.beginPath();
+    fx.arc(this.x, this.y, outer, 0, Math.PI * 2);
+    fx.fillStyle = grad;
+    fx.fill();
+  }
+}
+
+function rippleDisplace(x, y) {
+  let ox = 0, oy = 0;
+  for (const r of ripples) {
+    if (r.life <= 0) continue;
+    const d = r.displacementAt(x, y);
+    ox += d.x;
+    oy += d.y;
+  }
+  return { x: x + ox, y: y + oy };
+}
+
+class Spark {
+  constructor(x, y, angle, speed) {
+    this.x = x;
+    this.y = y;
+    this.vx = Math.cos(angle) * speed;
+    this.vy = Math.sin(angle) * speed;
+    this.life = 1;
+    this.decay = rand(.012, .03);
+  }
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vx *= .965;
+    this.vy *= .965;
+    this.life -= this.decay;
+  }
+  draw() {
+    if (this.life <= 0) return;
+    const [r,g,b] = theme.flow;
+    const rad = Math.max(0.1, 4 * this.life);
+    const grad = fx.createRadialGradient(this.x, this.y, 0, this.x, this.y, rad * 2.2);
+    grad.addColorStop(0, `rgba(255,255,255,${this.life * .95})`);
+    grad.addColorStop(.24, `rgba(${r},${g},${b},${this.life * .74})`);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    fx.beginPath();
+    fx.arc(this.x, this.y, rad * 2.2, 0, Math.PI * 2);
+    fx.fillStyle = grad;
+    fx.fill();
+  }
+}
+
+class Flow {
+  constructor() {
+    const settled = nodes.filter(n => !n.transition);
+    if (settled.length < 2) { this.life = 0; return; }
+    this.a = settled[Math.floor(Math.random() * settled.length)];
+    const same = settled.filter(n => n !== this.a && n.clusterId === this.a.clusterId);
+    const pool = same.length ? same : settled.filter(n => n !== this.a);
+    this.b = pool[Math.floor(Math.random() * pool.length)];
+    this.p = 0;
+    this.speed = rand(.004, .009);
+    this.life = 1;
+  }
+  update() {
+    if (!this.a || !this.b || this.a.transition || this.b.transition) { this.life = 0; return; }
+    this.p += this.speed;
+    if (this.p >= 1) this.life = 0;
+  }
+  draw() {
+    if (this.life <= 0) return;
+    const q = easeInOutCubic(this.p);
+    const rawX = this.a.x + (this.b.x - this.a.x) * q;
+    const rawY = this.a.y + (this.b.y - this.a.y) * q;
+    const pos = rippleDisplace(rawX, rawY);
+    const x = pos.x, y = pos.y;
+    const [r,g,b] = theme.flow;
+    fx.beginPath();
+    fx.arc(x, y, 1.4, 0, Math.PI * 2);
+    fx.fillStyle = `rgba(${r},${g},${b},.75)`;
+    fx.shadowBlur = 8;
+    fx.shadowColor = `rgba(${r},${g},${b},1)`;
+    fx.fill();
+    fx.shadowBlur = 0;
+  }
+}
+
+class ModuleFlow {
+  constructor() {
+    if (clusters.length < 2) { this.life = 0; return; }
+    this.a = clusters[Math.floor(Math.random() * clusters.length)];
+    const pool = clusters.filter(c => c !== this.a);
+    this.b = pool[Math.floor(Math.random() * pool.length)];
+    this.start = performance.now();
+    this.duration = rand(2600, 5200);
+    this.phase = rand(0, Math.PI * 2);
+    this.life = 1;
+    this.width = rand(.45, .95);
+  }
+  update(t) {
+    const p = (t - this.start) / this.duration;
+    this.life = 1 - p;
+    if (p >= 1 || !this.a || !this.b) this.life = 0;
+  }
+  draw(t) {
+    if (this.life <= 0) return;
+    const p = clamp((t - this.start) / this.duration, 0, 1);
+    const q = easeInOutCubic(p);
+    const [r,g,b] = theme.flow;
+    const ax = this.a.x, ay = this.a.y;
+    const bx = this.b.x, by = this.b.y;
+    const mx = (ax + bx) / 2 + Math.sin(this.phase) * 58;
+    const my = (ay + by) / 2 + Math.cos(this.phase) * 58;
+
+    const start = rippleDisplace(ax, ay);
+    const ctrl = rippleDisplace(mx, my);
+    const end = rippleDisplace(bx, by);
+
+    // 极淡跨模块通路底线
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.quadraticCurveTo(ctrl.x, ctrl.y, end.x, end.y);
+    ctx.strokeStyle = `rgba(${r},${g},${b},${0.035 * this.life})`;
+    ctx.lineWidth = this.width;
+    ctx.stroke();
+
+    // 激活光点沿曲线移动
+    const x1 = ax + (mx - ax) * q;
+    const y1 = ay + (my - ay) * q;
+    const x2 = mx + (bx - mx) * q;
+    const y2 = my + (by - my) * q;
+    const x = x1 + (x2 - x1) * q;
+    const y = y1 + (y2 - y1) * q;
+    const pos = rippleDisplace(x, y);
+    const alpha = Math.sin(Math.PI * p) * .62;
+    const grad = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, 10);
+    grad.addColorStop(0, `rgba(255,255,255,${alpha})`);
+    grad.addColorStop(.25, `rgba(${r},${g},${b},${alpha * .72})`);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, 10, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+}
+
+class Tendril {
+  constructor() { this.reset(); }
+  reset() {
+    this.x = rand(0, W);
+    this.len = rand(H * .12, H * .34);
+    this.segs = Math.floor(rand(5, 10));
+    this.phase = rand(0, Math.PI * 2);
+    this.alpha = rand(.03, .12);
+    this.thick = rand(.3, .9);
+  }
+  draw(t) {
+    bg.beginPath();
+    bg.moveTo(this.x, H);
+    let cx = this.x, cy = H;
+    for (let i = 1; i <= this.segs; i++) {
+      const p = i / this.segs;
+      const tx = this.x + Math.sin(t * .0006 + this.phase + i * .7) * p * 34;
+      const ty = H - this.len * p;
+      bg.quadraticCurveTo(cx, cy, tx, ty);
+      cx = tx; cy = ty;
+    }
+    bg.strokeStyle = `rgba(255,255,255,${this.alpha})`;
+    bg.lineWidth = this.thick;
+    bg.lineCap = 'round';
+    bg.stroke();
+  }
+}
+
+function chooseClusterCenters(count) {
+  const centers = [];
+  let attempts = 0;
+  while (centers.length < count && attempts < 400) {
+    attempts++;
+    const x = rand(W * .14, W * .86);
+    const y = rand(H * .13, H * .83);
+    const minGap = Math.min(W, H) * .23;
+    if (centers.every(c => Math.hypot(c.x - x, c.y - y) > minGap)) centers.push({x, y});
+  }
+  while (centers.length < count) centers.push({ x: rand(W*.16, W*.84), y: rand(H*.16, H*.82) });
+  return centers;
+}
+
+function initGraph() {
+  nodes = [];
+  clusters = [];
+  chunks = [];
+  tendrils = [];
+  refractionDust = [];
+  refractionFibers = [];
+  backgroundGlints = [];
+  flows = [];
+  moduleFlows = [];
+  ripples = [];
+  sparks = [];
+
+  // 专门给 WebGL 水波折射用的暗纹理：星尘/玻璃颗粒
+  for (let i = 0; i < 1200; i++) {
+    refractionDust.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: rand(.35, 1.9),
+      a: rand(.035, .18),
+      phase: rand(0, Math.PI * 2),
+      tone: Math.random()
+    });
+  }
+
+  // 慢速忽明忽暗的远景星光：低亮度，不抢主体节点
+  for (let i = 0; i < 90; i++) {
+    backgroundGlints.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      r: rand(.7, 2.2),
+      a: rand(.035, .12),
+      phase: rand(0, Math.PI * 2),
+      speed: rand(.00045, .00115),
+      hue: Math.random()
+    });
+  }
+
+  // 极淡神经纤维/玻璃划痕纹理：让黑区也有可折射边缘
+  for (let i = 0; i < 160; i++) {
+    const sx = rand(-W * .1, W * 1.1);
+    const sy = rand(-H * .05, H * 1.05);
+    const len = rand(110, 420);
+    const angle = rand(-.7, .7) + (Math.random() > .5 ? 0 : Math.PI * .15);
+    const segments = 3 + Math.floor(Math.random() * 4);
+    const pts = [];
+    for (let j = 0; j < segments; j++) {
+      const p = j / (segments - 1);
+      pts.push({
+        x: sx + Math.cos(angle) * len * p + rand(-18, 18),
+        y: sy + Math.sin(angle) * len * p + rand(-18, 18)
+      });
+    }
+    refractionFibers.push({ pts, a: rand(.018, .085), w: rand(.35, 1.25), phase: rand(0, Math.PI * 2), tone: Math.random() });
+  }
+
+  const centers = chooseClusterCenters(9);
+  clusters = centers.map((c, i) => new Cluster(i, c.x, c.y, i));
+  for (let i = 0; i < NODE_COUNT; i++) {
+    const cid = i % clusters.length;
+    const angle = rand(0, Math.PI * 2);
+    const radius = rand(24, clusters[cid].radius);
+    const node = new Node(i, cid, angle, radius);
+    const target = node.stableTarget(performance.now());
+    node.x = target.x + rand(-10, 10);
+    node.y = target.y + rand(-10, 10);
+    nodes.push(node);
+  }
+  // 不再绘制底部藤蔓线条，保持背景干净
+}
+
+function splitOldClustersIntoChunks(now, oldCenters, newCenters) {
+  chunks = [];
+  let chunkId = 0;
+  const byCluster = new Map();
+  for (const node of nodes) {
+    if (!byCluster.has(node.clusterId)) byCluster.set(node.clusterId, []);
+    byCluster.get(node.clusterId).push(node);
+  }
+
+  for (const [clusterId, group] of byCluster.entries()) {
+    const shuffled = [...group].sort(() => Math.random() - .5);
+    const chunkCount = Math.min(shuffled.length, Math.floor(rand(2, 5))); // 2~4 子图谱
+    const localChunks = Array.from({length: chunkCount}, () => []);
+    shuffled.forEach((node, i) => localChunks[i % chunkCount].push(node));
+
+    const old = oldCenters[clusterId] || {x: W/2, y: H/2};
+    const baseAngle = rand(0, Math.PI * 2);
+
+    localChunks.forEach((chunkNodes, i) => {
+      const angle = baseAngle + (Math.PI * 2 / chunkCount) * i + rand(-.35, .35);
+      const scatterDist = rand(Math.min(W, H) * .18, Math.min(W, H) * .36);
+      const scatterX = clamp(old.x + Math.cos(angle) * scatterDist, W * .08, W * .92);
+      const scatterY = clamp(old.y + Math.sin(angle) * scatterDist, H * .08, H * .88);
+      // 子图谱到达最大散开位置后，就近归入最近的新图谱中心，不再随机跳转
+      let finalClusterId = 0;
+      let bestDistance = Infinity;
+      newCenters.forEach((candidate, idx) => {
+        const d = Math.hypot(candidate.x - scatterX, candidate.y - scatterY);
+        if (d < bestDistance) {
+          bestDistance = d;
+          finalClusterId = idx;
+        }
+      });
+      const final = newCenters[finalClusterId];
+      const chunkRadius = rand(26, 48);
+      const finalRadius = rand(34, clusters[finalClusterId]?.radius || 108);
+
+      const chunk = { id: chunkId++, finalClusterId, scatterX, scatterY, oldX: old.x, oldY: old.y, finalX: final.x, finalY: final.y };
+      chunks.push(chunk);
+
+      chunkNodes.forEach((node, idx) => {
+        const chunkAngle = (Math.PI * 2 / chunkNodes.length) * idx + rand(-.35, .35);
+        const finalAngle = rand(0, Math.PI * 2);
+        node.chunkId = chunk.id;
+        node.transition = {
+          start: now,
+          duration: rand(4600, 6200),
+          fromX: node.x,
+          fromY: node.y,
+          scatterX,
+          scatterY,
+          finalX: final.x,
+          finalY: final.y,
+          chunkLocalX: Math.cos(chunkAngle) * rand(6, chunkRadius),
+          chunkLocalY: Math.sin(chunkAngle) * rand(6, chunkRadius),
+          finalLocalX: Math.cos(finalAngle) * finalRadius,
+          finalLocalY: Math.sin(finalAngle) * finalRadius,
+          finalClusterId,
+          finalAngle,
+          finalRadius
+        };
+      });
+    });
+  }
+}
+
+function triggerTextRipple(x, y) {
+  if (!contentInner || !textTurbulence || !textDisplacement) return;
+  cancelAnimationFrame(textRippleRaf);
+  contentInner.classList.add('text-water-active');
+  if (panel) panel.classList.add('text-water-active');
+
+  const start = performance.now();
+  const duration = 1650;
+  const seed = Math.floor(rand(1, 80));
+  textTurbulence.setAttribute('seed', seed);
+
+  function step(now) {
+    const p = clamp((now - start) / duration, 0, 1);
+    const fade = Math.pow(1 - p, 2.2);
+    const wave = Math.sin(p * Math.PI * 3.2) * fade;
+    const scale = Math.max(0, 13 * fade + 4 * Math.abs(wave));
+    const freqX = 0.010 + p * 0.010;
+    const freqY = 0.026 + p * 0.020;
+    textTurbulence.setAttribute('baseFrequency', `${freqX.toFixed(4)} ${freqY.toFixed(4)}`);
+    textDisplacement.setAttribute('scale', scale.toFixed(2));
+    if (p < 1) {
+      textRippleRaf = requestAnimationFrame(step);
+    } else {
+      textDisplacement.setAttribute('scale', '0');
+      contentInner.classList.remove('text-water-active');
+      if (panel) panel.classList.remove('text-water-active');
+    }
+  }
+  textRippleRaf = requestAnimationFrame(step);
+}
+
+function retrieve(x, y) {
+  retrievalCount++;
+  mode = 'retrieving';
+  modeUntil = performance.now() + 6800;
+  if (!bootReady) document.getElementById('status').textContent = 'KNOWLEDGE GRAPH RESPONDING';
+
+  const now = performance.now();
+  const oldCenters = clusters.map(c => ({x: c.x, y: c.y}));
+  const newCount = Math.floor(rand(7, 11));
+  const newCenters = chooseClusterCenters(newCount);
+  clusters = newCenters.map((c, i) => new Cluster(i, c.x, c.y, i));
+  moduleFlows = [];
+
+  splitOldClustersIntoChunks(now, oldCenters, newCenters);
+
+  triggerTextRipple(x, y);
+
+  if (waterRenderer) {
+    // 单次检索只触发一个主水波，避免多重点击感
+    waterRenderer.drop(x, y, 52);
+  }
+  for (const node of nodes) {
+    if (Math.random() > .22) continue;
+    const a = rand(0, Math.PI * 2);
+    sparks.push(new Spark(node.x, node.y, a + rand(-.7, .7), rand(.8, 2.4)));
+  }
+}
+
+document.addEventListener('mousemove', (event) => {
+  mouse.x = event.clientX;
+  mouse.y = event.clientY;
+  mouse.active = true;
+});
+document.addEventListener('mouseleave', () => { mouse.active = false; });
+document.addEventListener('click', (event) => {
+  retrieve(event.clientX, event.clientY);
+});
+
+function drawBackground(t) {
+  bg.fillStyle = 'rgba(4,6,10,.24)';
+  bg.fillRect(0, 0, W, H);
+  for (const ten of tendrils) ten.draw(t);
+}
+
+function drawRefractionTexture(t) {
+  // 这层不是装饰主体，而是“可被水波扭曲的细节纹理”
+  const [hr, hg, hb] = theme.halo;
+  const [fr, fg, fb] = theme.flow;
+
+  // 已移除大面积呼吸渐变云斑，避免背景出现奇怪的渐变泡泡
+
+  // 慢速忽明忽暗的远景星光：非常低亮度，避免抢主体节点
+  for (const s of backgroundGlints) {
+    const tw = Math.pow(.5 + Math.sin(t * s.speed + s.phase) * .5, 2.2);
+    const r = s.hue < .45 ? hr : fr;
+    const g = s.hue < .45 ? hg : fg;
+    const b = s.hue < .45 ? hb : fb;
+    const alpha = s.a * (.22 + tw * .78);
+    const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, s.r * 5.5);
+    grad.addColorStop(0, `rgba(${r},${g},${b},${alpha})`);
+    grad.addColorStop(.35, `rgba(${r},${g},${b},${alpha * .28})`);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r * 5.5, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+  }
+
+  // 极淡神经纤维线：提供连续边缘，水波折射时最明显
+  for (const f of refractionFibers) {
+    const tw = .72 + Math.sin(t * .0009 + f.phase) * .28;
+    const r = f.tone > .45 ? fr : hr;
+    const g = f.tone > .45 ? fg : hg;
+    const b = f.tone > .45 ? fb : hb;
+    ctx.beginPath();
+    f.pts.forEach((p, idx) => {
+      const x = p.x + Math.sin(t * .00008 + f.phase + idx) * 6;
+      const y = p.y + Math.cos(t * .00007 + f.phase + idx * 1.7) * 5;
+      if (idx === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = `rgba(${r},${g},${b},${f.a * tw})`;
+    ctx.lineWidth = f.w;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+
+  // 星尘颗粒：水波扫过时最容易看出折射
+  for (const p of refractionDust) {
+    const twinkle = .65 + Math.sin(t * .0012 + p.phase) * .35;
+    const r = p.tone > .5 ? fr : hr;
+    const g = p.tone > .5 ? fg : hg;
+    const b = p.tone > .5 ? fb : hb;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${r},${g},${b},${p.a * twinkle})`;
+    ctx.fill();
+  }
+}
+
+function drawHalos(t) {
+  // 已移除粒子团背后的大面积呼吸渐变光晕，保持画面干净
+}
+
+function drawClusterOrnaments(t) {
+  const [hr, hg, hb] = theme.halo;
+  const [nr, ng, nb] = theme.node;
+  const [fr, fg, fb] = theme.flow;
+
+  for (const c of clusters) {
+    // 已移除模块背后的呼吸渐变边界，避免出现背景泡泡感
+
+    // 核心节点：每个模块的高权重中心。等普通节点成团后再慢慢浮现
+    const coreReveal = clamp((t - c.createdAt - c.coreDelay) / c.coreFade, 0, 1);
+    if (coreReveal > 0) for (const core of c.cores) {
+      const a = core.angle + t * (c.rotationSpeed || 0) * 1.45 + Math.sin(t * .0006 + core.phase) * .22;
+      const rr = core.radius + Math.sin(t * .001 + core.phase) * 2.5;
+      const raw = { x: c.x + Math.cos(a) * rr, y: c.y + Math.sin(a) * rr };
+      const p = rippleDisplace(raw.x, raw.y);
+      const beat = .78 + Math.sin(t * .0016 + core.phase) * .22;
+      const rad = core.size * (1.9 + beat * .45);
+      const reveal = easeInOutCubic(coreReveal);
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rad * (1 + (1 - reveal) * .9));
+      g.addColorStop(0, `rgba(255,255,255,${.78 * core.alpha * reveal})`);
+      g.addColorStop(.22, `rgba(${nr},${ng},${nb},${.62 * core.alpha * reveal})`);
+      g.addColorStop(.58, `rgba(${fr},${fg},${fb},${.20 * core.alpha * reveal})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, rad * (1 + (1 - reveal) * .9), 0, Math.PI * 2);
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, core.size * .42, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(255,255,255,${.62 * core.alpha * reveal})`;
+      ctx.fill();
+    }
+
+    // 外圈卫星节点：弱关联记忆，低亮慢速环绕
+    for (const sat of c.satellites) {
+      const a = sat.angle + t * sat.speed + Math.sin(t * .0005 + sat.phase) * .18;
+      const rr = sat.radius + Math.sin(t * .0009 + sat.phase) * 5;
+      const raw = { x: c.x + Math.cos(a) * rr, y: c.y + Math.sin(a) * rr };
+      const p = rippleDisplace(raw.x, raw.y);
+      const alpha = sat.alpha * (.62 + Math.sin(t * .0011 + sat.phase) * .38);
+      const glow = sat.size * 4.2;
+      const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, glow);
+      g.addColorStop(0, `rgba(255,255,255,${alpha * .55})`);
+      g.addColorStop(.3, `rgba(${fr},${fg},${fb},${alpha * .42})`);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, glow, 0, Math.PI * 2);
+      ctx.fillStyle = g;
+      ctx.fill();
+    }
+  }
+}
+
+function drawModuleFlows(t) {
+  moduleFlows = moduleFlows.filter(f => f.life > 0);
+  while (moduleFlows.length < 9 && mode === 'stable') moduleFlows.push(new ModuleFlow());
+  for (const f of moduleFlows) { f.update(t); f.draw(t); }
+}
+
+function drawEdges() {
+  const [er, eg, eb] = theme.edge;
+  // 稳定态：同簇连线
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i];
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j];
+      const sameStable = !a.transition && !b.transition && a.clusterId === b.clusterId;
+      const sameChunk = a.transition && b.transition && a.chunkId === b.chunkId;
+      if (!sameStable && !sameChunk) continue;
+      const d = dist(a, b);
+      const maxD = sameChunk ? 108 : 152;
+      if (d > maxD) continue;
+      const alpha = (1 - d / maxD) * (sameChunk ? .22 : .16);
+      const da = rippleDisplace(a.x, a.y);
+      const db = rippleDisplace(b.x, b.y);
+      ctx.beginPath();
+      ctx.moveTo(da.x, da.y);
+      ctx.lineTo(db.x, db.y);
+      ctx.strokeStyle = `rgba(${er},${eg},${eb},${alpha})`;
+      ctx.lineWidth = sameChunk ? .75 : .55;
+      ctx.stroke();
+    }
+  }
+}
+
+function drawNodes(t) {
+  const [r,g,b] = theme.node;
+  for (const node of nodes) {
+    const pos = rippleDisplace(node.x, node.y);
+    const pulse = .82 + Math.sin(t * .002 + node.phase) * .18;
+    const size = node.size * pulse;
+    const glowSize = size * (node.transition ? 4.4 : 3.4);
+    const grad = ctx.createRadialGradient(pos.x, pos.y, 0, pos.x, pos.y, glowSize);
+    grad.addColorStop(0, `rgba(255,255,255,${node.transition ? .85 : .64})`);
+    grad.addColorStop(.22, `rgba(${r},${g},${b},${node.transition ? .72 : node.alpha * .46})`);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, glowSize, 0, Math.PI * 2);
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, size * .42, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,.72)';
+    ctx.fill();
+  }
+}
+
+function wrapCanvasText(text, x, y, maxWidth, lineHeight) {
+  let line = '';
+  let yy = y;
+  for (const ch of text) {
+    const test = line + ch;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, yy);
+      line = ch;
+      yy += lineHeight;
+    } else {
+      line = test;
+    }
+  }
+  if (line) ctx.fillText(line, x, yy);
+  return yy;
+}
+
+function drawCanvasText(t) {
+  const intro = clamp((t - pageStart) / 1300, 0, 1);
+  const fade = easeInOutCubic(intro);
+  const x = 32;
+  const baseY = H * .5 - 28;
+  const headingSize = clamp(W * .036, 28, 48);
+  const subText = '正在建立本地私有记忆空间，加载检索索引、关联图谱与上下文服务。点击画面可观察知识图谱的响应与重组。';
+  const hintText = 'LOCAL PRIVATE MEMORY · STARTING SERVICES';
+
+  ctx.save();
+  // 主标题采用独立、很弱的慢呼吸；与右下角面板不同步，避免全页同时起伏。
+  const titleBreath = .94 + Math.sin(t * .00063 + 1.7) * .06;
+  ctx.globalAlpha = fade * titleBreath;
+  ctx.textBaseline = 'alphabetic';
+  ctx.shadowBlur = 14 + titleBreath * 7;
+  ctx.shadowColor = `rgba(130,190,255,${.11 + titleBreath * .10})`;
+  ctx.fillStyle = `rgba(244,250,255,${.89 + titleBreath * .07})`;
+  ctx.font = `800 ${headingSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
+  let cx = x;
+  const letters = [...headingText];
+  letters.forEach((ch, i) => {
+    const delay = clamp((intro - i * .018), 0, 1);
+    const localFade = easeInOutCubic(delay);
+    const lift = (1 - localFade) * 22;
+    ctx.globalAlpha = fade * localFade * titleBreath;
+    ctx.fillText(ch, cx, baseY + lift);
+    cx += ctx.measureText(ch).width + headingSize * .14;
+  });
+
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = fade * .64;
+  ctx.fillStyle = 'rgba(255,255,255,.62)';
+  ctx.font = `300 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
+  const lastY = wrapCanvasText(subText, x, baseY + 54, 430, 24);
+
+  ctx.globalAlpha = fade * .28;
+  ctx.fillStyle = 'rgba(255,255,255,.38)';
+  ctx.font = `400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
+  ctx.fillText(hintText, x, lastY + 42);
+
+  // 底部启动状态进入 WebGL 纹理，随点击水波一起折射。
+  const statusText = document.getElementById('status').textContent.toUpperCase();
+  ctx.textAlign = 'center';
+  ctx.globalAlpha = .30;
+  ctx.fillStyle = 'rgba(180,220,255,.72)';
+  ctx.font = `400 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
+  ctx.fillText(statusText, W / 2, H - 56);
+  ctx.restore();
+}
+
+function drawFx() {
+  fx.clearRect(0, 0, W, H);
+  ripples = ripples.filter(r => r.life > 0);
+  sparks = sparks.filter(s => s.life > 0);
+  flows = flows.filter(f => f.life > 0);
+
+  for (const r of ripples) { r.update(); if (r.life > 0) r.draw(); }
+  for (const s of sparks) { s.update(); if (s.life > 0) s.draw(); }
+  while (flows.length < 46 && mode === 'stable') flows.push(new Flow());
+  for (const f of flows) { f.update(); f.draw(); }
+}
+
+function animate(t) {
+  const dt = Math.min(32, t - lastTime);
+  lastTime = t;
+
+  if (mode === 'retrieving' && t > modeUntil) {
+    mode = 'stable';
+    if (!bootReady) document.getElementById('status').textContent = 'WAITING FOR MEMO SERVICES';
+  }
+
+  drawBackground(t);
+  ctx.clearRect(0, 0, W, H);
+  drawRefractionTexture(t);
+  clusters.forEach(c => c.update(t));
+  nodes.forEach(n => n.update(t));
+  drawHalos(t);
+  drawClusterOrnaments(t);
+  drawEdges();
+  drawModuleFlows(t);
+  drawNodes(t);
+  drawCanvasText(t);
+  if (waterRenderer) waterRenderer.render(graphSource, t);
+  drawFx();
+
+  requestAnimationFrame(animate);
+}
+
+async function pollBootHealth() {
+  renderBootProgress(false);
+  try {
+    const response = await fetch('/boot-health', { cache: 'no-store' });
+    const health = await response.json();
+    if (health.ready) {
+      bootReady = true;
+      document.getElementById('status').textContent = 'MEMO SERVICES READY · ENTERING DASHBOARD';
+      renderBootProgress(true);
+      if (!bootReloadScheduled) {
+        bootReloadScheduled = true;
+        setTimeout(() => location.reload(), 800);
+      }
+      return;
+    }
+  } catch (_) {
+    // The graph remains available while local services are still warming up.
+  }
+  if (!bootReady) document.getElementById('status').textContent = 'INITIALIZING LOCAL MEMORY SERVICES';
+  setTimeout(pollBootHealth, 700);
+}
+
+if (gl) waterRenderer = new WaterRenderer(gl);
+resize();
+requestAnimationFrame(animate);
+pollBootHealth();
+</script>
+</body>
+</html>
