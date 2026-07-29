@@ -148,7 +148,7 @@ def test_source_aware_memory_quality_returns_readonly_flags():
     assert "raw_text" not in quality["samples"]["temporary_task_like_hits"][0]
 
 
-def test_source_aware_session_detail_and_evidence_do_not_return_raw_content():
+def test_source_aware_session_detail_returns_local_content_but_evidence_stays_metadata_only():
     ids = _seed_source_aware_fixture()
 
     detail = engine.source_aware_session_detail(ids["source_id"])
@@ -157,7 +157,9 @@ def test_source_aware_session_detail_and_evidence_do_not_return_raw_content():
     assert detail is not None
     assert detail["session"]["id"] == ids["source_id"]
     assert detail["turns"][0]["content_hash"] == "userhash"
-    assert "content" not in detail["turns"][0]
+    # Fixture intentionally stores an empty body; the detail API must expose that exact local value.
+    assert "content" in detail["turns"][0]
+    assert detail["turns"][0]["content"] == ""
     assert detail["episodes"][0]["title"] == "测试 episode"
     assert detail["memory_units"][0]["evidence_count"] >= 1
 

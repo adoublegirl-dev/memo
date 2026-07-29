@@ -918,11 +918,14 @@ def insert_turns(conn: sqlite3.Connection, source_id: str, session: SourceSessio
                (id, source_session_id, agent_turn_id, parent_turn_id, role, content, content_hash,
                 timestamp, turn_index, is_final_answer, is_tool_call, is_tool_result, tool_name,
                 source_event_type, metadata_json)
-               VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(id) DO UPDATE SET
                  agent_turn_id=excluded.agent_turn_id,
                  parent_turn_id=excluded.parent_turn_id,
                  role=excluded.role,
+                 -- New imports always store local raw content. Existing non-empty
+                 -- content is never overwritten by a parser regression or empty source.
+                 content=CASE WHEN length(trim(COALESCE(excluded.content, ''))) > 0 THEN excluded.content ELSE source_turns.content END,
                  content_hash=excluded.content_hash,
                  timestamp=excluded.timestamp,
                  turn_index=excluded.turn_index,
@@ -938,6 +941,7 @@ def insert_turns(conn: sqlite3.Connection, source_id: str, session: SourceSessio
                 turn.agent_turn_id,
                 turn.parent_turn_id,
                 turn.role,
+                turn.text,
                 turn.content_hash,
                 turn.timestamp,
                 turn.turn_index,
@@ -1107,7 +1111,12 @@ def backup_db_file(db_path: Path, label: str) -> dict[str, Any]:
 
 
 def apply_to_production_source_only(source: str, path: str = "", limit: int = 5) -> dict[str, Any]:
-    """Apply source/turn/episode records to the configured production DB, without memory_units."""
+    """Apply source/turn/episode records with local raw turn content, without memory_units.
+
+    The legacy function name is kept for callers; "source-only" means no memory
+    extraction yet, never "metadata-only". A source import is incomplete without
+    source_turns.content.
+    """
     from memo.core.config import config
 
     db_path = Path(config.db_path).resolve()
@@ -1140,14 +1149,14 @@ def apply_to_production_source_only(source: str, path: str = "", limit: int = 5)
     }
     conn.close()
     return {
-        "mode": "PRODUCTION_SOURCE_ONLY",
+        "mode": "PRODUCTION_SOURCE_CONTENT_IMPORT",
         "source": source,
         "db_path": str(db_path),
         "latest_migration": latest,
         "backup": backup,
         "imported": totals,
         "validation": validation,
-        "safety": "Production source-only import writes source_sessions/source_turns/episodes/episode_turns only; memory_units and raw transcript content are not created.",
+        "safety": "Production source import writes source_sessions/source_turns/episodes/episode_turns with raw turn content stored only in the local Memo database; memory_units are not created until the extraction stage.",
     }
 
 

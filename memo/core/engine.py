@@ -1718,7 +1718,7 @@ class Engine:
                     results[source] = apply_to_production_source_only(source, limit=limit)
                 progress["source_import"] = results
                 db.execute("UPDATE history_processing_jobs SET progress_json=?, current_step='memory_extract', status='ready', updated_at=? WHERE id=?", (json.dumps(progress, ensure_ascii=False), datetime.now().isoformat(timespec="seconds"), job_id))
-                self._history_job_event(job_id, "source_import", "source-only 导入完成", {"sources": selected})
+                self._history_job_event(job_id, "source_import", "来源会话与原始对话正文导入完成", {"sources": selected})
             elif step == "memory_extract":
                 from scripts.source_aware_import import extract_memory_units_from_source_sessions
                 source_agent = {"hanaagent": "HanaAgent", "workbuddy": "WorkBuddy", "codex": "Codex"}
@@ -1756,7 +1756,7 @@ class Engine:
 
     # ── Source-aware Dashboard ──
 
-    def source_aware_dashboard(self, page: int = 1, page_size: int = 30, q: str = "", mode: str = "sessions") -> dict[str, Any]:
+    def source_aware_dashboard(self, page: int = 1, page_size: int = 30, q: str = "", mode: str = "sessions", sort: str = "updated_desc") -> dict[str, Any]:
         """Source-aware 审计工作台：source_sessions / missing titles / evidence counts。只读，不返回原文。"""
         self._ensure_init()
         page_size = max(1, min(int(page_size or 30), 100))
@@ -1764,6 +1764,7 @@ class Engine:
         offset = (page - 1) * page_size
         q = (q or "").strip()
         mode = mode or "sessions"
+        sort = sort or "updated_desc"
         schema_status = self._source_aware_schema_status()
         if not schema_status["ready"]:
             return {
@@ -1771,6 +1772,7 @@ class Engine:
                 "page_size": page_size,
                 "mode": mode,
                 "q": q,
+                "sort": sort,
                 "total": 0,
                 "schema_status": schema_status,
                 "stats": self._source_aware_empty_stats(),
@@ -1787,6 +1789,14 @@ class Engine:
                            SUM(CASE WHEN is_tool_result=1 THEN 1 ELSE 0 END) AS tool_result_count
                     FROM source_turns
                     GROUP BY source_session_id
+                ), content_counts AS (
+                    SELECT source_session_id,
+                           COUNT(*) AS indexed_turn_count,
+                           SUM(CASE WHEN role IN ('user','assistant') AND length(trim(COALESCE(content, ''))) > 0 THEN 1 ELSE 0 END) AS reviewable_turn_count,
+                           SUM(CASE WHEN role IN ('user','assistant') AND length(trim(COALESCE(content, ''))) = 0
+                                     AND COALESCE(CAST(json_extract(metadata_json, '$.content_length') AS INTEGER), 0) > 0 THEN 1 ELSE 0 END) AS pending_content_turn_count,
+                           SUM(CASE WHEN NOT (role IN ('user','assistant') AND length(trim(COALESCE(content, ''))) > 0) THEN 1 ELSE 0 END) AS internal_event_count
+                    FROM source_turns GROUP BY source_session_id
                 ), episode_counts AS (
                     SELECT source_session_id, COUNT(*) AS episode_count
                     FROM episodes
@@ -1820,6 +1830,10 @@ class Engine:
                        ss.original_title, ss.title_source, ss.display_title, ss.display_title_source,
                        ss.started_at, ss.updated_at, ss.imported_at, ss.message_count, ss.status,
                        COALESCE(tc.turn_count, 0) AS turn_count,
+                       COALESCE(cc.reviewable_turn_count, 0) AS reviewable_turn_count,
+                       COALESCE(cc.pending_content_turn_count, 0) AS pending_content_turn_count,
+                       COALESCE(cc.internal_event_count, 0) AS internal_event_count,
+                       COALESCE(cc.indexed_turn_count, 0) AS indexed_turn_count,
                        COALESCE(ec.episode_count, 0) AS episode_count,
                        COALESCE(mc.memory_count, 0) AS memory_count,
                        COALESCE(evc.evidence_count, 0) AS evidence_count,
@@ -1840,13 +1854,14 @@ class Engine:
                        COALESCE(srs.updated_at, '') AS session_review_updated_at
                 FROM source_sessions ss
                 LEFT JOIN turn_counts tc ON tc.source_session_id=ss.id
+                LEFT JOIN content_counts cc ON cc.source_session_id=ss.id
                 LEFT JOIN episode_counts ec ON ec.source_session_id=ss.id
                 LEFT JOIN memory_counts mc ON mc.source_session_id=ss.id
                 LEFT JOIN evidence_counts evc ON evc.source_session_id=ss.id
                 LEFT JOIN quality_counts qc ON qc.source_session_id=ss.id
                 LEFT JOIN source_session_review_states srs ON srs.source_session_id=ss.id
                 {where}
-                ORDER BY COALESCE(ss.updated_at, ss.imported_at, ss.created_at) DESC
+                ORDER BY {self._source_aware_sort_sql(sort)}
                 LIMIT ? OFFSET ?""",
             params + (page_size, offset),
         )
@@ -1856,11 +1871,21 @@ class Engine:
             "page_size": page_size,
             "mode": mode,
             "q": q,
+            "sort": sort,
             "total": total,
             "schema_status": schema_status,
             "stats": stats,
             "sessions": [self._source_aware_session_row(r) for r in rows],
         }
+
+    def _source_aware_sort_sql(self, sort: str) -> str:
+        choices = {
+            "updated_desc": "COALESCE(ss.updated_at, ss.imported_at, ss.created_at) DESC",
+            "turns_desc": "COALESCE(tc.turn_count, 0) DESC, COALESCE(ss.updated_at, ss.imported_at, ss.created_at) DESC",
+            "reviewable_desc": "COALESCE(cc.reviewable_turn_count, 0) DESC, COALESCE(tc.turn_count, 0) DESC",
+            "coverage_asc": "CASE WHEN COALESCE(cc.indexed_turn_count, 0) > 0 THEN CAST(cc.reviewable_turn_count AS REAL) / cc.indexed_turn_count ELSE 0 END ASC, COALESCE(tc.turn_count, 0) DESC",
+        }
+        return choices.get(sort, choices["updated_desc"])
 
     def apply_source_aware_quality_rules(self, dry_run: bool = True, limit: int | None = None) -> dict[str, Any]:
         """对 source-aware memory 执行规则自动处理。
@@ -2103,24 +2128,42 @@ class Engine:
             },
         }
 
-    def source_aware_session_detail(self, source_session_id: str) -> dict[str, Any] | None:
-        """Source Session 详情：元信息 + turn/episode/memory 证据概览，不返回 raw content。"""
+    def source_aware_session_detail(self, source_session_id: str, turn_filter: str = "all", turn_page: int = 1, turn_page_size: int = 80) -> dict[str, Any] | None:
+        """Local source-session review detail with server-side turn filtering/pagination.
+
+        Raw content is returned only for this explicitly opened local session.
+        """
         self._ensure_init()
         if not self._source_aware_schema_status()["ready"]:
             return None
         row = db.fetchone("SELECT * FROM source_sessions WHERE id=?", (source_session_id,))
         if not row:
             return None
+        turn_page = max(1, int(turn_page or 1))
+        turn_page_size = max(1, min(int(turn_page_size or 80), 300))
+        turn_offset = (turn_page - 1) * turn_page_size
+        reviewable_where = "st.role IN ('user','assistant') AND length(trim(COALESCE(st.content, ''))) > 0 AND st.is_tool_call=0 AND st.is_tool_result=0"
+        filter_sql = {"reviewable": reviewable_where, "internal": f"NOT ({reviewable_where})", "all": "1=1"}.get(turn_filter, reviewable_where)
+        turn_counts = db.fetchone(
+            f"""SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN {reviewable_where} THEN 1 ELSE 0 END) AS reviewable,
+                       SUM(CASE WHEN NOT ({reviewable_where}) THEN 1 ELSE 0 END) AS internal
+                FROM source_turns st WHERE st.source_session_id=?""",
+            (source_session_id,),
+        )
+        turn_total = int(turn_counts[turn_filter] or 0) if turn_filter in {"reviewable", "internal"} else int(turn_counts["total"] or 0)
         turns = [dict(r) for r in db.fetchall(
-            """SELECT st.id, st.agent_turn_id, st.parent_turn_id, st.role, st.content_hash,
+            f"""SELECT st.id, st.agent_turn_id, st.parent_turn_id, st.role, st.content_hash,
+                      st.content AS content,
                       COALESCE(CAST(json_extract(st.metadata_json, '$.content_length') AS INTEGER), length(st.content), 0) AS content_length,
                       st.timestamp, st.turn_index, st.is_final_answer, st.is_tool_call, st.is_tool_result, st.tool_name, st.source_event_type,
                       COALESCE(trs.review_status, 'active') AS review_status,
                       COALESCE(trs.review_note, '') AS review_note
                FROM source_turns st
                LEFT JOIN source_turn_review_states trs ON trs.source_turn_id=st.id
-               WHERE st.source_session_id=? ORDER BY st.turn_index LIMIT 300""",
-            (source_session_id,),
+               WHERE st.source_session_id=? AND {filter_sql}
+               ORDER BY st.turn_index LIMIT ? OFFSET ?""",
+            (source_session_id, turn_page_size, turn_offset),
         )]
         episodes = [dict(r) for r in db.fetchall(
             """SELECT e.id, e.title, e.user_intent, e.start_turn_index, e.end_turn_index, e.status, e.confidence,
@@ -2146,7 +2189,7 @@ class Engine:
                LIMIT 100""",
             (source_session_id,),
         )]
-        return {"session": self._source_aware_session_row(row), "turns": turns, "episodes": episodes, "memory_units": memories}
+        return {"session": self._source_aware_session_row(row), "turns": turns, "turn_filter": turn_filter, "turn_page": turn_page, "turn_page_size": turn_page_size, "turn_total": turn_total, "turn_counts": {"all": int(turn_counts["total"] or 0), "reviewable": int(turn_counts["reviewable"] or 0), "internal": int(turn_counts["internal"] or 0)}, "episodes": episodes, "memory_units": memories}
 
     def source_aware_memory_evidence(self, memory_id: str) -> dict[str, Any] | None:
         """Memory → evidence chain：memory_turn_sources → source_turns → source_session。只返回 turn 元信息。"""

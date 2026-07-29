@@ -14,13 +14,16 @@
   let page = 1;
   let pageSize = '30';
   let q = '';
-  let turnFilter = 'primary';
+  let sort = 'updated_desc';
+  let turnFilter = 'reviewable';
   let turnPreviewLimit = '80';
+  let detailTab = 'turns';
   let selectedSessionIds = new Set();
   let selectedTurnIds = new Set();
   let batchNote = '';
   let turnBatchNote = '';
   let batchBusy = false;
+  let expandedTurnIds = new Set();
 
   $: currentPageSize = Number(pageSize || 30);
   $: total = data?.total || 0;
@@ -32,8 +35,13 @@
   $: temporarySamples = quality?.samples?.temporary_task_like_hits || [];
   $: reviewStatusItems = quality?.review_summary?.by_status || [];
   $: reviewRetentionItems = quality?.review_summary?.by_retention || [];
-  $: filteredTurns = filterTurns(detail?.turns || []);
-  $: visibleTurns = filteredTurns.slice(0, Number(turnPreviewLimit || 80));
+  $: filteredTurns = detail?.turns || [];
+  $: visibleTurns = filteredTurns;
+  $: allTurns = detail?.turns || [];
+  $: reviewableTurns = Array(Number(detail?.turn_counts?.reviewable || 0));
+  $: internalTurns = Array(Number(detail?.turn_counts?.internal || 0));
+  $: turnPage = Number(detail?.turn_page || 1);
+  $: turnTotalPages = Math.max(1, Math.ceil(Number(detail?.turn_total || 0) / Number(detail?.turn_page_size || 80)));
 
   function fmtTime(s) { return s ? String(s).slice(0, 19).replace('T', ' ') : ''; }
   function pct(n) { return `${Math.round((Number(n || 0)) * 100)}%`; }
@@ -47,10 +55,18 @@
     return labels[v] || v || '未知';
   }
   function filterTurns(turns) {
+    const hasContent = (t) => Boolean(String(t.content || '').trim());
     if (turnFilter === 'all') return turns;
-    if (turnFilter === 'tool') return turns.filter(t => t.is_tool_call || t.is_tool_result || t.role === 'tool');
-    return turns.filter(t => t.role === 'user' || (t.role === 'assistant' && t.is_final_answer && !t.is_tool_call && !t.is_tool_result));
+    if (turnFilter === 'internal') return turns.filter(t => !hasContent(t) || t.is_tool_call || t.is_tool_result || t.role === 'tool' || !['user', 'assistant'].includes(t.role));
+    return turns.filter(t => hasContent(t) && ['user', 'assistant'].includes(t.role) && !t.is_tool_call && !t.is_tool_result);
   }
+  function preview(text, max = 420) {
+    const value = String(text || '').trim();
+    return value.length > max ? `${value.slice(0, max)}…` : (value || '（该轮没有可显示的正文）');
+  }
+  function toggleTurnExpanded(id) { expandedTurnIds = new Set(expandedTurnIds); expandedTurnIds.has(id) ? expandedTurnIds.delete(id) : expandedTurnIds.add(id); }
+  async function changeTurnFilter(next) { turnFilter = next; selectedTurnIds = new Set(); expandedTurnIds = new Set(); await openDetail(detail.session.id, true, 1); }
+  async function gotoTurnPage(next) { await openDetail(detail.session.id, true, Math.min(Math.max(1, next), turnTotalPages)); }
   function sourceBadgeClass(v) {
     if (v === 'agent_original' || v === 'db_title' || v === 'session_titles_json_path' || v === 'session_titles_json_id') return 'green';
     if (v === 'missing' || v === 'generated_fallback' || v === 'first_user_turn' || v === 'file_name') return 'gold';
@@ -61,7 +77,7 @@
     loading = true; error = '';
     try {
       const [overview, qualityResult] = await Promise.all([
-        api.sourceAware({ mode, page, page_size: currentPageSize, q }),
+        api.sourceAware({ mode, page, page_size: currentPageSize, q, sort }),
         api.sourceAwareMemoryQuality({ limit: 8 }),
       ]);
       data = overview;
@@ -71,6 +87,7 @@
     finally { loading = false; }
   }
   async function search() { page = 1; await load(); }
+  async function changeSort() { page = 1; await load(); }
   async function switchMode(next) { mode = next; page = 1; await load(); }
   async function gotoPage(next) { page = Math.min(Math.max(1, next), totalPages); selectedSessionIds = new Set(); await load(); }
   function toggleSession(id) { selectedSessionIds = new Set(selectedSessionIds); selectedSessionIds.has(id) ? selectedSessionIds.delete(id) : selectedSessionIds.add(id); }
@@ -88,9 +105,10 @@
     } catch (e) { error = e.message; } finally { batchBusy = false; }
   }
 
-  async function openDetail(id) {
-    detailLoading = true; error = ''; selectedTurnIds = new Set(); turnBatchNote = '';
-    try { detail = await api.sourceAwareSession(id); }
+  async function openDetail(id, preserveView = false, pageOverride = 1) {
+    detailLoading = true; error = '';
+    if (!preserveView) { detailTab = 'turns'; turnFilter = 'reviewable'; selectedTurnIds = new Set(); expandedTurnIds = new Set(); turnBatchNote = ''; }
+    try { detail = await api.sourceAwareSession(id, { turn_filter: turnFilter, turn_page: pageOverride, turn_page_size: turnPreviewLimit }); }
     catch (e) { error = e.message; }
     finally { detailLoading = false; }
   }
@@ -120,11 +138,31 @@
   onMount(load);
 </script>
 
+<style>
+  :global(.detail-modal.wide-modal) { width:min(1240px, calc(100vw - 32px)); max-height:90vh; }
+  :global(.modal-backdrop) { padding:16px; }
+  .detail-tabs { display:flex; gap:4px; margin:18px 0 2px; padding-bottom:10px; border-bottom:1px solid var(--border-subtle, rgba(148,163,184,.22)); }
+  .detail-tabs button { display:inline-flex; align-items:center; gap:7px; padding:8px 12px; border:0; border-radius:8px; background:transparent; color:var(--color-text-secondary, #64748b); cursor:pointer; font-weight:600; white-space:nowrap; }
+  .detail-tabs button.active { background:rgba(91,157,255,.12); color:var(--color-primary, #3178c6); }
+  .detail-tabs span { padding:1px 6px; border-radius:999px; background:rgba(91,157,255,.14); font-size:11px; }
+  .batch-bar { align-items:flex-start; }
+  .batch-bar .btn { white-space:nowrap; flex:0 0 auto; }
+  .batch-bar .input { min-width:180px; }
+  .turn-item { border-left:2px solid rgba(91,157,255,.26); }
+  .turn-preview { display:block; margin-top:9px; padding:10px 12px; border-radius:8px; background:rgba(91,157,255,.09); color:var(--text, #172033); font-size:13px; font-weight:500; line-height:1.72; white-space:pre-wrap; word-break:break-word; }
+  .turn-preview.expanded { max-height:480px; overflow:auto; }
+  .btn.compact { padding:5px 9px; font-size:12px; white-space:nowrap; }
+  .turn-pager { display:flex; justify-content:flex-end; align-items:center; gap:10px; margin-top:14px; flex-wrap:wrap; }
+  .turn-filter-controls { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
+  .turn-filter-controls .input { min-width:178px; flex:1 1 190px; }
+  @media (max-width:720px) { .turn-filter-controls { justify-content:stretch; width:100%; } .turn-filter-controls .input { width:100%; } }
+</style>
+
 <section class="page">
   <div class="page-head-row">
     <div>
       <h1 class="page-title">Source-aware 审计</h1>
-      <p class="page-subtitle">查看真实 Agent 来源会话、缺原始标题队列，以及 memory → turn → source_session 的证据链。默认只展示元信息，不展示原始正文。</p>
+      <p class="page-subtitle">查看真实 Agent 来源会话、缺原始标题队列，以及 memory → turn → source_session 的证据链。原文只在打开单个本地会话详情时显示，用于人工审阅。</p>
     </div>
     <button class="btn primary" class:loading={loading} disabled={loading} on:click={load}><RefreshCcw size={16}/> 刷新</button>
   </div>
@@ -188,6 +226,12 @@
         <div style="position:relative"><Search size={15} style="position:absolute;left:10px;top:10px;color:var(--color-text-secondary)"/><input class="input" style="padding-left:32px;width:320px" bind:value={q} on:keydown={(e)=>{ if(e.key==='Enter') search(); }} placeholder="搜索展示标题、Agent、session id" /></div>
       </div>
       <div class="toolbar" style="gap:8px">
+        <select class="input" style="width:170px" bind:value={sort} on:change={changeSort}>
+          <option value="updated_desc">按最近更新</option>
+          <option value="turns_desc">按对话记录数</option>
+          <option value="reviewable_desc">按可审阅正文数</option>
+          <option value="coverage_asc">按正文覆盖率（低优先）</option>
+        </select>
         <select class="input" style="width:110px" bind:value={pageSize} on:change={search}>
           <option value="30">30 / 页</option>
           <option value="50">50 / 页</option>
@@ -229,11 +273,10 @@
             <div style="display:flex;gap:10px;align-items:flex-start;min-width:0">
               <input type="checkbox" checked={selectedSessionIds.has(s.id)} on:change={() => toggleSession(s.id)} aria-label="选择会话" />
               <div style="min-width:0">
-              <div class="item-title">{s.display_title || s.agent_session_id || '未命名来源会话'}</div>
+              <button class="title-link" on:click={() => openDetail(s.id)} aria-label="打开会话详情：{s.display_title || s.agent_session_id || '未命名来源会话'}">{s.display_title || s.agent_session_id || '未命名来源会话'}</button>
               <div class="item-meta">{s.source_agent || 'unknown'} · {short(s.id, 8)} · {fmtTime(s.updated_at || s.imported_at)}</div>
               </div>
             </div>
-            <button class="btn" on:click={() => openDetail(s.id)}><Eye size={15}/> 详情</button>
           </div>
           <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:12px">
             <span class="badge {sourceBadgeClass(s.title_source)}">Agent 原始标题：{sourceLabel(s.title_source)}</span>
@@ -241,8 +284,9 @@
             {#if s.is_missing_title}<span class="badge gold">展示标题，不是原始标题</span>{/if}
           </div>
           <div class="item-summary">
-            turns {s.turn_count || s.message_count || 0} · episodes {s.episode_count || 0} · memories {s.memory_count || 0} · evidence {s.evidence_count || 0} · tool calls {s.tool_call_count || 0} · tool results {s.tool_result_count || 0}
+            对话记录 {s.turn_count || s.message_count || 0} · 可审阅正文 {s.reviewable_turn_count || 0} · 内部事件 {s.internal_event_count || 0} · 待回填 {s.pending_content_turn_count || 0}
           </div>
+          <div class="item-meta">正文状态：{s.pending_content_turn_count > 0 ? '待回填（原始文件可用时会补正文）' : s.reviewable_turn_count > 0 ? '已可审阅' : '没有可审阅正文或原始来源缺失'} · episodes {s.episode_count || 0} · memories {s.memory_count || 0}</div>
           <div class="item-meta">path: {s.source_path || '—'} · hash: {short(s.source_hash, 12)}</div>
         </div>
       {:else}
@@ -286,6 +330,12 @@
         <div class="raw-box">original_title: {detail.session.original_title || '缺失'}\ndisplay_title: {detail.session.display_title || '—'}\nsource_path: {detail.session.source_path || '—'}\nsource_hash: {detail.session.source_hash || '—'}</div>
       </div>
 
+      <div class="detail-tabs" role="tablist">
+        <button class:active={detailTab === 'turns'} on:click={() => detailTab = 'turns'}>对话内容审阅 <span>{detail?.turn_counts?.reviewable || 0}</span></button>
+        <button class:active={detailTab === 'memories'} on:click={() => detailTab = 'memories'}>Memory Units <span>{detail.memory_units?.length || 0}</span></button>
+      </div>
+
+      {#if detailTab === 'memories'}
       <div class="modal-section">
         <h3>Memory Units</h3>
         <div class="list">
@@ -303,23 +353,23 @@
           {:else}<div class="empty card">暂无 memory_units</div>{/each}
         </div>
       </div>
-
+      {:else}
       <div class="modal-section">
         <div class="section-head" style="margin:0 0 12px">
           <div>
-            <h3>Turns 元信息（不展示原文）</h3>
-            <div class="item-meta">当前显示 {visibleTurns.length} 条 / 筛选后 {filteredTurns.length} 条 / 已加载 {detail.turns?.length || 0} 条。详情页默认只预览，不代表数据被截断。</div>
+            <h3>对话内容审阅</h3>
+            <div class="item-meta">当前筛选：{turnFilter === 'reviewable' ? '可审阅对话（有正文的用户/助手内容）' : turnFilter === 'internal' ? '内部过程 / 工具 / 空正文事件' : '全部记录'} · 当前页 {visibleTurns.length} 条 / 筛选命中 {detail?.turn_total || 0} 条 / 会话总计 {detail?.turn_counts?.all || 0} 条。仅在打开此本地会话详情时读取原文。</div>
           </div>
-          <div class="toolbar" style="gap:8px;flex-wrap:wrap">
-            <select class="input" style="width:190px" bind:value={turnFilter}>
-              <option value="primary">只看用户和最终回答</option>
-              <option value="tool">只看 tool/process</option>
-              <option value="all">全部 turns</option>
+          <div class="turn-filter-controls">
+            <select class="input" value={turnFilter} on:change={(e) => changeTurnFilter(e.currentTarget.value)}>
+              <option value="reviewable">可审阅对话（{detail?.turn_counts?.reviewable || 0}）</option>
+              <option value="all">全部记录（{detail?.turn_counts?.all || 0}）</option>
+              <option value="internal">内部过程 / 工具（{detail?.turn_counts?.internal || 0}）</option>
             </select>
-            <select class="input" style="width:110px" bind:value={turnPreviewLimit}>
-              <option value="80">前 80</option>
-              <option value="150">前 150</option>
-              <option value="300">前 300</option>
+            <select class="input" bind:value={turnPreviewLimit} on:change={() => openDetail(detail.session.id, true, 1)}>
+              <option value="80">每页 80 条</option>
+              <option value="150">每页 150 条</option>
+              <option value="300">每页 300 条</option>
             </select>
           </div>
         </div>
@@ -333,21 +383,29 @@
         </div>
         <div class="list">
           {#each visibleTurns as t}
-            <div class="item" class:muted-turn={t.review_status === 'soft_deleted'}>
-              <div class="item-row">
-                <label style="display:flex;gap:10px;align-items:flex-start;min-width:0;cursor:pointer">
+            <div class="item turn-item" class:muted-turn={t.review_status === 'soft_deleted'}>
+              <div class="item-row" style="align-items:flex-start">
+                <label style="display:flex;gap:10px;align-items:flex-start;min-width:0;cursor:pointer;flex:1">
                   <input type="checkbox" checked={selectedTurnIds.has(t.id)} on:change={() => toggleTurn(t.id)} aria-label="选择对话内容" />
-                  <span>
+                  <span style="min-width:0;flex:1">
                     <span class="item-title">#{t.turn_index} · {t.role} · {t.source_event_type || 'message'}</span>
-                    <span class="item-meta" style="display:block">len {t.content_length} · hash {short(t.content_hash, 12)} · {fmtTime(t.timestamp)} · final {t.is_final_answer ? 'yes' : 'no'} · tool {t.tool_name || '—'} · 状态 {t.review_status}</span>
-                    {#if t.review_note}<span class="item-meta" style="display:block">理由：{t.review_note}</span>{/if}
+                    <span class="item-meta" style="display:block">{fmtTime(t.timestamp) || '无时间戳'} · {t.is_final_answer ? '最终回答' : '普通内容'} · {t.is_tool_call || t.is_tool_result ? '工具过程' : '对话内容'} · 状态 {t.review_status}</span>
+                    <span class="turn-preview" class:expanded={expandedTurnIds.has(t.id)}>{expandedTurnIds.has(t.id) ? (t.content || '（该轮没有可显示的正文）') : preview(t.content)}</span>
+                    {#if t.review_note}<span class="item-meta" style="display:block">处理理由：{t.review_note}</span>{/if}
                   </span>
                 </label>
+                {#if String(t.content || '').length > 420}<button class="btn compact" on:click={() => toggleTurnExpanded(t.id)}>{expandedTurnIds.has(t.id) ? '收起' : '展开'}</button>{/if}
               </div>
             </div>
-          {:else}<div class="empty card">暂无 turns</div>{/each}
+          {:else}<div class="empty card">当前筛选没有匹配的对话内容。切换到“全部 turns”可查看该会话已导入的所有内容。</div>{/each}
+        </div>
+        <div class="turn-pager">
+          <button class="btn compact" disabled={detailLoading || turnPage <= 1} on:click={() => gotoTurnPage(turnPage - 1)}>上一页</button>
+          <span class="item-meta">第 {turnPage} / {turnTotalPages} 页 · 每页 {detail?.turn_page_size || 80} 条</span>
+          <button class="btn compact" disabled={detailLoading || turnPage >= turnTotalPages} on:click={() => gotoTurnPage(turnPage + 1)}>下一页</button>
         </div>
       </div>
+      {/if}
     </div>
   </div>
 {/if}

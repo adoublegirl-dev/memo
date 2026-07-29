@@ -1190,6 +1190,7 @@ class MemoHandler(BaseHTTPRequestHandler):
                 page_size=int(self._get_query_param("page_size", "30")),
                 q=self._get_query_param("q", ""),
                 mode=self._get_query_param("mode", "sessions"),
+                sort=self._get_query_param("sort", "updated_desc"),
             ))
         elif path == "/api/source-aware/memory-quality":
             self._json(engine.source_aware_memory_quality(
@@ -1205,7 +1206,12 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._handle_source_turn_review_action()
         elif path.startswith("/api/source-aware/session/"):
             source_id = path.split("/")[-1]
-            result = engine.source_aware_session_detail(source_id)
+            result = engine.source_aware_session_detail(
+                source_id,
+                turn_filter=self._get_query_param("turn_filter", "all"),
+                turn_page=int(self._get_query_param("turn_page", "1")),
+                turn_page_size=int(self._get_query_param("turn_page_size", "80")),
+            )
             if not result:
                 self._json({"error": "source-aware session not found"}, 404); return
             self._json(result)
