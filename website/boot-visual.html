@@ -1,9 +1,9 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Memo · 正在启动</title>
+<title>Memo · 官网启动视觉</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 100%; height: 100%; overflow: hidden; }
@@ -20,9 +20,9 @@
     z-index: -5;
     pointer-events: none;
     background:
-      radial-gradient(55% 36% at 42% 4%, rgba(176, 98, 255, .10), transparent 66%),
-      radial-gradient(46% 34% at 72% 78%, rgba(0, 166, 255, .075), transparent 68%),
-      radial-gradient(38% 30% at 24% 66%, rgba(0, 220, 170, .045), transparent 65%),
+      radial-gradient(55% 36% at 42% 4%, rgba(155, 200, 164, .105), transparent 66%),
+      radial-gradient(46% 34% at 72% 78%, rgba(134, 182, 201, .075), transparent 68%),
+      radial-gradient(38% 30% at 24% 66%, rgba(214, 191, 132, .045), transparent 65%),
       #04060a;
     animation: breathe 10s ease-in-out infinite alternate;
   }
@@ -46,12 +46,12 @@
   }
   .aurora::before {
     left: -35%; top: -18%;
-    background: linear-gradient(115deg, rgba(170, 80, 255, .35), transparent 42%, rgba(0, 220, 190, .22), transparent 72%);
+    background: linear-gradient(115deg, rgba(155, 200, 164, .26), transparent 42%, rgba(134, 182, 201, .18), transparent 72%);
     animation: auroraA 22s ease-in-out infinite;
   }
   .aurora::after {
     right: -40%; bottom: -25%;
-    background: linear-gradient(230deg, rgba(0, 145, 255, .28), transparent 38%, rgba(255, 90, 180, .18), transparent 68%);
+    background: linear-gradient(230deg, rgba(134, 182, 201, .20), transparent 38%, rgba(214, 191, 132, .13), transparent 68%);
     animation: auroraB 26s ease-in-out 6s infinite;
   }
 
@@ -85,7 +85,7 @@
   .content-inner.text-water-active,
   .panel.text-water-active {
     filter: url(#text-water-filter);
-    text-shadow: 0 0 12px rgba(120, 210, 255, .16);
+    text-shadow: 0 0 12px rgba(155, 200, 164, .16);
   }
   .heading {
     display: flex;
@@ -217,6 +217,17 @@
     40% { transform: translate(-4%,-2%) rotate(-2deg) scale(1.08); }
     75% { transform: translate(2%,1%) rotate(1.4deg) scale(.96); }
   }
+
+  /* Website embed overrides: keep the real boot graph, hide service boot chrome. */
+  body { background: transparent; }
+  .ambient { opacity: .72; }
+  .aurora { opacity: .12; }
+  .boot-frame, .panel, .counter, .themes { display: none !important; }
+  .content { padding: 0; align-items: center; justify-content: center; }
+  .heading { justify-content: center; font-size: clamp(24px, 7vw, 52px); letter-spacing: .16em; text-indent: .16em; }
+  .sub { margin: 15px auto 0; max-width: 320px; text-align: center; font-size: 13px; letter-spacing: .08em; color: rgba(211,232,216,.58); }
+  .hint { margin-top: 18px; text-align: center; font-size: 10px; color: rgba(214,191,132,.26); }
+
 </style>
 </head>
 <body>
@@ -235,12 +246,12 @@
   <main class="content">
     <div class="content-inner">
       <h1 class="heading" id="heading"></h1>
-      <p class="sub">正在建立本地私有记忆空间，加载检索索引、关联图谱与上下文服务。点击画面可观察知识图谱的响应与重组。</p>
-      <p class="hint">LOCAL PRIVATE MEMORY · STARTING SERVICES</p>
+      <p class="sub">一个活的记忆管理系统</p>
+      <p class="hint">CLICK · RIPPLE · RECOMPOSE</p>
     </div>
   </main>
 
-  <div class="panel"><div class="status" id="status">INITIALIZING LOCAL MEMORY SERVICES</div></div>
+  <div class="panel"><div class="status" id="status">LIVING MEMORY GRAPH</div></div>
   <section class="boot-frame" aria-live="polite">
     <div class="boot-frame__top"><span class="boot-frame__eyebrow">MEMO BOOT SEQUENCE</span><span class="boot-frame__clock" id="boot-clock">00:00</span></div>
     <h2 id="boot-phase">正在唤醒记忆空间</h2>
@@ -252,7 +263,7 @@
   </section>
 
 <script>
-const headingText = 'MEMO · 记忆正在苏醒';
+const headingText = 'MEMO';
 const heading = document.getElementById('heading');
 const content = document.querySelector('.content');
 const contentInner = document.querySelector('.content-inner');
@@ -269,8 +280,8 @@ const pageStart = performance.now();
   heading.appendChild(span);
 });
 
-// Memo 启动页固定使用蓝色单主题，不提供主题切换。
-const theme = { node: [92, 176, 255], edge: [56, 126, 235], flow: [150, 216, 255], halo: [92, 176, 255] };
+// 官网嵌入版使用 Memo 官网主色：浅绿为主体，淡金点缀，青灰蓝辅助。
+const theme = { node: [155, 200, 164], edge: [118, 168, 145], flow: [214, 191, 132], halo: [155, 200, 164] };
 
 const bgCanvas = document.getElementById('bgCanvas');
 const graphCanvas = document.getElementById('graphCanvas');
@@ -445,7 +456,7 @@ class WaterRenderer {
           float wave1 = sin(delta * 0.036 - p * 7.6);
           float wave2 = sin(delta * 0.058 - p * 12.0) * 0.14;
           float fade = smoothstep(1.0, 0.0, p);
-          float wave = (wave1 + wave2) * envelope * fade * u_strengths[i] * 1.45;
+          float wave = (wave1 + wave2) * envelope * fade * u_strengths[i] * 0.82;
           offset += dir * wave;
         }
         vec2 uv = v_uv + offset / u_resolution;
@@ -583,7 +594,7 @@ class Node {
   update(t) {
     if (this.transition) {
       const tr = this.transition;
-      // 水波抵达前仍按旧图谱轨道运动，而不是停住等待水波。
+      // 深方案：水波抵达前仍按旧图谱轨道运动，而不是停住等待水波。
       if (t < tr.start) {
         const orbit = tr.holdAngle + t * (this.orbitSpeed * tr.holdDepthFactor) + Math.sin(t * 0.0007 + this.phase) * 0.24;
         const rr = tr.holdRadius + Math.sin(t * 0.0011 + this.phase) * 4;
@@ -1042,11 +1053,11 @@ function triggerTextRipple(x, y) {
 
   function step(now) {
     const p = clamp((now - start) / duration, 0, 1);
-    const fade = Math.pow(1 - p, 2.2);
-    const wave = Math.sin(p * Math.PI * 3.2) * fade;
-    const scale = Math.max(0, 13 * fade + 4 * Math.abs(wave));
-    const freqX = 0.010 + p * 0.010;
-    const freqY = 0.026 + p * 0.020;
+    const fade = Math.pow(1 - p, 2.45);
+    const wave = Math.sin(p * Math.PI * 2.8) * fade;
+    const scale = Math.max(0, 7.2 * fade + 2.2 * Math.abs(wave));
+    const freqX = 0.009 + p * 0.007;
+    const freqY = 0.022 + p * 0.012;
     textTurbulence.setAttribute('baseFrequency', `${freqX.toFixed(4)} ${freqY.toFixed(4)}`);
     textDisplacement.setAttribute('scale', scale.toFixed(2));
     if (p < 1) {
@@ -1084,7 +1095,7 @@ function retrieve(x, y) {
 
   if (waterRenderer) {
     // 单次检索只触发一个主水波，避免多重点击感
-    waterRenderer.drop(x, y, 52);
+    waterRenderer.drop(x, y, 26);
   }
   for (const node of nodes) {
     if (Math.random() > .22) continue;
@@ -1245,14 +1256,14 @@ function drawEdges() {
       const d = dist(a, b);
       const maxD = sameChunk ? 108 : 152;
       if (d > maxD) continue;
-      const alpha = (1 - d / maxD) * (sameChunk ? .22 : .16);
+      const alpha = (1 - d / maxD) * (sameChunk ? .30 : .22);
       const da = rippleDisplace(a.x, a.y);
       const db = rippleDisplace(b.x, b.y);
       ctx.beginPath();
       ctx.moveTo(da.x, da.y);
       ctx.lineTo(db.x, db.y);
       ctx.strokeStyle = `rgba(${er},${eg},${eb},${alpha})`;
-      ctx.lineWidth = sameChunk ? .75 : .55;
+      ctx.lineWidth = sameChunk ? .9 : .68;
       ctx.stroke();
     }
   }
@@ -1263,7 +1274,7 @@ function drawNodes(t) {
   for (const node of nodes) {
     const pos = rippleDisplace(node.x, node.y);
     const localWave = waveInfluence(node.x, node.y, t);
-    const transitionLift = node.transition && t >= node.transition.start ? .16 : 0;
+    const transitionLift = node.transition ? .16 : 0;
     const pulse = .84 + Math.sin(t * .002 + node.phase) * .12;
     const size = node.size * pulse * (1 + localWave * .10);
     const glowSize = size * (3.05 + transitionLift + localWave * 1.35);
@@ -1303,50 +1314,42 @@ function wrapCanvasText(text, x, y, maxWidth, lineHeight) {
 function drawCanvasText(t) {
   const intro = clamp((t - pageStart) / 1300, 0, 1);
   const fade = easeInOutCubic(intro);
-  const x = 32;
-  const baseY = H * .5 - 28;
-  const headingSize = clamp(W * .036, 28, 48);
-  const subText = '正在建立本地私有记忆空间，加载检索索引、关联图谱与上下文服务。点击画面可观察知识图谱的响应与重组。';
-  const hintText = 'LOCAL PRIVATE MEMORY · STARTING SERVICES';
+  const x = W / 2;
+  const baseY = H * .5 - 14;
+  const baseHeadingSize = clamp(W * .052, 30, 52);
+  const subText = '一个活的记忆管理系统';
+  const hintText = 'CLICK · RIPPLE · RECOMPOSE';
 
   ctx.save();
-  // 主标题采用独立、很弱的慢呼吸；与右下角面板不同步，避免全页同时起伏。
-  const titleBreath = .94 + Math.sin(t * .00063 + 1.7) * .06;
-  ctx.globalAlpha = fade * titleBreath;
+  ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
-  ctx.shadowBlur = 14 + titleBreath * 7;
-  ctx.shadowColor = `rgba(130,190,255,${.11 + titleBreath * .10})`;
-  ctx.fillStyle = `rgba(244,250,255,${.89 + titleBreath * .07})`;
+  // A 方案：只做柔光明暗呼吸，不再改变字号，避免 canvas 字体重排造成卡顿感。
+  const breathe = (Math.sin(t * .00165 + 1.2) + 1) / 2;
+  const glowEase = breathe * breathe * (3 - 2 * breathe);
+  const headingSize = baseHeadingSize;
+  ctx.globalAlpha = fade * (.72 + glowEase * .25);
+  ctx.shadowBlur = 10 + glowEase * 18;
+  ctx.shadowColor = `rgba(155,200,164,${.10 + glowEase * .18})`;
+  ctx.fillStyle = `rgba(239,248,241,${.78 + glowEase * .20})`;
   ctx.font = `800 ${headingSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
-  let cx = x;
-  const letters = [...headingText];
-  letters.forEach((ch, i) => {
-    const delay = clamp((intro - i * .018), 0, 1);
-    const localFade = easeInOutCubic(delay);
-    const lift = (1 - localFade) * 22;
-    ctx.globalAlpha = fade * localFade * titleBreath;
-    ctx.fillText(ch, cx, baseY + lift);
-    cx += ctx.measureText(ch).width + headingSize * .14;
-  });
+  ctx.fillText(headingText, x, baseY);
 
   ctx.shadowBlur = 0;
-  ctx.globalAlpha = fade * .64;
-  ctx.fillStyle = 'rgba(255,255,255,.62)';
-  ctx.font = `300 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
-  const lastY = wrapCanvasText(subText, x, baseY + 54, 430, 24);
+  ctx.globalAlpha = fade * .58;
+  ctx.fillStyle = 'rgba(211,232,216,.66)';
+  ctx.font = `300 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
+  const lastY = wrapCanvasText(subText, x, baseY + 44, Math.min(360, W * .72), 22);
 
-  ctx.globalAlpha = fade * .28;
-  ctx.fillStyle = 'rgba(255,255,255,.38)';
-  ctx.font = `400 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
-  ctx.fillText(hintText, x, lastY + 42);
-
-  // 底部启动状态进入 WebGL 纹理，随点击水波一起折射。
-  const statusText = document.getElementById('status').textContent.toUpperCase();
-  ctx.textAlign = 'center';
-  ctx.globalAlpha = .30;
-  ctx.fillStyle = 'rgba(180,220,255,.72)';
+  ctx.globalAlpha = fade * .24;
+  ctx.fillStyle = 'rgba(214,191,132,.34)';
   ctx.font = `400 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
-  ctx.fillText(statusText, W / 2, H - 56);
+  ctx.fillText(hintText, x, lastY + 34);
+
+  const statusText = document.getElementById('status').textContent.toUpperCase();
+  ctx.globalAlpha = .22;
+  ctx.fillStyle = 'rgba(155,200,164,.50)';
+  ctx.font = `400 9px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif`;
+  ctx.fillText(statusText, W / 2, H - 42);
   ctx.restore();
 }
 
@@ -1406,14 +1409,15 @@ async function pollBootHealth() {
   } catch (_) {
     // The graph remains available while local services are still warming up.
   }
-  if (!bootReady) document.getElementById('status').textContent = 'INITIALIZING LOCAL MEMORY SERVICES';
+  if (!bootReady) document.getElementById('status').textContent = 'LIVING MEMORY GRAPH';
   setTimeout(pollBootHealth, 700);
 }
 
 if (gl) waterRenderer = new WaterRenderer(gl);
 resize();
 requestAnimationFrame(animate);
-pollBootHealth();
+document.getElementById('status').textContent = 'LIVING MEMORY GRAPH';
+// Website embed: no boot-health polling or auto reload.
 </script>
 </body>
 </html>
