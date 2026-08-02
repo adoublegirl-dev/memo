@@ -83,6 +83,11 @@ function resolveMemoRoot() {
 }
 
 const ROOT = resolveMemoRoot();
+// Full installer keeps user secrets/data outside resources/app. Development remains project-local.
+const USER_MEMO_ROOT = process.env.MEMO_USER_ROOT || path.join(process.env.LOCALAPPDATA || app.getPath('userData'), 'Memo');
+const USER_MEMO_DATA_ROOT = path.join(USER_MEMO_ROOT, 'data');
+const USER_MEMO_CONFIG_ROOT = path.join(USER_MEMO_ROOT, 'config');
+const USER_MEMO_ENV_FILE = path.join(USER_MEMO_CONFIG_ROOT, '.env');
 const BOOT_URL = process.env.MEMO_BOOT_URL || 'http://127.0.0.1:9120';
 const DASHBOARD_BASE = process.env.MEMO_DASHBOARD_URL || BOOT_URL;
 const DASHBOARD_FALLBACKS = Array.from(new Set([DASHBOARD_BASE, BOOT_URL, 'http://127.0.0.1:9121']));
@@ -363,6 +368,19 @@ function startPolling() {
   pollTimer = setInterval(refreshAndSend, POLL_INTERVAL_MS);
 }
 
+function serviceRuntimeEnv() {
+  if (!app.isPackaged && !process.env.MEMO_USER_ROOT) return {};
+  const bundledPython = path.join(ROOT, 'runtime', 'python.exe');
+  return {
+    MEMO_USER_ROOT: USER_MEMO_ROOT,
+    MEMO_DATA_ROOT: USER_MEMO_DATA_ROOT,
+    MEMO_ENV_FILE: USER_MEMO_ENV_FILE,
+    MEMO_LOG_DIR: path.join(USER_MEMO_DATA_ROOT, 'logs'),
+    MEMO_PID_DIR: path.join(USER_MEMO_DATA_ROOT, 'pids'),
+    PYTHON_EXE: fs.existsSync(bundledPython) ? bundledPython : process.env.PYTHON_EXE || '',
+  };
+}
+
 function runBat(scriptName, actionLabel) {
   const script = path.join(ROOT, scriptName);
   serviceAction = actionLabel;
@@ -374,6 +392,7 @@ function runBat(scriptName, actionLabel) {
       detached: false,
       stdio: 'ignore',
       windowsHide: true,
+      env: { ...process.env, ...serviceRuntimeEnv() },
     });
 
     child.on('error', () => {

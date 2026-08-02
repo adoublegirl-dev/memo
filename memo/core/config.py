@@ -12,10 +12,20 @@ from dotenv import load_dotenv
 # 项目根目录 (memo-project/)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# 自动加载 .env
-_env_file = _PROJECT_ROOT / ".env"
+# 安装器可通过 MEMO_ENV_FILE 指向用户私有配置；开发环境仍默认读取项目根目录 .env。
+_installer_env_file = os.getenv("MEMO_ENV_FILE", "").strip()
+_env_file = Path(_installer_env_file or (_PROJECT_ROOT / ".env"))
 if _env_file.exists():
-    load_dotenv(_env_file)
+    # A full-installer user config is authoritative and must not inherit a
+    # builder/developer API key from the parent process. Project-local .env
+    # keeps the historical non-overriding development behavior.
+    load_dotenv(_env_file, override=bool(_installer_env_file))
+
+
+def _data_root() -> Path:
+    """运行时用户数据根目录。未设置时保持开发环境项目内 data/ 兼容。"""
+    raw = os.getenv("MEMO_DATA_ROOT", "").strip()
+    return Path(raw) if raw else _PROJECT_ROOT / "data"
 
 
 def _memo_env() -> str:
@@ -36,13 +46,17 @@ def _resolve_db_path() -> str:
     if env == "development":
         return str(_PROJECT_ROOT / "data" / "memo_dev.db")
 
+    # Full installer explicitly owns the user data root; ignore inherited
+    # MEMO_DB_PATH values from a developer shell or parent process in that mode.
+    if os.getenv("MEMO_DATA_ROOT", "").strip():
+        return str(_data_root() / "memo_source_aware.db")
     raw = os.getenv("MEMO_DB_PATH", "")
     if raw:
         p = Path(raw)
         if not p.is_absolute():
             p = _PROJECT_ROOT / p
         return str(p)
-    return str(_PROJECT_ROOT / "data" / "memo_source_aware.db")
+    return str(_data_root() / "memo_source_aware.db")
 
 
 @dataclass
@@ -146,8 +160,18 @@ class MemoConfig:
     )
 
     def ensure_dirs(self) -> None:
-        """确保数据目录存在。"""
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        """确保用户数据目录存在。"""
+        data_root = _data_root()
+        for folder in (Path(self.db_path).parent, data_root / "logs", data_root / "pids", data_root / "backups"):
+            folder.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def data_root(self) -> str:
+        return str(_data_root())
+
+    @property
+    def env_file(self) -> str:
+        return str(_env_file)
 
 
 # 全局单例

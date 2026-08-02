@@ -13,7 +13,8 @@ import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PID_DIR = PROJECT_ROOT / "data" / "pids"
+DATA_ROOT = Path(os.getenv("MEMO_DATA_ROOT") or (PROJECT_ROOT / "data"))
+PID_DIR = Path(os.getenv("MEMO_PID_DIR") or (DATA_ROOT / "pids"))
 PORTS = (9120, 9121)
 SERVICE_NAMES = ("boot", "dashboard", "watcher")
 

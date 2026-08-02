@@ -6,8 +6,12 @@ set "OPEN_BROWSER=1"
 if /I "%~1"=="--no-browser" set "OPEN_BROWSER=0"
 
 set ROOT=%~dp0
-set PID_DIR=%ROOT%data\pids
-set LOG_DIR=%ROOT%data\logs
+REM Full installer sets MEMO_DATA_ROOT to %%LOCALAPPDATA%%\Memo\data. Development keeps project-local data/.
+if "%MEMO_DATA_ROOT%"=="" set "MEMO_DATA_ROOT=%ROOT%data"
+if "%MEMO_PID_DIR%"=="" set "MEMO_PID_DIR=%MEMO_DATA_ROOT%\pids"
+if "%MEMO_LOG_DIR%"=="" set "MEMO_LOG_DIR=%MEMO_DATA_ROOT%\logs"
+set "PID_DIR=%MEMO_PID_DIR%"
+set "LOG_DIR=%MEMO_LOG_DIR%"
 if not exist "%PID_DIR%" mkdir "%PID_DIR%"
 if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 
