@@ -21,7 +21,7 @@
   <div class="wrap nav">
     <a class="brand" href="#top"><span class="logo"><span>M</span></span><span>Memo 麦默</span></a>
     <nav>
-      <a href="#why">为什么</a><a href="#features">能力</a><a href="#use">怎么用</a><a href="#cotest">共测</a><a class="nav-cta" href="#download">Windows 版</a>
+      <a href="#why">为什么</a><a href="#features">能力</a><a href="#use">怎么用</a><a href="#cotest">共测</a><a href="/feedback">问题反馈</a><a class="nav-cta" href="#download">Windows 版</a>
     </nav>
   </div>
 </header>
@@ -32,7 +32,7 @@
       <h1>给多个 AI 工具共用的本地项目档案室。</h1>
       <p class="hero-lead">Memo 是一个跨 Agent 的共享记忆系统，把散落在不同 AI 工具里的项目、知识、任务、偏好和来源线索，整理到同一个地方。</p>
       <p class="hero-sub">它不抢着替你做决定。它更像一个安静的协作账本，让 AI 在进入工作之前，先知道哪些东西已经聊过、想过、决定过。</p>
-      <div class="actions" id="download"><a class="btn primary" href="#">下载 Windows 版（待配置）</a><a class="btn" href="#cotest">申请共测</a></div>
+      <div class="actions" id="download"><a class="btn primary" href="/downloads/Memo-Setup-latest.exe">下载 Windows 版</a><a class="btn" href="/feedback">问题反馈</a></div>
       <div class="meta-row"><span class="tag">SQLite 本地数据库</span><span class="tag">MCP 多 Agent 接入</span><span class="tag">来源审计</span><span class="tag">模型 API 增强</span></div>
     </div>
     <div class="visual reveal in" id="loaderVisual" aria-label="Memo interactive loader visual">
@@ -46,8 +46,8 @@
     </div>
   </section>
   <section id="features"><div class="wrap"><div class="section-head reveal"><h2>Memo 现在能管理什么</h2><p>记忆只是入口。真正有用的是围绕记忆展开的项目、知识、任务、偏好和来源管理。</p></div><div class="grid"><div class="card reveal"><div class="num">01</div><b>项目管理</b><p>沉淀项目背景、阶段记录、技术选择、历史坑点和下一步计划。</p></div><div class="card reveal"><div class="num">02</div><b>知识管理</b><p>把对话里的概念、资料、经验和判断变成后续可以找回的知识线索。</p></div><div class="card reveal"><div class="num">03</div><b>任务管理</b><p>把“后面要做”“这里有风险”这类对话线索接住，形成可跟踪待办。</p></div><div class="card reveal"><div class="num">04</div><b>决策管理</b><p>记录方案取舍和历史判断，减少项目反复绕回老路。</p></div><div class="card reveal"><div class="num">05</div><b>偏好管理</b><p>让 AI 理解你的表达习惯、决策风格、审美边界和风险敏感点。</p></div><div class="card reveal"><div class="num">06</div><b>来源审计</b><p>每条记忆尽量保留出处。可追溯，才有资格被长期信任。</p></div></div></div></section>
-  <section id="use"><div class="wrap split"><div class="reveal"><div class="section-head" style="display:block;margin-bottom:24px"><h2>你大概可以怎么用它</h2><p style="margin-top:16px">先从一个很普通的流程开始，不需要把它想得太玄。</p></div><div class="notice"><strong>当前可用平台：Windows</strong><p>下载链接和域名后续会替换为正式地址。macOS / Linux 暂时不是当前可用重点。</p></div></div><div class="steps reveal"><div class="step"><div><b>安装 Windows 版</b><p>用桌面助手启动本地 Memo 服务，打开 Dashboard。</p></div></div><div class="step"><div><b>配置模型 Key</b><p>本地数据库在电脑上，智能提取和分析由你配置的模型 API 增强。</p></div></div><div class="step"><div><b>接入常用 AI 工具</b><p>把 Memo 接到支持 MCP 的 Agent，让不同工具共享同一套长期上下文。</p></div></div><div class="step"><div><b>正常聊天，逐步沉淀</b><p>项目背景、知识线索、任务提醒、个人偏好，会随着使用逐步形成档案。</p></div></div><div class="step"><div><b>定期治理</b><p>打开 Dashboard 检查来源、归档噪音、修正不准的人格断言。</p></div></div></div></div></section>
-  <section id="cotest"><div class="wrap"><div class="panel reveal" style="text-align:center;max-width:860px;margin:0 auto;padding:48px"><div class="eyebrow" style="margin-bottom:22px"><span class="dot"></span> Early Co-test</div><h2 style="font-family:var(--serif);font-size:clamp(30px,4vw,48px);font-weight:500;margin:0 0 22px;line-height:1.25">如果你也受够了 AI 协作断片，欢迎一起共测。</h2><p style="color:var(--muted);margin:0 auto 32px;max-width:650px;line-height:1.9">Memo 还在早期阶段。现在更需要真实用户带着真实工作场景进来，把问题跑出来，把体验磨顺。</p><div class="actions" style="justify-content:center;margin:0"><a class="btn primary" href="#">加入共测（待配置）</a><a class="btn" href="#download">获取 Windows 版</a></div></div></div></section>
+  <section id="use"><div class="wrap split"><div class="reveal"><div class="section-head" style="display:block;margin-bottom:24px"><h2>你大概可以怎么用它</h2><p style="margin-top:16px">先从一个很普通的流程开始，不需要把它想得太玄。</p></div><div class="notice"><strong>当前可用平台：Windows</strong><p>首次安装推荐下载 Memo Full，包含 Memo 主程序、本地 Python Runtime 和必要依赖。macOS / Linux 暂时不是当前可用重点。</p></div></div><div class="steps reveal"><div class="step"><div><b>安装 Windows 版</b><p>用桌面助手启动本地 Memo 服务，打开 Dashboard。</p></div></div><div class="step"><div><b>配置模型 Key</b><p>本地数据库在电脑上，智能提取和分析由你配置的模型 API 增强。</p></div></div><div class="step"><div><b>接入常用 AI 工具</b><p>把 Memo 接到支持 MCP 的 Agent，让不同工具共享同一套长期上下文。</p></div></div><div class="step"><div><b>正常聊天，逐步沉淀</b><p>项目背景、知识线索、任务提醒、个人偏好，会随着使用逐步形成档案。</p></div></div><div class="step"><div><b>定期治理</b><p>打开 Dashboard 检查来源、归档噪音、修正不准的人格断言。</p></div></div></div></div></section>
+  <section id="cotest"><div class="wrap"><div class="panel reveal" style="text-align:center;max-width:860px;margin:0 auto;padding:48px"><div class="eyebrow" style="margin-bottom:22px"><span class="dot"></span> Early Co-test</div><h2 style="font-family:var(--serif);font-size:clamp(30px,4vw,48px);font-weight:500;margin:0 0 22px;line-height:1.25">如果你也受够了 AI 协作断片，欢迎一起共测。</h2><p style="color:var(--muted);margin:0 auto 32px;max-width:650px;line-height:1.9">Memo 还在早期阶段。现在更需要真实用户带着真实工作场景进来，把问题跑出来，把体验磨顺。</p><div class="actions" style="justify-content:center;margin:0"><a class="btn primary" href="/feedback">提交问题反馈</a><a class="btn" href="#download">获取 Windows 版</a></div></div></div></section>
 </main>
 <footer><div class="wrap footer-inner"><div><strong style="color:var(--text);font-weight:500">Memo 麦默</strong><br>一个安静、可靠、能陪你长期工作的本地记忆管理系统。</div><div class="mono">Windows · Local-first · MCP · Source-aware</div></div></footer>
 <script>

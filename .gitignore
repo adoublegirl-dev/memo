@@ -9,6 +9,8 @@ data/memo_dev.db*
 data/backups/
 *.log
 *.backup-before-*
+scripts/boot_assets_backup_*/
+tmp_feedback_test_data*/
 dist/
 !dashboard/dist/
 !dashboard/dist/**
@@ -16,6 +18,7 @@ node_modules/
 .venv/
 install_output/
 reports/
+Programs/
 release/
 *.egg-info/
 docs/*.docx
