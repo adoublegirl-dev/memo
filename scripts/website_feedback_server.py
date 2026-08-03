@@ -9,9 +9,7 @@ Environment:
   MEMO_WEBSITE_PORT         default 9180
   MEMO_WEBSITE_ROOT         default <repo>/website
   MEMO_FEEDBACK_DATA_DIR    default <repo>/data/website_feedback
-  MEMO_FEEDBACK_ADMIN_USER  admin login username; default admin on localhost only
-  MEMO_FEEDBACK_ADMIN_PASSWORD admin login password; default dev-password on localhost only
-  MEMO_FEEDBACK_ADMIN_TOKEN session token used by admin APIs; generated from password if omitted
+  MEMO_FEEDBACK_ADMIN_TOKEN required for admin APIs; default dev-token on localhost only
 """
 from __future__ import annotations
 
@@ -37,9 +35,7 @@ DB_PATH = DATA_DIR / "feedback.db"
 UPLOAD_DIR = DATA_DIR / "uploads"
 HOST = os.getenv("MEMO_WEBSITE_HOST", "127.0.0.1")
 PORT = int(os.getenv("MEMO_WEBSITE_PORT", "9180"))
-ADMIN_USER = os.getenv("MEMO_FEEDBACK_ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.getenv("MEMO_FEEDBACK_ADMIN_PASSWORD", "dev-password")
-ADMIN_TOKEN = os.getenv("MEMO_FEEDBACK_ADMIN_TOKEN") or secrets.token_urlsafe(32)
+ADMIN_TOKEN = os.getenv("MEMO_FEEDBACK_ADMIN_TOKEN", "dev-token")
 MAX_BODY = 22 * 1024 * 1024
 MAX_IMAGES = 3
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -160,21 +156,9 @@ class FeedbackHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/api/admin/login":
-            return self.handle_admin_login()
         if parsed.path == "/api/feedback":
             return self.handle_feedback_create()
         self.send_error(HTTPStatus.NOT_FOUND)
-
-    def handle_admin_login(self) -> None:
-        data = self.read_json()
-        if data is None:
-            return
-        username = str(data.get("username") or "")
-        password = str(data.get("password") or "")
-        if secrets.compare_digest(username, ADMIN_USER) and secrets.compare_digest(password, ADMIN_PASSWORD):
-            return self.send_json(HTTPStatus.OK, {"ok": True, "token": ADMIN_TOKEN, "username": ADMIN_USER})
-        return self.send_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "用户名或密码错误"})
 
     def do_PATCH(self) -> None:
         parsed = urlparse(self.path)
@@ -303,8 +287,8 @@ def main() -> None:
     if not WEBSITE_ROOT.exists():
         raise SystemExit(f"website root not found: {WEBSITE_ROOT}")
     init_db()
-    if HOST not in {"127.0.0.1", "localhost"} and ADMIN_PASSWORD == "dev-password":
-        raise SystemExit("Set MEMO_FEEDBACK_ADMIN_USER and MEMO_FEEDBACK_ADMIN_PASSWORD before binding to a public host")
+    if ADMIN_TOKEN == "dev-token" and HOST not in {"127.0.0.1", "localhost"}:
+        raise SystemExit("Set MEMO_FEEDBACK_ADMIN_TOKEN before binding to a public host")
     httpd = ThreadingHTTPServer((HOST, PORT), FeedbackHandler)
     print(f"Memo feedback server: http://{HOST}:{PORT}  root={WEBSITE_ROOT}  data={DATA_DIR}", flush=True)
     httpd.serve_forever()
