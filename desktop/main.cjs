@@ -94,8 +94,8 @@ const DASHBOARD_FALLBACKS = Array.from(new Set([DASHBOARD_BASE, BOOT_URL, 'http:
 const POLL_INTERVAL_MS = Number(process.env.MEMO_COMPANION_POLL_MS || 60000);
 const AUTO_START_SERVICES = process.env.MEMO_COMPANION_AUTO_START !== '0';
 const ICON_PATH = path.join(__dirname, 'assets', process.platform === 'win32' ? 'memo-companion.ico' : 'memo-companion.png');
-const RELEASE_PAGE = process.env.MEMO_RELEASE_PAGE || 'https://github.com/adoublegirl-dev/memo/releases';
-const RELEASE_API = process.env.MEMO_RELEASE_API || 'https://api.github.com/repos/adoublegirl-dev/memo/releases/latest';
+const RELEASE_PAGE = process.env.MEMO_RELEASE_PAGE || 'https://memo.zhaguzhagu.com/#download';
+const UPDATE_MANIFEST_URL = process.env.MEMO_UPDATE_MANIFEST_URL || 'https://memo.zhaguzhagu.com/downloads/latest.json';
 
 let mainWindow = null;
 let tray = null;
@@ -713,23 +713,35 @@ function downloadFile(url, destination) {
   });
 }
 
+function stableRuntimeReady() {
+  return fs.existsSync(path.join(USER_MEMO_ROOT, 'Programs', 'Memo', 'runtime', 'python.exe'));
+}
+
+async function loadUpdateManifest() {
+  const manifest = await fetchJson(UPDATE_MANIFEST_URL, null);
+  if (!manifest || !manifest.version || !manifest.full?.url) return null;
+  return manifest;
+}
+
 async function installDesktopUpdate() {
-  const latest = await fetchJson(RELEASE_API, null);
-  if (!latest) return { ok: false, message: '无法连接 GitHub Release 更新源。' };
+  const latest = await loadUpdateManifest();
+  if (!latest) return { ok: false, message: '无法连接 Memo 官网更新源，请稍后重试。' };
   const current = appVersion();
-  const tag = latest.tag_name || latest.name || '';
-  if (compareVersions(tag, current) <= 0) return { ok: true, message: `当前已是最新版本 ${current}。` };
-  const asset = (latest.assets || []).find((item) => /Setup.*\.exe$/i.test(item.name || ''));
-  if (!asset?.browser_download_url) return { ok: false, message: `Release ${tag} 未找到 Windows Setup 安装包。` };
+  const version = latest.version || '';
+  if (compareVersions(version, current) <= 0) return { ok: true, message: `当前已是最新版本 ${current}。` };
+  const runtimeReady = stableRuntimeReady();
+  const asset = runtimeReady && latest.lite?.url ? latest.lite : latest.full;
+  if (!asset?.url) return { ok: false, message: `版本 ${version} 未配置可用的 Windows 安装包。` };
   const tempDir = path.join(app.getPath('temp'), 'memo-desktop-update');
   fs.mkdirSync(tempDir, { recursive: true });
-  const target = path.join(tempDir, asset.name);
+  const target = path.join(tempDir, asset.name || (runtimeReady ? 'Memo-Lite-Setup-latest.exe' : 'Memo-Setup-latest.exe'));
   try {
     if (fs.existsSync(target)) fs.unlinkSync(target);
-    await downloadFile(asset.browser_download_url, target);
+    await downloadFile(asset.url, target);
     const size = fs.statSync(target).size;
     if (size < 1024 * 1024) throw new Error('下载文件异常小，已取消安装。');
-    const publishedDigest = String(asset.digest || '').replace(/^sha256:/i, '').toLowerCase();
+    if (Number(asset.size || 0) > 0 && size !== Number(asset.size)) throw new Error('安装包大小与服务器清单不一致，已取消安装。');
+    const publishedDigest = String(asset.sha256 || '').replace(/^sha256:/i, '').toLowerCase();
     if (publishedDigest) {
       const actualDigest = await sha256File(target);
       if (actualDigest !== publishedDigest) throw new Error('安装包 SHA-256 校验不一致，已取消安装。');
@@ -737,7 +749,8 @@ async function installDesktopUpdate() {
     const child = spawn(target, [], { detached: true, stdio: 'ignore', windowsHide: false });
     child.unref();
     setTimeout(() => app.quit(), 1200);
-    return { ok: true, message: `已下载 ${tag} 并打开安装程序。请按安装向导完成覆盖安装，安装器会保留本地 data 和 .env。` };
+    const channel = asset === latest.lite ? '轻量版' : '全量版';
+    return { ok: true, message: `已从 Memo 官网下载 ${version} ${channel}并打开安装程序。安装器会保留本地数据和配置。` };
   } catch (error) {
     return { ok: false, message: `启动器更新失败：${error?.message || error}` };
   }
@@ -745,20 +758,21 @@ async function installDesktopUpdate() {
 
 async function checkForUpdates() {
   const current = appVersion();
-  const latest = await fetchJson(RELEASE_API, null);
-  if (!latest) {
-    return { ok: false, current, message: `当前版本 ${current}。暂时无法连接更新源。` };
-  }
-  const tag = latest.tag_name || latest.name || '';
-  const page = latest.html_url || RELEASE_PAGE;
-  const assets = Array.isArray(latest.assets) ? latest.assets.map((a) => ({ name: a.name, url: a.browser_download_url })) : [];
+  const latest = await loadUpdateManifest();
+  if (!latest) return { ok: false, current, message: `当前版本 ${current}。暂时无法连接 Memo 官网更新源。` };
+  const version = latest.version || '';
+  const hasUpdate = compareVersions(version, current) > 0;
+  const channel = stableRuntimeReady() && latest.lite?.url ? 'Lite 轻量更新' : 'Full 全量更新';
   return {
     ok: true,
     current,
-    latest: tag,
-    page,
-    assets,
-    message: `当前版本 ${current}；最新版本 ${tag || '未知'}。可点击“打开下载页”获取安装包。`,
+    latest: version,
+    page: latest.page || RELEASE_PAGE,
+    hasUpdate,
+    channel,
+    message: hasUpdate
+      ? `当前版本 ${current}；最新版本 ${version}。将使用 ${channel}。${latest.notes || ''}`
+      : `当前已是最新版本 ${current}。`,
   };
 }
 
