@@ -13,16 +13,18 @@ Static pages:
 API:
 
 - `POST /api/feedback` — submit text + up to 3 base64 images
-- `GET /api/feedback` — admin list, requires `X-Admin-Token`
-- `GET /api/feedback/:id` — admin detail, requires `X-Admin-Token`
-- `PATCH /api/feedback/:id` — update status / note, requires `X-Admin-Token`
+- `POST /api/admin/login` — admin username/password login
+- `GET /api/feedback` — admin list, requires login token
+- `GET /api/feedback/:id` — admin detail, requires login token
+- `PATCH /api/feedback/:id` — update status / note, requires login token
 
 ## Run locally
 
 ```powershell
 $env:MEMO_WEBSITE_HOST='127.0.0.1'
 $env:MEMO_WEBSITE_PORT='9180'
-$env:MEMO_FEEDBACK_ADMIN_TOKEN='<change-me>'
+$env:MEMO_FEEDBACK_ADMIN_USER='memo_admin'
+$env:MEMO_FEEDBACK_ADMIN_PASSWORD='<change-me>'
 python scripts\website_feedback_server.py
 ```
 
@@ -34,10 +36,11 @@ Open:
 
 ## Production notes
 
-Set a strong admin token before exposing the service:
+Set a strong admin username/password before exposing the service:
 
 ```bash
-export MEMO_FEEDBACK_ADMIN_TOKEN='replace-with-a-long-random-token'
+export MEMO_FEEDBACK_ADMIN_USER='memo_admin'
+export MEMO_FEEDBACK_ADMIN_PASSWORD='replace-with-a-long-random-password'
 export MEMO_WEBSITE_HOST='127.0.0.1'
 export MEMO_WEBSITE_PORT='9180'
 export MEMO_FEEDBACK_DATA_DIR='/data/memo-feedback'
