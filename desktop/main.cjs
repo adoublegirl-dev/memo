@@ -622,21 +622,37 @@ function getPythonCommand() {
 }
 
 function buildMcpConfig() {
-  const dbPath = readEnvValue('MEMO_DB_PATH', 'data/memo_source_aware.db');
+  const pythonCommand = getPythonCommand();
+  const dbPath = path.join(USER_MEMO_DATA_ROOT, 'memo_source_aware.db');
   const config = {
     mcpServers: {
       memo: {
-        command: getPythonCommand(),
+        command: pythonCommand,
         args: [path.join(ROOT, 'scripts', 'run_mcp.py')],
         cwd: ROOT,
         env: {
+          MEMO_ENV: 'production',
+          MEMO_USER_ROOT: USER_MEMO_ROOT,
+          MEMO_DATA_ROOT: USER_MEMO_DATA_ROOT,
           MEMO_DB_PATH: dbPath,
+          MEMO_ENV_FILE: USER_MEMO_ENV_FILE,
+          MEMO_LOG_DIR: path.join(USER_MEMO_DATA_ROOT, 'logs'),
+          MEMO_PID_DIR: path.join(USER_MEMO_DATA_ROOT, 'pids'),
+          MEMO_RUNTIME_ROOT: path.dirname(pythonCommand),
+          PYTHON_EXE: pythonCommand,
+          PYTHONUTF8: '1',
+          PYTHONIOENCODING: 'utf-8',
         },
       },
     },
   };
   return {
     memoRoot: ROOT,
+    userRoot: USER_MEMO_ROOT,
+    dataRoot: USER_MEMO_DATA_ROOT,
+    envFile: USER_MEMO_ENV_FILE,
+    database: dbPath,
+    python: pythonCommand,
     config,
     configText: JSON.stringify(config, null, 2),
   };

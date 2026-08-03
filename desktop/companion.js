@@ -142,7 +142,7 @@ els.mcpGuideBtn.addEventListener('click', async (event) => {
   event.stopPropagation();
   setSettingsOpen(false);
   const info = await window.memoCompanion.getMcpConfig();
-  els.memoRootText.textContent = `当前 Memo 路径：${info.memoRoot}`;
+  els.memoRootText.textContent = `当前数据目录：${info.dataRoot}\nMCP 程序目录：${info.memoRoot}\n配置文件：${info.envFile}`;
   els.mcpConfigText.value = info.configText;
   els.mcpCopyStatus.textContent = '复制后，到 Agent 的 MCP 设置里替换旧 Memo 配置。';
   setModal(els.mcpGuide, true);
