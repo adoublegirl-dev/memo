@@ -22,3 +22,12 @@ def test_runtime_uses_external_user_env_and_data_root(tmp_path: Path):
     assert (data_root / "logs").is_dir()
     assert (data_root / "pids").is_dir()
     assert (data_root / "backups").is_dir()
+
+
+def test_test_environment_honors_explicit_disposable_data_root(tmp_path: Path):
+    data_root = tmp_path / "isolated-test-data"
+    env = os.environ.copy()
+    env.update({"MEMO_ENV": "test", "MEMO_DATA_ROOT": str(data_root)})
+    script = "from memo.core.config import config; print(config.db_path)"
+    result = subprocess.run([sys.executable, "-c", script], cwd=ROOT, env=env, capture_output=True, text=True, check=True)
+    assert result.stdout.strip() == str(data_root / "memo_test.db")

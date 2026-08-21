@@ -42,7 +42,10 @@ def _resolve_db_path() -> str:
     """
     env = _memo_env()
     if env == "test":
-        return str(_PROJECT_ROOT / "data" / "memo_test.db")
+        # CI and local pytest runs may provide an explicit disposable data root.
+        # Honor it instead of silently falling back to the project data folder.
+        raw_test_root = os.getenv("MEMO_DATA_ROOT", "").strip()
+        return str(Path(raw_test_root) / "memo_test.db") if raw_test_root else str(_PROJECT_ROOT / "data" / "memo_test.db")
     if env == "development":
         return str(_PROJECT_ROOT / "data" / "memo_dev.db")
 

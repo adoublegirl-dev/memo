@@ -17,11 +17,11 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SESSION_TEST_ROOT = Path(tempfile.gettempdir()) / f"memo-pytest-{uuid.uuid4().hex}"
 SESSION_DATA_ROOT = SESSION_TEST_ROOT / "data"
-SESSION_DB = SESSION_DATA_ROOT / "memo_source_aware.db"
+SESSION_DB = SESSION_DATA_ROOT / "memo_test.db"
 
 # Set these at conftest import time, before pytest imports test modules that may
 # import memo.core.config or create database/vector-store singletons.
-os.environ["MEMO_ENV"] = "production"
+os.environ["MEMO_ENV"] = "test"
 os.environ["MEMO_USER_ROOT"] = str(SESSION_TEST_ROOT)
 os.environ["MEMO_DATA_ROOT"] = str(SESSION_DATA_ROOT)
 os.environ["MEMO_DB_PATH"] = str(SESSION_DB)
@@ -30,7 +30,7 @@ os.environ["MEMO_DB_PATH"] = str(SESSION_DB)
 @pytest.fixture(autouse=True)
 def isolate_memo_db(monkeypatch):
     """Keep every test in the session's dedicated temporary Memo root."""
-    monkeypatch.setenv("MEMO_ENV", "production")
+    monkeypatch.setenv("MEMO_ENV", "test")
     monkeypatch.setenv("MEMO_USER_ROOT", str(SESSION_TEST_ROOT))
     monkeypatch.setenv("MEMO_DATA_ROOT", str(SESSION_DATA_ROOT))
     monkeypatch.setenv("MEMO_DB_PATH", str(SESSION_DB))
