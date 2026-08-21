@@ -410,7 +410,7 @@ class Engine:
             summary=extracted["summary"],
             summary_detail=extracted["summary_detail"],
             raw_text=conversation,
-            memory_type=MemoryType(extracted.get("memory_type", "FACT")),
+            memory_type=normalize_memory_type(extracted.get("memory_type", "FACT")),
             confidence=mem_confidence,
             signal_level=mem_signal,
         )

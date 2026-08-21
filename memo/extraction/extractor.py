@@ -6,6 +6,7 @@ Phase 1 版本：增强 Prompt + 多轮对话支持 + jieba 关键词降级。
 import re
 from typing import Any
 
+from memo.models import MemoryType
 from memo.utils.llm import llm_client
 from memo.utils.logger import logger
 
@@ -141,12 +142,17 @@ def extract_from_conversation(
 
 def _normalize_extraction(raw: dict) -> dict:
     """标准化 LLM 输出。"""
+    memory_type = str(raw.get("memory_type", "FACT")).upper()
+    allowed_memory_types = {item.value for item in MemoryType}
+    if memory_type not in allowed_memory_types:
+        memory_type = MemoryType.FACT.value
+
     result = {
         "title": str(raw.get("title", ""))[:100],
         "feature_tags": [],
         "summary": str(raw.get("summary", ""))[:500],
         "summary_detail": str(raw.get("summary_detail", ""))[:1500],
-        "memory_type": raw.get("memory_type", "FACT"),
+        "memory_type": memory_type,
         "relations": [],
         "is_update_of": raw.get("is_update_of"),
     }

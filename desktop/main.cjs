@@ -4,6 +4,7 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 const https = require('https');
 const crypto = require('crypto');
+const { compareVersions } = require('./version-utils.cjs');
 
 function candidateAncestors(startPath, maxDepth = 6) {
   const result = [];
@@ -689,15 +690,6 @@ function appVersion() {
   }
 }
 
-function compareVersions(left, right) {
-  const normalize = (value) => String(value || '').replace(/^v/, '').split(/[-+]/)[0].split('.').map((n) => Number(n) || 0);
-  const a = normalize(left); const b = normalize(right);
-  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
-    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0) ? 1 : -1;
-  }
-  return 0;
-}
-
 function sha256File(filePath) {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha256');
@@ -730,11 +722,17 @@ function stableRuntimeReady() {
 }
 
 function persistInstallerDataRoot() {
-  const target = path.join(app.getPath('appData'), 'Memo', 'memo-installer-settings.json');
-  let existing = {};
-  try { existing = JSON.parse(fs.readFileSync(target, 'utf8')); } catch (_) {}
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, JSON.stringify({ ...existing, userRoot: USER_MEMO_ROOT, updatedBy: 'desktop-auto-update', updatedAt: new Date().toISOString() }, null, 2), 'utf8');
+  try {
+    const target = path.join(app.getPath('appData'), 'Memo', 'memo-installer-settings.json');
+    let existing = {};
+    try { existing = JSON.parse(fs.readFileSync(target, 'utf8')); } catch (_) {}
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, JSON.stringify({ ...existing, userRoot: USER_MEMO_ROOT, updatedBy: 'desktop-auto-update', updatedAt: new Date().toISOString() }, null, 2), 'utf8');
+    return true;
+  } catch (error) {
+    console.warn(`无法持久化安装器数据目录，继续使用当前进程环境：${error?.message || error}`);
+    return false;
+  }
 }
 
 async function loadUpdateManifest() {
@@ -779,6 +777,10 @@ async function installDesktopUpdate() {
         MEMO_RUNTIME_ROOT: path.join(USER_MEMO_ROOT, 'Programs', 'Memo', 'runtime'),
         PYTHON_EXE: path.join(USER_MEMO_ROOT, 'Programs', 'Memo', 'runtime', 'python.exe'),
       },
+    });
+    await new Promise((resolve, reject) => {
+      child.once('spawn', resolve);
+      child.once('error', reject);
     });
     child.unref();
     setTimeout(() => app.quit(), 1200);

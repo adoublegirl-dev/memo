@@ -24,7 +24,33 @@
 python -m pytest tests/test_feedback_service.py -q
 ```
 
-## 服务器
+本地通过 HTTP 调试管理后台时，需要在测试环境中设置：
+
+```text
+FEEDBACK_ALLOW_INSECURE_DEV=1
+FEEDBACK_COOKIE_SECURE=0
+```
+
+不要在公网或正式环境启用上述配置。
+
+## 运行与部署
+
+1. 复制 `.env.example` 为部署环境配置，设置独立的管理员密码哈希、Session Secret 和 IP Hash Secret。
+2. 安装 `feedback_service/requirements.txt`。
+3. 仅监听本机回环地址：
+
+```bash
+uvicorn feedback_service.app:app --host 127.0.0.1 --port 9130
+```
+
+正式环境必须满足以下要求：
+
+- 端口 `9130` 不对公网开放，只允许本机 Nginx 反向代理访问。
+- Nginx 必须覆盖客户端传入的 `X-Forwarded-For`，例如使用 `proxy_set_header X-Forwarded-For $remote_addr;`，否则基于 IP 哈希的提交和登录限速可能被伪造请求头绕过。
+- 官网启用 HTTPS，并保持 `FEEDBACK_COOKIE_SECURE=1`。
+- 升级部署时保留 `.env`、SQLite 数据库和上传图片目录，不要将它们提交到 Git。
+
+推荐目录：
 
 ```text
 服务目录：/opt/memo-feedback/app
@@ -33,5 +59,3 @@ python -m pytest tests/test_feedback_service.py -q
 用户页面：https://memo.zhaguzhagu.com/feedback.html
 管理后台：https://memo.zhaguzhagu.com/admin/feedback
 ```
-
-首次运行 `website/部署Memo反馈系统.bat` 时会要求设置管理员账号密码；后续部署保留 `.env`、数据库和上传图片。
