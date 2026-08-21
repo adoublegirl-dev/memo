@@ -475,10 +475,70 @@ function compactOutput(text, max = 2200) {
   return `${clean.slice(0, 900)}\n...\n${clean.slice(-1200)}`;
 }
 
-async function updateMemoService() {
-  if (serviceUpdateRunning) {
-    return { ok: false, message: 'Memo 服务更新已在进行中，请稍候。' };
+function installedServiceVersion() {
+  for (const candidate of [path.join(ROOT, 'memo-install-manifest.json'), path.join(ROOT, 'memo-build-manifest.json')]) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      const version = parsed.serviceVersion || parsed.version;
+      if (version) return String(version);
+    } catch (_) {}
   }
+  return appVersion();
+}
+
+function servicePatchRunner() {
+  const packaged = path.resolve(__dirname, '..', 'installer', 'service_patch_runner.py');
+  return fs.existsSync(packaged) ? packaged : path.join(ROOT, 'scripts', 'service_patch_runner.py');
+}
+
+async function runServicePatchRunner(args) {
+  const runner = servicePatchRunner();
+  if (!fs.existsSync(runner)) return { ok: false, error: '当前启动器不包含Service Patch执行器，请先更新一次Lite。' };
+  const result = await runCommand(getPythonCommand(), [runner, ...args, '--user-root', USER_MEMO_ROOT], { cwd: path.dirname(ROOT), env: serviceRuntimeEnv() });
+  const raw = String(result.stdout || result.stderr || '').trim();
+  try { return { ...JSON.parse(raw), exitCode: result.code }; } catch (_) {
+    return { ok: false, error: compactOutput(raw || `Service Patch runner exit ${result.code}`) };
+  }
+}
+
+async function archiveUserStateBeforeServicePatch() {
+  const archiveScript = path.join(ROOT, 'scripts', 'archive_current_db.py');
+  if (!fs.existsSync(archiveScript)) {
+    return { ok: false, message: '当前服务缺少数据库归档脚本。为保护数据，已取消增量更新；请先使用Lite更新启动器。' };
+  }
+  const archive = await runCommand(
+    getPythonCommand(),
+    [archiveScript, '--apply', '--confirm', 'ARCHIVE', '--label', 'service-patch'],
+    { cwd: ROOT, env: serviceRuntimeEnv() },
+  );
+  return archive.ok
+    ? { ok: true, detail: compactOutput(archive.stdout) }
+    : { ok: false, message: `数据库和配置归档失败，程序文件尚未修改。\n${compactOutput(archive.stderr || archive.stdout).replace(/\uFFFD/g, '?')}` };
+}
+
+async function updateGitServiceRuntime(steps) {
+  steps.push('停止 Memo 服务');
+  const stopped = await stopMemoServices();
+  if (!stopped.ok) return { ok: false, message: '停止Memo服务失败，未拉取代码。' };
+  const archived = await archiveUserStateBeforeServicePatch();
+  if (!archived.ok) {
+    await startMemoServices();
+    return archived;
+  }
+  steps.push('归档数据库和配置', 'Git fast-forward更新');
+  const pull = await runCommand('git', ['-c', 'http.proxy=', '-c', 'https.proxy=', 'pull', '--ff-only', 'origin', 'main'], { cwd: ROOT });
+  if (!pull.ok) {
+    await startMemoServices();
+    return { ok: false, message: `git pull失败，已恢复启动旧服务。\n${compactOutput(pull.stderr || pull.stdout)}` };
+  }
+  const started = await startMemoServices();
+  return started.ok
+    ? { ok: true, message: `Git源码服务已更新。\n${steps.join(' → ')}` }
+    : { ok: false, message: '代码已拉取，但服务未能恢复启动。' };
+}
+
+async function updateMemoService() {
+  if (serviceUpdateRunning) return { ok: false, message: 'Memo服务更新已在进行中，请稍候。' };
   serviceUpdateRunning = true;
   serviceAction = 'updating';
   refreshAndSend();
@@ -491,102 +551,72 @@ async function updateMemoService() {
   };
 
   try {
-    const isGitRuntime = fs.existsSync(path.join(ROOT, '.git'));
+    if (fs.existsSync(path.join(ROOT, '.git'))) return await finish(await updateGitServiceRuntime(steps));
+    const latest = await loadUpdateManifest();
+    const service = serviceRelease(latest);
+    if (!service?.url || !service?.version || service.runtimeChanged) {
+      return await finish({ ok: false, message: '本次更新包含启动器或Runtime变化，请使用Lite更新。' });
+    }
+    const current = installedServiceVersion();
+    if (compareVersions(service.version, current) <= 0) {
+      return await finish({ ok: true, message: `Memo服务已是最新版本 ${current}。` });
+    }
+
+    // Download and verify while the existing service remains available. Downtime
+    // begins only after the immutable patch is ready on local disk.
+    steps.push('下载并校验小型服务补丁');
+    const tempDir = path.join(app.getPath('temp'), 'memo-service-patch');
+    fs.mkdirSync(tempDir, { recursive: true });
+    const target = path.join(tempDir, service.name || `Memo-Service-${service.version}.zip`);
+    if (fs.existsSync(target)) fs.unlinkSync(target);
+    await downloadFile(service.url, target);
+    const size = fs.statSync(target).size;
+    if (Number(service.size || 0) > 0 && size !== Number(service.size)) throw new Error('Service Patch大小与发布清单不一致。');
+    const actualDigest = await sha256File(target);
+    if (!service.sha256 || actualDigest !== String(service.sha256).replace(/^sha256:/i, '').toLowerCase()) {
+      throw new Error('Service Patch SHA-256校验失败。');
+    }
 
     steps.push('停止 Memo 服务');
-    await runBat('stop_all.bat', 'updating');
+    const stopped = await stopMemoServices();
+    if (!stopped.ok) return await finish({ ok: false, message: '停止Memo服务失败，补丁尚未应用。' });
+    steps.push('归档数据库和配置');
+    const archived = await archiveUserStateBeforeServicePatch();
+    if (!archived.ok) {
+      await startMemoServices();
+      return await finish(archived);
+    }
 
-    steps.push('确认 Source-Aware 新库为唯一运行库');
-    const prepareScript = path.join(ROOT, 'scripts', 'prepare_source_aware_runtime.py');
-    if (!fs.existsSync(prepareScript)) {
-      await runBat('start_all.bat', 'updating');
+    steps.push('原子切换程序目录');
+    const applied = await runServicePatchRunner([
+      '--action', 'apply', '--archive', target, '--sha256', actualDigest, '--version', String(service.version),
+    ]);
+    if (!applied.ok) {
+      await startMemoServices();
+      return await finish({ ok: false, message: `Service Patch应用失败，旧程序已保留并重新启动。\n${applied.error || ''}` });
+    }
+
+    steps.push('启动并健康检查');
+    const started = await startMemoServices();
+    const ready = started.ok ? await waitForMemoServices(60) : { ok: false, message: started.message };
+    if (!ready.ok) {
+      steps.push('健康检查失败，回滚程序目录');
+      await stopMemoServices();
+      const rolledBack = await runServicePatchRunner(['--action', 'rollback', '--backup', String(applied.backup || '')]);
+      const restored = await startMemoServices();
       return await finish({
         ok: false,
-        message: '当前安装版缺少 Source-Aware 数据库准备器。请先安装最新 Release；安装后旧 memo.db 将只备份，不会再被服务使用。',
+        message: `新版本未通过健康检查，已${rolledBack.ok && restored.ok ? '自动恢复旧程序' : '尝试回滚但需要人工检查'}。数据库备份保持不动。\n${ready.message || ''}`,
       });
     }
-    const prepared = await runCommand(
-      getPythonCommand(),
-      [prepareScript, '--apply', '--confirm', 'PREPARE_SOURCE_AWARE'],
-      { cwd: ROOT },
-    );
-    if (!prepared.ok) {
-      await runBat('start_all.bat', 'updating');
-      return await finish({
-        ok: false,
-        message: `Source-Aware 新库准备失败，未下载或覆盖任何服务文件，更新已安全停止。\n${compactOutput(prepared.stderr || prepared.stdout).replace(/\uFFFD/g, '?')}`,
-      });
-    }
-    steps.push('归档当前 Source-Aware 数据库和 .env');
-    const archiveScript = path.join(ROOT, 'scripts', 'archive_current_db.py');
-    if (fs.existsSync(archiveScript)) {
-      const archive = await runCommand(getPythonCommand(), [archiveScript, '--apply', '--confirm', 'ARCHIVE', '--label', 'desktop-update'], { cwd: ROOT });
-      if (!archive.ok) {
-        const archiveDetail = compactOutput(archive.stderr || archive.stdout).replace(/\uFFFD/g, '?');
-        return await finish({
-          ok: false,
-          message: `数据库归档失败，未下载或覆盖任何服务文件，更新已安全停止。\n${archiveDetail}\n\n请确认 Memo 安装目录的 .env 中 MEMO_DB_PATH 指向当前实际数据库后重试。`,
-        });
-      }
-    } else {
-      steps.push('未找到 archive_current_db.py，跳过脚本归档');
-    }
-
-    let updateOutput = '';
-    if (isGitRuntime) {
-      steps.push('拉取 GitHub 最新代码');
-      const pull = await runCommand('git', ['-c', 'http.proxy=', '-c', 'https.proxy=', 'pull', '--ff-only', 'origin', 'main'], { cwd: ROOT });
-      if (!pull.ok) {
-        await runBat('start_all.bat', 'updating');
-        return await finish({ ok: false, message: `git pull 失败，已尝试重新启动服务。\n${compactOutput(pull.stderr || pull.stdout)}` });
-      }
-      updateOutput = pull.stdout;
-    } else {
-      steps.push('下载 GitHub 最新服务代码包');
-      const bundledUpdater = path.join(ROOT, 'scripts', 'update_bundled_runtime.py');
-      if (!fs.existsSync(bundledUpdater)) {
-        await runBat('start_all.bat', 'updating');
-        return await finish({
-          ok: false,
-          message: '当前是 exe 安装版，且旧版本尚不支持安装版在线更新。请先安装最新 Release；以后即可在启动器内更新 Memo 服务。',
-        });
-      }
-      const update = await runCommand(
-        getPythonCommand(),
-        [bundledUpdater, '--apply', '--confirm', 'UPDATE_BUNDLED', '--target-root', ROOT],
-        { cwd: ROOT },
-      );
-      if (!update.ok) {
-        await runBat('start_all.bat', 'updating');
-        return await finish({ ok: false, message: `安装版服务代码更新失败，已尝试重新启动服务。\n${compactOutput(update.stderr || update.stdout)}` });
-      }
-      updateOutput = update.stdout;
-      steps.push('保留 data / .env / Source-Aware 数据库 / WAL / SHM');
-    }
-
-    steps.push('编译检查');
-    const pycheck = await runCommand(getPythonCommand(), ['-m', 'py_compile', path.join(ROOT, 'scripts', 'memo_dashboard.py'), path.join(ROOT, 'memo', 'core', 'engine.py')], { cwd: ROOT });
-    if (!pycheck.ok) {
-      await runBat('start_all.bat', 'updating');
-      return await finish({ ok: false, message: `代码编译检查失败，已尝试重新启动服务。\n${compactOutput(pycheck.stderr || pycheck.stdout)}` });
-    }
-
-    steps.push('启动 Memo 服务');
-    const start = await runBat('start_all.bat', 'updating');
-    if (!start.ok) {
-      return await finish({ ok: false, message: 'Memo 服务代码已更新，但启动脚本返回异常。请查看 data/logs。' });
-    }
-    steps.push('确认 9120 启动页与 9121 Dashboard 均已就绪');
-    const ready = await waitForMemoServices(60);
+    await runServicePatchRunner(['--action', 'finalize', '--backup', String(applied.backup || '')]);
     return await finish({
-      ok: ready.ok,
-      message: ready.ok
-        ? `Memo 服务已更新并重启，启动页和 Dashboard 均已就绪。\n更新模式：${isGitRuntime ? 'Git 源码版' : 'exe 安装版安全覆盖'}\n执行步骤：${steps.join(' → ')}\n${compactOutput(updateOutput)}`
-        : `Memo 服务代码已更新，但未能完成启动。\n${ready.message}`,
+      ok: true,
+      message: `Memo服务已通过小型补丁更新到 ${service.version}。\n执行步骤：${steps.join(' → ')}\n本地数据库、WAL/SHM和.env均未被补丁覆盖。`,
     });
   } catch (error) {
-    try { await runBat('start_all.bat', 'updating'); } catch (_) {}
-    return await finish({ ok: false, message: `Memo 服务更新失败：${error?.message || error}` });
+    try { await startMemoServices(); } catch (_) {}
+    return await finish({ ok: false, message: `Memo服务更新失败：${error?.message || error}` });
   }
 }
 
@@ -602,7 +632,7 @@ function getLoginItemEnabled() {
 
 function readEnvValue(name, fallback = '') {
   try {
-    const envPath = path.join(ROOT, '.env');
+    const envPath = process.env.MEMO_ENV_FILE || path.join(ROOT, '.env');
     if (!fs.existsSync(envPath)) return fallback;
     const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
     for (const line of lines) {
@@ -677,7 +707,19 @@ function copyMcpConfig(text) {
 }
 
 function openMemoRoot() {
-  shell.openPath(ROOT);
+  shell.openPath(USER_MEMO_ROOT);
+  return { ok: true };
+}
+
+async function openDataLocationManager() {
+  // Data-path changes require every Memo process to release SQLite first.
+  // Relaunching the installer in explicit manager mode also reloads all runtime
+  // environment variables after the selected path is persisted.
+  try { await stopMemoServices(); } catch (_) {}
+  const args = process.argv.slice(1).filter((item) => item !== '--memo-data-manager');
+  args.push('--memo-data-manager');
+  app.relaunch({ args });
+  app.exit(0);
   return { ok: true };
 }
 
@@ -737,18 +779,37 @@ function persistInstallerDataRoot() {
 
 async function loadUpdateManifest() {
   const manifest = await fetchJson(UPDATE_MANIFEST_URL, null);
-  if (!manifest || !manifest.version || !manifest.full?.url) return null;
+  if (!manifest || !(manifest.launcher?.version || manifest.version || manifest.service?.version)) return null;
   return manifest;
+}
+
+function launcherRelease(manifest) {
+  if (manifest?.launcher?.version) return manifest.launcher;
+  return {
+    version: manifest?.version || '',
+    full: manifest?.full || null,
+    lite: manifest?.lite || null,
+    notes: manifest?.notes || '',
+  };
+}
+
+function serviceRelease(manifest) {
+  const service = manifest?.service;
+  if (!service?.version) return null;
+  if (service.url) return service;
+  const asset = service.full || null;
+  return asset?.url ? { ...asset, version: service.version, runtimeChanged: service.runtimeChanged } : null;
 }
 
 async function installDesktopUpdate() {
   const latest = await loadUpdateManifest();
   if (!latest) return { ok: false, message: '无法连接 Memo 官网更新源，请稍后重试。' };
+  const launcher = launcherRelease(latest);
   const current = appVersion();
-  const version = latest.version || '';
-  if (compareVersions(version, current) <= 0) return { ok: true, message: `当前已是最新版本 ${current}。` };
+  const version = launcher.version || '';
+  if (!version || compareVersions(version, current) <= 0) return { ok: true, message: `当前启动器已是最新版本 ${current}。` };
   const runtimeReady = stableRuntimeReady();
-  const asset = runtimeReady && latest.lite?.url ? latest.lite : latest.full;
+  const asset = runtimeReady && launcher.lite?.url ? launcher.lite : launcher.full;
   if (!asset?.url) return { ok: false, message: `版本 ${version} 未配置可用的 Windows 安装包。` };
   const tempDir = path.join(app.getPath('temp'), 'memo-desktop-update');
   fs.mkdirSync(tempDir, { recursive: true });
@@ -784,7 +845,7 @@ async function installDesktopUpdate() {
     });
     child.unref();
     setTimeout(() => app.quit(), 1200);
-    const channel = asset === latest.lite ? '轻量版' : '全量版';
+    const channel = asset === launcher.lite ? '轻量版' : '全量版';
     return { ok: true, message: `已从 Memo 官网下载 ${version} ${channel}并打开安装程序。安装器会保留本地数据和配置。` };
   } catch (error) {
     return { ok: false, message: `启动器更新失败：${error?.message || error}` };
@@ -792,23 +853,45 @@ async function installDesktopUpdate() {
 }
 
 async function checkForUpdates() {
-  const current = appVersion();
+  const currentLauncher = appVersion();
+  const currentService = installedServiceVersion();
   const latest = await loadUpdateManifest();
-  if (!latest) return { ok: false, current, message: `当前版本 ${current}。暂时无法连接 Memo 官网更新源。` };
-  const version = latest.version || '';
-  const hasUpdate = compareVersions(version, current) > 0;
-  const channel = stableRuntimeReady() && latest.lite?.url ? 'Lite 轻量更新' : 'Full 全量更新';
+  if (!latest) return { ok: false, currentLauncher, currentService, message: '暂时无法连接 Memo 官网更新源。' };
+  const launcher = launcherRelease(latest);
+  const service = serviceRelease(latest);
+  const launcherUpdate = Boolean(launcher.version && compareVersions(launcher.version, currentLauncher) > 0);
+  const serviceUpdate = Boolean(service?.version && compareVersions(service.version, currentService) > 0);
+  const runtimeChanged = Boolean(service?.runtimeChanged);
+  const mustUseInstaller = launcherUpdate || (serviceUpdate && runtimeChanged);
+  const channel = mustUseInstaller
+    ? (stableRuntimeReady() && launcher.lite?.url ? 'Lite启动器更新' : 'Full全量更新')
+    : (serviceUpdate ? 'Service Patch小型服务补丁' : '无需更新');
+  const notes = launcher.notes || latest.notes || '';
   return {
     ok: true,
-    current,
-    latest: version,
+    current: currentLauncher,
+    currentLauncher,
+    currentService,
+    latest: launcher.version || currentLauncher,
+    latestLauncher: launcher.version || currentLauncher,
+    latestService: service?.version || currentService,
     page: latest.page || RELEASE_PAGE,
-    hasUpdate,
+    hasUpdate: launcherUpdate || serviceUpdate,
+    launcherUpdate,
+    serviceUpdate,
+    runtimeChanged,
     channel,
-    message: hasUpdate
-      ? `当前版本 ${current}；最新版本 ${version}。将使用 ${channel}。${latest.notes || ''}`
-      : `当前已是最新版本 ${current}。`,
+    action: mustUseInstaller ? 'launcher' : (serviceUpdate ? 'service' : 'none'),
+    message: launcherUpdate || serviceUpdate
+      ? `启动器 ${currentLauncher} → ${launcher.version || currentLauncher}；服务 ${currentService} → ${service?.version || currentService}。将使用 ${channel}。${notes}`
+      : `启动器 ${currentLauncher}、服务 ${currentService} 均已是最新版本。`,
   };
+}
+
+async function applyAvailableUpdate() {
+  const check = await checkForUpdates();
+  if (!check.ok || !check.hasUpdate) return check;
+  return check.action === 'service' ? updateMemoService() : installDesktopUpdate();
 }
 
 function openReleasePage() {
@@ -851,8 +934,10 @@ ipcMain.handle('memo:setSettingsExpanded', (_event, expanded) => setSettingsExpa
 ipcMain.handle('memo:getMcpConfig', () => buildMcpConfig());
 ipcMain.handle('memo:copyMcpConfig', (_event, text) => copyMcpConfig(text));
 ipcMain.handle('memo:openMemoRoot', () => openMemoRoot());
+ipcMain.handle('memo:openDataLocationManager', () => openDataLocationManager());
 ipcMain.handle('memo:checkForUpdates', () => checkForUpdates());
 ipcMain.handle('memo:installDesktopUpdate', () => installDesktopUpdate());
+ipcMain.handle('memo:applyAvailableUpdate', () => applyAvailableUpdate());
 ipcMain.handle('memo:setWindowAutoHideSuspended', (_event, suspended) => {
   windowAutoHideSuspended = Boolean(suspended);
   if (windowAutoHideSuspended) showWindow();

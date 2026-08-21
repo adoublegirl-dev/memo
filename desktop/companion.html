@@ -78,8 +78,8 @@
             <button id="restartBtn">重启服务</button>
             <button id="stopBtn" class="danger-menu-item">停止服务</button>
             <button id="mcpGuideBtn">MCP配置</button>
-            <button id="checkUpdateBtn">检查更新</button>
-            <button id="updateServiceBtn">更新 Memo 服务</button>
+            <button id="dataLocationBtn">数据位置管理</button>
+            <button id="checkUpdateBtn">检查 Memo 更新</button>
           </div>
           <label class="settings-toggle">
             <span>开机自动启动助手</span>
@@ -113,12 +113,11 @@
             </div>
             <button class="icon-button" id="closeUpdateGuideBtn">×</button>
           </div>
-          <p class="modal-note">可检查并安装桌面助手新版本，也可更新当前 Memo 服务代码。桌面助手更新会下载 Release 的 Setup 安装包并启动覆盖安装；服务更新会保护本地 data 与 .env。</p>
+          <p class="modal-note">普通服务更新只下载几 MB 的 Service Patch；仅当启动器或 Runtime 变化时才使用 Lite/Full 安装包。更新不会覆盖本地数据库、WAL/SHM 和 .env。</p>
           <div class="path-box" id="updateStatusText">点击“检查更新”获取最新版本。</div>
           <div class="modal-actions">
-            <button id="runCheckUpdateBtn" class="primary-action">检查更新</button>
-            <button id="installDesktopUpdateBtn" class="secondary-action">安装启动器更新</button>
-            <button id="runUpdateServiceBtn" class="secondary-action">更新 Memo 服务</button>
+            <button id="runCheckUpdateBtn" class="primary-action">检查 Memo 更新</button>
+            <button id="installDesktopUpdateBtn" class="secondary-action">应用可用更新</button>
             <button id="openReleasePageBtn" class="secondary-action">打开下载页</button>
           </div>
         </section>

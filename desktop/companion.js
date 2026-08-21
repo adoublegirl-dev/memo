@@ -19,6 +19,7 @@ const els = {
   stopBtn: $('stopBtn'),
   loginToggle: $('loginToggle'),
   mcpGuideBtn: $('mcpGuideBtn'),
+  dataLocationBtn: $('dataLocationBtn'),
   checkUpdateBtn: $('checkUpdateBtn'),
   mcpGuide: $('mcpGuide'),
   closeMcpGuideBtn: $('closeMcpGuideBtn'),
@@ -32,8 +33,6 @@ const els = {
   updateStatusText: $('updateStatusText'),
   runCheckUpdateBtn: $('runCheckUpdateBtn'),
   installDesktopUpdateBtn: $('installDesktopUpdateBtn'),
-  runUpdateServiceBtn: $('runUpdateServiceBtn'),
-  updateServiceBtn: $('updateServiceBtn'),
   openReleasePageBtn: $('openReleasePageBtn'),
 };
 
@@ -61,7 +60,6 @@ function setBusy(action) {
   els.startBtn.disabled = busy;
   els.restartBtn.disabled = busy;
   els.stopBtn.disabled = busy;
-  els.updateServiceBtn.disabled = busy;
   els.refreshBtn.disabled = busy;
 }
 
@@ -132,12 +130,6 @@ async function runServiceAction(button, label, action) {
 els.startBtn.addEventListener('click', () => runServiceAction(els.startBtn, '启动服务', () => window.memoCompanion.startServices()));
 els.restartBtn.addEventListener('click', () => runServiceAction(els.restartBtn, '重启', () => window.memoCompanion.restartServices()));
 els.stopBtn.addEventListener('click', () => runServiceAction(els.stopBtn, '停止', () => window.memoCompanion.stopServices()));
-els.updateServiceBtn.addEventListener('click', (event) => {
-  event.stopPropagation();
-  setSettingsOpen(false);
-  els.updateStatusText.textContent = '更新会先停止服务、归档数据库，再拉取 GitHub 最新代码并重启服务。';
-  setModal(els.updateGuide, true);
-});
 els.mcpGuideBtn.addEventListener('click', async (event) => {
   event.stopPropagation();
   setSettingsOpen(false);
@@ -153,17 +145,25 @@ els.copyMcpConfigBtn.addEventListener('click', async () => {
   els.mcpCopyStatus.textContent = '已复制 MCP 配置。';
 });
 els.openMemoRootBtn.addEventListener('click', () => window.memoCompanion.openMemoRoot());
+els.dataLocationBtn.addEventListener('click', async (event) => {
+  event.stopPropagation();
+  const confirmed = window.confirm('数据位置管理会先停止 Memo 服务，然后重新打开设置向导。旧数据不会被自动删除。是否继续？');
+  if (!confirmed) return;
+  els.dataLocationBtn.disabled = true;
+  els.dataLocationBtn.textContent = '正在打开…';
+  await window.memoCompanion.openDataLocationManager();
+});
 
 els.checkUpdateBtn.addEventListener('click', (event) => {
   event.stopPropagation();
   setSettingsOpen(false);
-  els.updateStatusText.textContent = '点击“检查更新”获取最新版本。';
+  els.updateStatusText.textContent = '点击“检查 Memo 更新”获取启动器与服务的独立版本；普通更新会优先使用几 MB 的 Service Patch。';
   setModal(els.updateGuide, true);
 });
 els.closeUpdateGuideBtn.addEventListener('click', () => setModal(null, false));
 els.runCheckUpdateBtn.addEventListener('click', async () => {
   els.runCheckUpdateBtn.disabled = true;
-  els.updateStatusText.textContent = '正在检查更新…';
+  els.updateStatusText.textContent = '正在检查 Memo 更新…';
   try {
     const result = await window.memoCompanion.checkForUpdates();
     els.updateStatusText.textContent = result.message;
@@ -173,40 +173,14 @@ els.runCheckUpdateBtn.addEventListener('click', async () => {
 });
 els.installDesktopUpdateBtn.addEventListener('click', async () => {
   els.installDesktopUpdateBtn.disabled = true;
-  els.updateStatusText.textContent = '正在下载并启动安装器更新，请不要关闭当前窗口…';
+  els.updateStatusText.textContent = '正在选择最小更新通道并校验更新，请不要关闭当前窗口…';
   try {
-    const result = await window.memoCompanion.installDesktopUpdate();
-    els.updateStatusText.textContent = result?.message || (result?.ok ? '已启动安装器更新。' : '启动器更新失败。');
+    const result = await window.memoCompanion.applyAvailableUpdate();
+    els.updateStatusText.textContent = result?.message || (result?.ok ? '更新已应用。' : '更新失败。');
   } catch (error) {
-    els.updateStatusText.textContent = `启动器更新失败：${error?.message || error}`;
+    els.updateStatusText.textContent = `更新失败：${error?.message || error}`;
   } finally {
     els.installDesktopUpdateBtn.disabled = false;
-  }
-});
-els.runUpdateServiceBtn.addEventListener('click', async () => {
-  await window.memoCompanion.setWindowAutoHideSuspended(true);
-  const confirmed = confirm('将停止 Memo 服务、归档当前数据库和 .env、拉取 GitHub 最新代码并重启服务。继续吗？');
-  if (!confirmed) {
-    await window.memoCompanion.setWindowAutoHideSuspended(false);
-    return;
-  }
-  els.runUpdateServiceBtn.disabled = true;
-  els.runCheckUpdateBtn.disabled = true;
-  els.installDesktopUpdateBtn.disabled = true;
-  els.openReleasePageBtn.disabled = true;
-  els.updateStatusText.textContent = '正在更新 Memo 服务，请不要关闭窗口…';
-  try {
-    const result = await window.memoCompanion.updateMemoService();
-    els.updateStatusText.textContent = result?.message || (result?.ok ? 'Memo 服务已更新。' : 'Memo 服务更新失败。');
-    setTimeout(refresh, 3500);
-  } catch (error) {
-    els.updateStatusText.textContent = `Memo 服务更新失败：${error?.message || error}`;
-  } finally {
-    els.runUpdateServiceBtn.disabled = false;
-    els.runCheckUpdateBtn.disabled = false;
-    els.installDesktopUpdateBtn.disabled = false;
-    els.openReleasePageBtn.disabled = false;
-    await window.memoCompanion.setWindowAutoHideSuspended(false);
   }
 });
 els.openReleasePageBtn.addEventListener('click', () => window.memoCompanion.openReleasePage());
