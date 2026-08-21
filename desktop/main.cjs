@@ -370,14 +370,15 @@ function startPolling() {
 
 function serviceRuntimeEnv() {
   if (!app.isPackaged && !process.env.MEMO_USER_ROOT) return {};
-  const bundledPython = path.join(ROOT, 'runtime', 'python.exe');
+  const pythonCommand = getPythonCommand();
   return {
     MEMO_USER_ROOT: USER_MEMO_ROOT,
     MEMO_DATA_ROOT: USER_MEMO_DATA_ROOT,
     MEMO_ENV_FILE: USER_MEMO_ENV_FILE,
     MEMO_LOG_DIR: path.join(USER_MEMO_DATA_ROOT, 'logs'),
     MEMO_PID_DIR: path.join(USER_MEMO_DATA_ROOT, 'pids'),
-    PYTHON_EXE: fs.existsSync(bundledPython) ? bundledPython : process.env.PYTHON_EXE || '',
+    MEMO_RUNTIME_ROOT: pythonCommand && pythonCommand !== 'python' ? path.dirname(pythonCommand) : '',
+    PYTHON_EXE: pythonCommand,
   };
 }
 
@@ -617,6 +618,17 @@ function readEnvValue(name, fallback = '') {
 }
 
 function getPythonCommand() {
+  const stableRuntimeCandidates = [
+    path.join(USER_MEMO_ROOT, 'Programs', 'Memo', 'runtime', 'python.exe'),
+    path.resolve(ROOT, '..', 'runtime', 'python.exe'),
+  ];
+  const stableRuntime = stableRuntimeCandidates.find((candidate) => fs.existsSync(candidate));
+  if (stableRuntime) return stableRuntime;
+  if (process.env.PYTHON_EXE && fs.existsSync(process.env.PYTHON_EXE)) return process.env.PYTHON_EXE;
+  const runtimePython = process.env.MEMO_RUNTIME_ROOT ? path.join(process.env.MEMO_RUNTIME_ROOT, 'python.exe') : '';
+  if (runtimePython && fs.existsSync(runtimePython)) return runtimePython;
+  const bundledPython = path.join(ROOT, 'runtime', 'python.exe');
+  if (fs.existsSync(bundledPython)) return bundledPython;
   const localPython = path.join(ROOT, '.venv', 'Scripts', 'python.exe');
   return fs.existsSync(localPython) ? localPython : 'python';
 }
@@ -717,6 +729,14 @@ function stableRuntimeReady() {
   return fs.existsSync(path.join(USER_MEMO_ROOT, 'Programs', 'Memo', 'runtime', 'python.exe'));
 }
 
+function persistInstallerDataRoot() {
+  const target = path.join(app.getPath('appData'), 'Memo', 'memo-installer-settings.json');
+  let existing = {};
+  try { existing = JSON.parse(fs.readFileSync(target, 'utf8')); } catch (_) {}
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, JSON.stringify({ ...existing, userRoot: USER_MEMO_ROOT, updatedBy: 'desktop-auto-update', updatedAt: new Date().toISOString() }, null, 2), 'utf8');
+}
+
 async function loadUpdateManifest() {
   const manifest = await fetchJson(UPDATE_MANIFEST_URL, null);
   if (!manifest || !manifest.version || !manifest.full?.url) return null;
@@ -746,7 +766,20 @@ async function installDesktopUpdate() {
       const actualDigest = await sha256File(target);
       if (actualDigest !== publishedDigest) throw new Error('安装包 SHA-256 校验不一致，已取消安装。');
     }
-    const child = spawn(target, [], { detached: true, stdio: 'ignore', windowsHide: false });
+    persistInstallerDataRoot();
+    const child = spawn(target, [], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+      env: {
+        ...process.env,
+        MEMO_USER_ROOT: USER_MEMO_ROOT,
+        MEMO_DATA_ROOT: USER_MEMO_DATA_ROOT,
+        MEMO_DB_PATH: path.join(USER_MEMO_DATA_ROOT, 'memo_source_aware.db'),
+        MEMO_RUNTIME_ROOT: path.join(USER_MEMO_ROOT, 'Programs', 'Memo', 'runtime'),
+        PYTHON_EXE: path.join(USER_MEMO_ROOT, 'Programs', 'Memo', 'runtime', 'python.exe'),
+      },
+    });
     child.unref();
     setTimeout(() => app.quit(), 1200);
     const channel = asset === latest.lite ? '轻量版' : '全量版';

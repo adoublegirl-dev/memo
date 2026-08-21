@@ -7,7 +7,7 @@
   let loading = false;
   let error = '';
   let openGroup = '';
-  let activeTab = 'source_groups';
+  let activeTab = 'dedupe_records';
   let page = 1;
   let pageSize = '50';
   let q = '';
@@ -147,7 +147,7 @@
           {/if}
         </div>
       {:else}
-        <div class="empty card">暂无同源重复组</div>
+        <div class="empty card">当前没有同源重复组。这只表示尚未发现需要合并的重复记忆，不代表记忆库为空；新写入记录可在“去重记录”中查看。</div>
       {/each}
     </div>
   {:else if activeTab === 'dedupe_records'}

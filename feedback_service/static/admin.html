@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Memo 反馈管理</title>
+  <link rel="stylesheet" href="/feedback-admin-static/admin.css">
+</head>
+<body>
+  <main class="shell">
+    <section id="loginView" class="login-card">
+      <div class="brand">MEMO / FEEDBACK</div>
+      <h1>反馈管理</h1>
+      <p>登录后查看和处理官网用户反馈。</p>
+      <form id="loginForm">
+        <label>用户名<input id="username" maxlength="80" autocomplete="username" required></label>
+        <label>密码<input id="password" type="password" maxlength="200" autocomplete="current-password" required></label>
+        <button>登录</button><div id="loginError" class="error"></div>
+      </form>
+    </section>
+
+    <section id="adminView" hidden>
+      <header><div><div class="brand">MEMO / FEEDBACK</div><h1>用户反馈</h1></div><button id="logoutBtn" class="secondary">退出</button></header>
+      <div class="toolbar">
+        <select id="statusFilter"><option value="">全部状态</option><option value="pending">待处理</option><option value="processing">处理中</option><option value="resolved">已解决</option><option value="closed">已关闭</option></select>
+        <select id="categoryFilter"><option value="">全部类型</option><option value="usage">使用问题</option><option value="install">安装/升级</option><option value="feature">功能建议</option><option value="data">数据与迁移</option><option value="mcp">MCP/Agent</option><option value="other">其他</option></select>
+        <input id="searchInput" maxlength="100" placeholder="搜索编号、标题或正文">
+        <button id="searchBtn">查询</button>
+      </div>
+      <div class="layout">
+        <section class="list-panel"><div id="listSummary" class="summary"></div><div id="feedbackList"></div></section>
+        <section id="detailPanel" class="detail-panel"><div class="empty">选择一条反馈查看详情</div></section>
+      </div>
+    </section>
+  </main>
+  <script src="/feedback-admin-static/admin.js"></script>
+</body>
+</html>

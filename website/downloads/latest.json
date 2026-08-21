@@ -1,0 +1,18 @@
+{
+  "version": "0.10.7-alpha",
+  "publishedAt": "2026-08-20T19:05:54+08:00",
+  "page": "https://memo.zhaguzhagu.com/#download",
+  "notes": "修复MCP手动记忆可在预览中看到、却因未绑定来源会话而无法在记忆管理中查看的问题；治理审计默认展示去重记录，同时保留跨用户路径兼容修复。",
+  "full": {
+    "name": "Memo-Setup-latest.exe",
+    "url": "https://memo.zhaguzhagu.com/downloads/Memo-Setup-latest.exe",
+    "size": 349382264,
+    "sha256": "50f19ef874e14340ca4aec32f214526d452bc085c19b51d022c72ef80c3d4a4a"
+  },
+  "lite": {
+    "name": "Memo-Lite-Setup-latest.exe",
+    "url": "https://memo.zhaguzhagu.com/downloads/Memo-Lite-Setup-latest.exe",
+    "size": 79319166,
+    "sha256": "3accd0f0ad1ff8b8b047fef54c25aa582ba7bf1ada22f385d261cc907a0d82a2"
+  }
+}

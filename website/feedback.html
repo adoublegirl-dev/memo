@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="向 Memo 团队反馈使用问题或功能建议">
+  <title>反馈 · Memo 麦默</title>
+  <link rel="stylesheet" href="feedback.css">
+</head>
+<body>
+  <header><a class="brand" href="/"><span>M</span> Memo 麦默</a><a href="/">返回官网</a></header>
+  <main>
+    <section class="intro"><div class="eyebrow">MEMO / FEEDBACK</div><h1>告诉我们哪里需要改进</h1><p>问题描述越清楚，越容易定位。请勿提交密码、API Key、数据库或包含敏感信息的截图。</p></section>
+    <form id="feedbackForm" enctype="multipart/form-data" novalidate>
+      <div class="grid two">
+        <label>反馈类型<select name="category" required><option value="usage">使用问题</option><option value="install">安装/升级问题</option><option value="feature">功能建议</option><option value="data">数据与迁移问题</option><option value="mcp">MCP/Agent接入</option><option value="other">其他</option></select></label>
+        <label>操作系统<select name="os_name"><option value="windows-11">Windows 11</option><option value="windows-10">Windows 10</option><option value="other">其他</option></select></label>
+      </div>
+      <label>问题标题 <span id="titleCount">0 / 80</span><input id="title" name="title" minlength="5" maxlength="80" placeholder="一句话概括问题" required></label>
+      <label>详细描述 <span id="contentCount">0 / 2000</span><textarea id="content" name="content" minlength="20" maxlength="2000" placeholder="建议写明：操作步骤、实际结果、预期结果" required></textarea></label>
+      <div class="grid two"><label>Memo版本 <small>可选</small><input id="memoVersion" name="memo_version" maxlength="40" placeholder="例如 0.10.1-alpha"></label><label>联系方式 <small>可选，仅用于处理本次反馈</small><input name="contact" maxlength="100" placeholder="邮箱、微信号或其他联系方式"></label></div>
+      <section class="upload-box"><div><strong>补充图片</strong><p>最多3张；单张不超过5MB；总计不超过10MB；支持JPG、PNG、WebP。</p></div><label class="upload-button">选择图片<input id="images" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden></label></section>
+      <div id="previewList" class="previews"></div>
+      <label class="privacy"><input id="privacy" name="privacy_confirmed" type="checkbox" value="1" required><span>我确认反馈内容和图片不包含密码、API Key或其他敏感信息。</span></label>
+      <label class="honeypot" aria-hidden="true">网站<input name="website" tabindex="-1" autocomplete="off"></label>
+      <div id="formError" class="error" role="alert"></div>
+      <button id="submitBtn" class="submit" type="submit">提交反馈</button>
+    </form>
+    <section id="successPanel" class="success" hidden><div class="check">✓</div><h2>反馈已提交</h2><p>反馈编号</p><strong id="feedbackNo"></strong><div><button id="copyNo" type="button">复制编号</button><a href="/">继续浏览官网</a></div></section>
+  </main>
+  <script src="feedback.js"></script>
+</body>
+</html>

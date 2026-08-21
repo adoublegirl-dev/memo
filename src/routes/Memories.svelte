@@ -38,15 +38,12 @@
 
   async function load() {
     error='';
-    if (!sourceSessionId) {
-      memories = [];
-      total = 0;
-      return;
-    }
     loading = true;
     try {
       const limit = Number(pageSize || 50);
-      const data = await api.memories({ q, status, source_session_id: sourceSessionId, limit, offset: (page - 1) * limit, include_total: true });
+      const params = { q, status, limit, offset: (page - 1) * limit, include_total: true };
+      if (sourceSessionId) params.source_session_id = sourceSessionId;
+      const data = await api.memories(params);
       memories = data.items || [];
       total = data.total || 0;
       if (data.breakdown) breakdown = data.breakdown;
@@ -156,7 +153,7 @@
     } finally { sessionReviewBusy = false; }
   }
 
-  onMount(async () => { await Promise.all([loadSourceSessions(), loadOverview()]); });
+  onMount(async () => { await Promise.all([loadSourceSessions(), loadOverview(), load()]); });
 </script>
 <section class="page">
   <h1 class="page-title">记忆管理</h1>
@@ -167,7 +164,7 @@
     <div class="card stat-card"><div><strong>{breakdown?.muted_available ?? '—'}</strong><span>不引用但保留</span></div></div>
     <div class="card stat-card"><div><strong>{breakdown?.superseded ?? '—'}</strong><span>已被替代</span></div></div>
   </div>
-  <div class="hint-card" style="margin-top:12px">总览里的“记忆”是全库总量；治理时请先在会话处理队列中选择一个来源会话，再处理它下面的记忆。</div>
+  <div class="hint-card" style="margin-top:12px">下方默认展示全库记忆，包括Codex等MCP手动写入、尚未绑定来源会话的记录。选择来源会话后，可进一步缩小到该会话处理。</div>
 
   <div class="card card-pad" style="margin-top:18px">
     <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
@@ -233,7 +230,25 @@
       <div class="item-meta" style="margin-top:12px">当前会话筛选共 {total} 条 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条</div>
     </div>
   {:else}
-    <div class="card card-pad empty" style="margin-top:18px">请先从上方会话处理队列中选择一个会话，再查看和治理该会话下的记忆。</div>
+    <div class="card card-pad" style="margin-top:18px">
+      <div><strong>全部记忆</strong></div>
+      <div class="item-meta" style="margin-top:6px">当前未限定来源会话，包含MCP手动写入和未绑定来源会话的记忆。</div>
+      <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:14px">
+        <div class="toolbar" style="gap:8px;flex-wrap:wrap">
+          <input class="input" style="width:min(520px,100%)" bind:value={q} on:keydown={(e)=>e.key==='Enter'&&search()} placeholder="搜索标题、摘要或原文"/>
+          <select class="input" bind:value={status} on:change={search}>
+            <option value="active">可引用</option><option value="expired">已过期</option><option value="wrong">已标错</option><option value="muted">不引用</option><option value="deleted">已删除</option><option value="all">全部</option>
+          </select>
+        </div>
+        <div class="toolbar" style="gap:8px">
+          <select class="input" style="width:110px" bind:value={pageSize} on:change={search}>
+            <option value="50">50 / 页</option><option value="100">100 / 页</option><option value="200">200 / 页</option>
+          </select>
+          <button class="btn primary" class:loading={loading} disabled={loading} on:click={search}>{loading ? '搜索中' : '搜索'}</button>
+        </div>
+      </div>
+      <div class="item-meta" style="margin-top:12px">全库当前筛选共 {total} 条</div>
+    </div>
   {/if}
 
   {#if toast}
@@ -243,7 +258,6 @@
     </div>
   {/if}
   {#if error}<div class="card card-pad" style="margin-top:12px;color:var(--color-danger)">{error}</div>{/if}
-  {#if selectedSourceSession}
     <div class="list stagger" style="margin-top:18px">
       {#if loading}
         {#each Array(4) as _}<div class="card card-pad"><div class="skeleton" style="height:96px"></div></div>{/each}
@@ -251,7 +265,7 @@
         {#each memories as m}
           <MemoryCard memory={m} actionable busy={actionBusy} on:govern={govern} on:open={openDetail}/>
         {:else}
-          <div class="empty card">当前会话下暂无匹配记忆</div>
+          <div class="empty card">{sourceSessionId ? '当前会话下暂无匹配记忆' : '当前筛选下暂无记忆'}</div>
         {/each}
       {/if}
     </div>
@@ -260,7 +274,6 @@
       <span class="item-meta">第 {page} / {totalPages} 页，每页 {pageSize} 条，共 {total} 条</span>
       <button class="btn" disabled={loading || page >= totalPages} on:click={() => gotoPage(page + 1)}>下一页</button>
     </div>
-  {/if}
 </section>
 
 {#if detailLoading || selected}

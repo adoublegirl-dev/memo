@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Memo 麦默 · 手机版</title>
+  <meta name="description" content="Memo 是一个多 Agent 的记忆系统，把散落在不同 AI 工具里的项目、知识、任务、偏好和来源线索整理到同一个本地记忆系统。" />
+  <style>
+    :root{--bg:#04070b;--text:#f4f8f3;--soft:#cad6cf;--muted:#94a39d;--faint:#6c7873;--green:#9bc8a4;--gold:#d6bf84;--line:rgba(230,248,240,.16);--glass:rgba(8,13,20,.24);--serif:'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;--sans:system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;--mono:'JetBrains Mono',ui-monospace,monospace}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.75;overflow-x:hidden}a{color:inherit;text-decoration:none}.cover{position:relative;min-height:100svh;padding:22px 18px 34px;display:flex;flex-direction:column;justify-content:space-between;isolation:isolate;background:#04070b;overflow:hidden}.cover:before{content:"";position:absolute;inset:0;background:url('assets/memo-bg.png') center/cover no-repeat;opacity:1;filter:saturate(1.12) brightness(1.18);transform:scale(1.04);animation:bg 28s ease-in-out infinite alternate;z-index:-2}.cover:after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(4,7,11,.18),rgba(4,7,11,.28) 48%,rgba(4,7,11,.72));z-index:-1}@keyframes bg{to{transform:scale(1.1) translate3d(1.5%,-1%,0)}}.nav{height:44px;display:flex;align-items:center;justify-content:space-between}.brand{display:flex;align-items:center;gap:10px;font-weight:500}.logo{width:32px;height:32px;border:1px solid rgba(155,200,164,.34);border-radius:12px;display:grid;place-items:center;background:radial-gradient(circle at 34% 28%,rgba(214,191,132,.48),transparent 30%),linear-gradient(145deg,rgba(155,200,164,.2),rgba(134,182,201,.1))}.logo span{font-family:var(--serif);font-size:17px}.nav a{font-size:13px;color:var(--soft);border:1px solid var(--line);border-radius:999px;padding:6px 12px;background:rgba(255,255,255,.07);backdrop-filter:blur(16px)}.hero{padding-bottom:9vh}.mark{font-family:Inter,Arial Black,'Arial Narrow',var(--sans);font-size:clamp(56px,23vw,96px);font-weight:900;letter-spacing:-.075em;line-height:.86;color:transparent;-webkit-text-fill-color:transparent;-webkit-text-stroke:1.35px rgba(248,251,246,.9);text-transform:uppercase}.slogan{margin-top:14px;font-family:var(--serif);font-size:24px;color:rgba(248,251,246,.9);text-shadow:0 10px 30px rgba(0,0,0,.28)}.hint{margin-top:18px;color:rgba(202,214,207,.82);font-size:13px}.section{padding:58px 18px;border-top:1px solid rgba(230,248,240,.1);background:radial-gradient(circle at 80% 0,rgba(134,182,201,.09),transparent 35%),linear-gradient(180deg,#05080d,#071017)}.section h1,.section h2{font-family:var(--serif);font-weight:500;letter-spacing:-.04em;line-height:1.12;margin:0}.section h1{font-size:36px}.section h2{font-size:32px}.lead{margin:18px 0 24px;font-family:var(--serif);font-size:18px;line-height:1.75;color:var(--soft)}.btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;width:max-content;padding:0 17px;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.08);backdrop-filter:blur(16px);font-size:14px}.btn.primary{border:0;color:#06100c;background:linear-gradient(135deg,rgba(170,216,178,.96),rgba(149,203,221,.9))}.glass{border:1px solid var(--line);border-radius:24px;background:var(--glass);backdrop-filter:blur(24px) saturate(1.18);box-shadow:0 24px 80px rgba(0,0,0,.24),inset 0 1px 0 rgba(255,255,255,.1)}.features{display:grid;gap:10px;margin-top:24px}.feature{padding:16px}.feature b{display:flex;gap:8px;font-weight:500;color:#f7fbf6}.feature b span{font-family:var(--mono);font-size:12px;color:var(--green);margin-top:3px}.feature p{margin:6px 0 0;color:var(--muted);font-size:14px;line-height:1.65}.note{margin-top:12px;padding:14px 16px;border:1px solid rgba(214,191,132,.2);border-radius:18px;background:rgba(214,191,132,.07);color:#d9ceb0;font-size:13px}.big-copy{padding:22px;margin-top:22px;font-family:var(--serif);font-size:23px;line-height:1.6;color:#f4f8f3}.download-grid{display:grid;gap:12px;margin-top:24px}.download-card{padding:20px}.badge{display:inline-flex;margin-bottom:14px;padding:4px 10px;border-radius:999px;border:1px solid rgba(155,200,164,.24);background:rgba(155,200,164,.09);color:var(--green);font-size:12px}.download-card h3{font-family:var(--serif);font-weight:500;font-size:28px;margin:0 0 8px}.download-card p{margin:0 0 16px;color:var(--muted);font-size:14px}.download-card ul{margin:0 0 18px;padding:0;list-style:none;display:grid;gap:7px;color:var(--soft);font-size:14px}.download-card li:before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--green);margin-right:8px;vertical-align:middle}.faq{display:grid;gap:12px;margin-top:24px}.faq-card{padding:18px}.faq-card b{display:block;font-weight:500;margin-bottom:8px}.faq-card p{margin:0;color:var(--muted);font-size:14px}.footer{padding:28px 18px 40px;color:var(--faint);font-size:12px;background:#04070b}.desktop-link{color:var(--soft);text-decoration:underline;text-underline-offset:4px}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+    .nav-actions{display:flex;align-items:center;gap:8px}
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <nav class="nav">
+      <div class="brand"><span class="logo"><span>M</span></span><span>Memo 麦默</span></div>
+      <div class="nav-actions"><a href="feedback.html">反馈</a><a href="#download">下载</a></div>
+    </nav>
+    <div class="hero">
+      <div class="mark">MEMO</div>
+      <div class="slogan">让记忆不再是碎片</div>
+      <div class="hint">多 Agent 的本地记忆系统</div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h1>Memo，一个多 Agent 的记忆系统</h1>
+    <p class="lead">把散落在不同 AI 工具里的项目、知识、任务、偏好和来源线索，整理到同一个本地记忆系统。</p>
+    <a class="btn primary" href="#download">下载 Memo</a>
+  </section>
+
+  <section class="section" id="features">
+    <h2>Memo 可以做什么</h2>
+    <div class="features">
+      <div class="feature glass"><b><span>01</span>多 Agent 记忆流转</b><p>支持记忆导入、治理与应用，让不同 Agent 中的记忆流转起来。</p></div>
+      <div class="feature glass"><b><span>02</span>人格生成与更新</b><p>根据全部记忆和新增记忆生成及更新人格，让 AI 更懂你。</p></div>
+      <div class="feature glass"><b><span>03</span>记忆权重学习</b><p>根据记忆使用情况自动更新片段权重，让记忆真正活起来。</p></div>
+      <div class="feature glass"><b><span>04</span>MCP 工具接入</b><p>安装后可由 Agent 注册 MCP，随时同步和调用记忆。</p></div>
+      <div class="feature glass"><b><span>05</span>项目级会话归类</b><p>让记忆碎片按项目相互串联，不再散落在不同会话中。</p></div>
+      <div class="feature glass"><b><span>06</span>一句话创建待办</b><p>支持待办管理与提醒，把临时想法变成可跟进事项。</p></div>
+    </div>
+    <div class="note">注意：上述部分能力需要 LLM 介入。若记忆内容较多，会消耗较多 Token，建议使用 DeepSeek v4-flash 或更便宜的模型。</div>
+  </section>
+
+  <section class="section">
+    <h2>Memo 的价值</h2>
+    <div class="big-copy glass">Memo 的价值在于持续积累。项目越复杂、周期越长、参与的 AI 工具越多，它越适合成为一个可信赖、可管理的本地上下文底座。</div>
+  </section>
+
+  <section class="section">
+    <h2>你的记忆，只属于你</h2>
+    <div class="big-copy glass">Memo 不会拿走你的记忆。它们会直接存储在你的电脑本地，由你自己管理。</div>
+  </section>
+
+  <section class="section" id="download">
+    <h2>选择适合你的安装包</h2>
+    <p class="lead">Memo 当前主要面向 Windows 电脑。手机端可以查看介绍，建议在电脑上下载安装包。</p>
+    <div class="download-grid">
+      <article class="download-card glass">
+        <span class="badge">首次安装推荐</span>
+        <h3>Memo Full</h3>
+        <p>包含 Memo 主程序、本地 Python Runtime 和必要依赖。</p>
+        <ul><li>适合新用户</li><li>安装包较大</li><li>不需要额外准备 Python 环境</li></ul>
+        <a class="btn primary" href="downloads/Memo-Setup-latest.exe" download>下载 Full</a>
+      </article>
+      <article class="download-card glass">
+        <span class="badge">已有用户升级</span>
+        <h3>Memo Lite</h3>
+        <p>复用已安装的 Runtime，只更新 Memo 程序与启动器。</p>
+        <ul><li>适合已安装用户</li><li>下载更快</li><li>保留本地数据与配置</li></ul>
+        <a class="btn" href="downloads/Memo-Lite-Setup-latest.exe" download>下载 Lite</a>
+      </article>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>常见问题</h2>
+    <div class="faq">
+      <div class="faq-card glass"><b>我应该选择哪个数据目录？</b><p>建议存放在非 C 盘的目录下，最好创建一个单独的文件夹管理它们。</p></div>
+      <div class="faq-card glass"><b>是否必须配置 LLM？</b><p>不是必须。但为了提升记忆使用和人格生成质量，建议配置 LLM，并尽量选择便宜的模型。如果安装时没有配置模型和 Key，可以在安装 MCP 后让 Agent 帮你在 .env 文件中配置。</p></div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div>Memo 麦默 · 多 Agent 记忆系统</div>
+    <a class="desktop-link" href="/?desktop=1">查看桌面版页面</a>
+  </footer>
+</body>
+</html>

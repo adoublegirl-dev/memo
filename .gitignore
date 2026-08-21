@@ -17,8 +17,17 @@ node_modules/
 install_output/
 reports/
 release/
+Programs/
+.cache/
+.pytest_cache/
+build/
+build-lite/
+payload/
+feedback_service/data/
+feedback_service/.env
 *.egg-info/
 docs/*.docx
+docs/*.html
 docs/prototypes/
 _zip_compare/
 

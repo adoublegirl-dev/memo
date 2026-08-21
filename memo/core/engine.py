@@ -30,6 +30,16 @@ from memo.utils.llm import llm_client
 from memo.utils.logger import logger
 
 
+def normalize_memory_type(value: MemoryType | str) -> MemoryType:
+    if isinstance(value, MemoryType):
+        return value
+    try:
+        return MemoryType(str(value).upper())
+    except ValueError as exc:
+        allowed = ", ".join(item.value for item in MemoryType)
+        raise ValueError(f"Unsupported memory_type {value!r}; expected one of: {allowed}") from exc
+
+
 class Engine:
     """Memo 记忆引擎。
 
@@ -113,6 +123,10 @@ class Engine:
             记忆单元 ID
         """
         self._ensure_init()
+
+        # MCP/HTTP/JSON clients naturally send enum values as strings. Normalize
+        # at the engine boundary so every caller gets the same safe behavior.
+        memory_type = normalize_memory_type(memory_type)
 
         # 自动生成标题
         if not title:

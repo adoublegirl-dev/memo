@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Memo 麦默 · 多 Agent 记忆系统</title>
+  <meta name="description" content="Memo 是一个多 Agent 的记忆系统，把散落在不同 AI 工具里的项目、知识、任务、偏好和来源线索整理到同一个本地记忆系统。" />
+  <script>
+    (() => {
+      const params = new URLSearchParams(location.search);
+      const forceDesktop = params.get('desktop') === '1';
+      const isMobile = matchMedia('(max-width: 760px)').matches || /Android|iPhone|iPod|Mobile|Windows Phone/i.test(navigator.userAgent);
+      if (!forceDesktop && isMobile && !location.pathname.endsWith('/mobile.html')) {
+        location.replace('/mobile.html');
+      }
+    })();
+  </script>
+  <style>
+    :root{
+      --bg:#04070b;--text:#f3f7f2;--soft:#c8d4cf;--muted:#90a09a;--faint:#66736e;
+      --green:#9bc8a4;--blue:#86b6c9;--gold:#d6bf84;--line:rgba(220,238,230,.16);
+      --glass:rgba(8,13,20,.22);--glass-strong:rgba(10,16,24,.34);--glass-line:rgba(230,248,240,.18);
+      --serif:'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;
+      --sans:system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+      --mono:'JetBrains Mono',ui-monospace,monospace;
+      --page:min(1320px,calc(100vw - clamp(28px,5vw,88px)));
+    }
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.75;overflow-x:hidden}a{color:inherit;text-decoration:none}.stage{position:fixed;inset:0;z-index:-3;overflow:hidden;background:radial-gradient(circle at 78% 18%,rgba(134,182,201,.12),transparent 30%),radial-gradient(circle at 18% 72%,rgba(155,200,164,.08),transparent 32%),linear-gradient(180deg,#03060a 0%,#071017 52%,#04070b 100%)}.grain{position:fixed;inset:0;z-index:-2;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.026) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:72px 72px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.58),transparent 78%)}@keyframes bgDrift{from{transform:scale(1.04) translate3d(-1.5%,0,0)}to{transform:scale(1.1) translate3d(1.5%,-1%,0)}}
+    .topbar{position:fixed;top:0;left:0;right:0;z-index:80;border-bottom:1px solid rgba(230,248,240,.1);background:rgba(4,7,11,.32);backdrop-filter:blur(22px) saturate(1.2)}.nav{width:var(--page);height:64px;margin:0 auto;display:flex;align-items:center;justify-content:space-between}.brand{display:flex;align-items:center;gap:12px;font-weight:500}.logo{width:34px;height:34px;border:1px solid rgba(155,200,164,.34);border-radius:13px;display:grid;place-items:center;background:radial-gradient(circle at 34% 28%,rgba(214,191,132,.48),transparent 30%),linear-gradient(145deg,rgba(155,200,164,.2),rgba(134,182,201,.1));box-shadow:0 0 42px rgba(155,200,164,.12)}.logo span{font-family:var(--serif);font-size:18px}.nav-actions{display:flex;align-items:center;gap:10px}.nav-link{color:var(--muted);font-size:14px}.nav-btn,.btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 17px;border:1px solid var(--glass-line);border-radius:999px;background:rgba(255,255,255,.08);backdrop-filter:blur(18px);color:var(--text);font-size:14px;transition:transform .2s ease,border-color .2s ease,background .2s ease}.hero-download{width:max-content!important;min-width:0;min-height:40px;padding:0 18px;align-self:flex-start}.nav-btn:hover,.btn:hover{transform:translateY(-2px);border-color:rgba(155,200,164,.42);background:rgba(255,255,255,.12)}.btn.primary{border-color:transparent;color:#05100c;background:linear-gradient(135deg,rgba(170,216,178,.96),rgba(149,203,221,.9));box-shadow:0 18px 54px rgba(155,200,164,.16)}
+    main{position:relative}.screen{position:relative;min-height:clamp(560px,82svh,760px);padding:clamp(72px,8vh,92px) 0 clamp(52px,7vh,72px);border-bottom:1px solid rgba(230,248,240,.1);display:flex;align-items:center}.page{width:var(--page);margin:0 auto}.cover{min-height:100svh;padding-top:92px;overflow:hidden;isolation:isolate;background:#04070b}.cover:before{content:"";position:absolute;inset:0;background:url('assets/memo-bg.png') center/cover no-repeat;opacity:1;filter:saturate(1.12) brightness(1.22);transform:scale(1.03);animation:bgDrift 30s ease-in-out infinite alternate;z-index:-2}.cover:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(4,7,11,.22),rgba(4,7,11,.02) 48%,rgba(4,7,11,.18)),linear-gradient(180deg,rgba(4,7,11,0),rgba(4,7,11,.22));z-index:-1}.cover .page{position:relative;z-index:2}.cover-inner{min-height:calc(100svh - 164px);display:flex;align-items:flex-end;justify-content:space-between;gap:40px}.cover-copy{padding-bottom:clamp(44px,8vh,90px)}.cover-mark{font-family:Inter,Arial Black,'Arial Narrow',var(--sans);font-size:clamp(58px,9.5vw,146px);font-weight:900;letter-spacing:-.075em;line-height:.86;color:transparent;-webkit-text-fill-color:transparent;-webkit-text-stroke:2px rgba(248,251,246,.9);text-transform:uppercase;text-shadow:none}.cover-slogan{margin-top:18px;font-family:var(--serif);font-size:clamp(20px,2.25vw,36px);letter-spacing:.02em;color:rgba(248,251,246,.88);text-shadow:0 10px 34px rgba(0,0,0,.28)}.cover-scroll{margin-bottom:clamp(48px,9vh,98px);font-family:var(--mono);font-size:12px;color:rgba(201,213,207,.72);writing-mode:vertical-rl;letter-spacing:.08em}.hero-grid{display:grid;grid-template-columns:minmax(390px,1fr) minmax(360px,.72fr);gap:clamp(32px,5vw,72px);align-items:center}.hero-copy{min-height:clamp(280px,31vw,360px);display:flex;flex-direction:column;justify-content:center}.eyebrow{display:inline-flex;align-items:center;gap:8px;margin-bottom:18px;padding:6px 11px;border:1px solid var(--glass-line);border-radius:999px;background:rgba(255,255,255,.06);backdrop-filter:blur(18px);color:var(--muted);font-size:13px;width:max-content}.dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 18px var(--green)}h1{font-family:var(--serif);font-size:clamp(38px,4.7vw,66px);font-weight:500;line-height:1.08;letter-spacing:-.052em;margin:0 0 22px;color:#f8fbf6}.hero p{max-width:620px;margin:0 0 30px;font-family:var(--serif);font-size:clamp(17px,1.55vw,22px);line-height:1.78;color:var(--soft)}.hero-visual{position:relative;height:clamp(280px,30vw,360px);border:1px solid rgba(230,248,240,.18);border-radius:30px;overflow:hidden;background:rgba(255,255,255,.04);backdrop-filter:blur(24px);box-shadow:0 28px 86px rgba(0,0,0,.32)}.hero-visual iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:#04060a}.hero-visual:after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,transparent 56%,rgba(4,7,11,.24));}.glass{border:1px solid var(--glass-line);border-radius:34px;background:var(--glass);backdrop-filter:blur(26px) saturate(1.22);box-shadow:0 26px 90px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.12)}.split{display:grid;grid-template-columns:minmax(260px,.52fr) minmax(0,1fr);gap:clamp(28px,5vw,76px);align-items:center}.section-title{position:sticky;top:104px;align-self:start}.section-title .mini{font-family:var(--mono);font-size:12px;color:var(--gold);letter-spacing:.12em;margin-bottom:14px}.section-title h2{font-family:var(--serif);font-size:clamp(34px,4.3vw,64px);font-weight:500;letter-spacing:-.045em;line-height:1.08;margin:0}.copy-panel{padding:clamp(24px,3.8vw,46px)}.copy-large{font-family:var(--serif);font-size:clamp(24px,3vw,42px);line-height:1.55;color:#f3f8f3;margin:0}.feature-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.feature{min-height:128px;padding:20px;border:1px solid rgba(230,248,240,.14);border-radius:24px;background:rgba(255,255,255,.055);transition:transform .22s ease,background .22s ease,border-color .22s ease}.feature:hover{transform:translateY(-4px);background:rgba(255,255,255,.09);border-color:rgba(155,200,164,.32)}.feature b{display:flex;gap:10px;align-items:flex-start;font-weight:500;color:#f6fbf6;line-height:1.5}.feature b span{font-family:var(--mono);font-size:12px;color:var(--green);margin-top:3px}.feature p{margin:8px 0 0;color:var(--muted);font-size:14px;line-height:1.72}.note{margin-top:14px;padding:14px 16px;border:1px solid rgba(214,191,132,.2);border-radius:18px;background:rgba(214,191,132,.07);color:#d9ceb0;font-size:13.5px;line-height:1.7}.value-panel{padding:clamp(28px,5vw,58px);max-width:900px;margin-left:auto}.privacy-panel{padding:clamp(28px,5vw,58px);max-width:850px;margin-left:auto}.download-head{text-align:center;max-width:760px;margin:0 auto 28px}.download-head h2{font-family:var(--serif);font-size:clamp(34px,4.4vw,66px);font-weight:500;letter-spacing:-.045em;line-height:1.08;margin:0 0 12px}.download-head p{margin:0;color:var(--muted)}.download-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.download-card{padding:30px;min-height:310px;display:flex;flex-direction:column}.badge{display:inline-flex;width:max-content;margin-bottom:22px;padding:5px 11px;border:1px solid rgba(155,200,164,.22);border-radius:999px;background:rgba(155,200,164,.09);color:var(--green);font-size:12.5px}.download-card h3{font-family:var(--serif);font-size:32px;font-weight:500;line-height:1.2;margin:0 0 8px}.download-card p{margin:0 0 20px;color:var(--muted)}.download-card ul{margin:0 0 28px;padding:0;list-style:none;color:var(--soft);font-size:14px;display:grid;gap:8px}.download-card li{display:flex;gap:9px}.download-card li:before{content:"";width:5px;height:5px;border-radius:50%;background:var(--green);margin-top:10px;flex:0 0 auto}.download-card .btn{margin-top:auto;width:max-content}.faq-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.faq-card{padding:26px}.faq-card b{display:block;font-weight:500;font-size:17px;margin-bottom:10px}.faq-card p{margin:0;color:var(--muted);font-size:14.5px}.reveal{opacity:0;transform:translateY(28px);transition:opacity .7s ease,transform .7s ease}.reveal.in{opacity:1;transform:none}.delay-1{transition-delay:.08s}.delay-2{transition-delay:.16s}.footer{padding:30px 0 56px;color:var(--faint);font-size:13px}.footer .page{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap}.mono{font-family:var(--mono)}
+    @media(min-width:1321px){:root{--wide-edge:clamp(66px,5vw,128px)}.nav{width:auto;margin:0;padding-inline:var(--wide-edge)}.cover .page{width:auto;margin:0;padding-inline:var(--wide-edge)}}
+    @media(max-width:1320px){:root{--page:min(1160px,calc(100vw - 40px))}.screen{min-height:auto;padding:82px 0 58px}.cover{min-height:100svh}.hero-grid{grid-template-columns:minmax(360px,1fr) minmax(330px,.72fr);gap:36px}h1{font-size:clamp(38px,4.5vw,58px)}.hero p{font-size:19px}.hero-copy{min-height:320px}.hero-visual{height:320px}.feature{min-height:118px}.copy-panel{padding:30px}.section-title h2{font-size:clamp(32px,4vw,52px)}}
+    @media(max-width:980px){:root{--page:min(780px,calc(100vw - 32px))}.nav-link{display:none}.screen{padding:82px 0 56px}.cover-inner{align-items:flex-end}.cover-scroll{display:none}.hero-grid,.split{grid-template-columns:1fr}.hero-copy{min-height:auto}.section-title{position:relative;top:auto}.hero-visual{height:330px;border-radius:28px;max-width:560px}.feature-list,.download-grid,.faq-grid{grid-template-columns:1fr}.value-panel,.privacy-panel{margin-left:0}.copy-large{font-size:clamp(24px,5vw,36px)}.download-card{min-height:auto}.stage:after{background:linear-gradient(180deg,rgba(4,7,11,.72),rgba(4,7,11,.36) 42%,rgba(4,7,11,.78))}}
+    @media(max-width:560px){:root{--page:calc(100vw - 24px)}.nav{height:58px}.brand>span:last-child{display:none}.nav-btn{min-height:38px;padding:0 13px}.screen{padding:76px 0 48px}.cover-mark{font-size:clamp(48px,16vw,84px);-webkit-text-stroke:1.4px rgba(248,251,246,.9)}.cover-slogan{font-size:21px}.eyebrow{font-size:12px}.hero .btn:not(.hero-download){width:100%}h1{font-size:34px}.hero p{font-size:17px;line-height:1.72}.hero-visual{height:250px;border-radius:24px}.glass{border-radius:24px}.feature{padding:18px}.copy-panel,.value-panel,.privacy-panel,.download-card,.faq-card{padding:22px}.footer .page{display:grid}.stage:before{opacity:.28}}
+    .feedback-float{position:fixed;right:clamp(16px,2.5vw,34px);bottom:clamp(16px,2.5vw,30px);z-index:70;display:inline-flex;align-items:center;gap:8px;padding:10px 15px;border:1px solid rgba(230,248,240,.22);border-radius:999px;background:rgba(8,16,22,.78);backdrop-filter:blur(18px);box-shadow:0 16px 40px rgba(0,0,0,.32);color:#e9f5ee;font-size:13px}.feedback-float:before{content:"";width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 14px var(--green)}
+    @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important;scroll-behavior:auto!important}.reveal{opacity:1;transform:none}}
+  </style>
+</head>
+<body>
+  <div class="stage" aria-hidden="true"></div><div class="grain" aria-hidden="true"></div>
+  <header class="topbar">
+    <div class="nav">
+      <a class="brand" href="#top" aria-label="Memo 首页"><span class="logo"><span>M</span></span><span>Memo 麦默</span></a>
+      <div class="nav-actions"><a class="nav-link" href="#features">功能</a><a class="nav-link" href="#value">价值</a><a class="nav-link" href="feedback.html">反馈</a><a class="nav-btn" href="#download">下载</a></div>
+    </div>
+  </header>
+  <main id="top">
+    <section class="screen cover" aria-label="Memo 封面">
+      <div class="page cover-inner">
+        <div class="cover-copy reveal in">
+          <div class="cover-mark">MEMO</div>
+          <div class="cover-slogan">让记忆不再是碎片</div>
+        </div>
+        <div class="cover-scroll">Scroll Down</div>
+      </div>
+    </section>
+
+    <section class="screen hero">
+      <div class="page hero-grid">
+        <div class="hero-copy reveal in">
+          <div class="eyebrow"><span class="dot"></span>本地优先 · 多 Agent 共享</div>
+          <h1>Memo，一个多 Agent 的记忆系统</h1>
+          <p>把散落在不同 AI 工具里的项目、知识、任务、偏好和来源线索，整理到同一个本地记忆系统。</p>
+          <a class="btn primary hero-download" href="#download">下载 Memo</a>
+        </div>
+        <div class="hero-visual reveal in delay-1">
+          <iframe src="boot-visual.html" title="Memo 图谱效果" loading="eager"></iframe>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="features">
+      <div class="page split">
+        <div class="section-title reveal"><div class="mini">FEATURES</div><h2>Memo 可以做什么</h2></div>
+        <div class="copy-panel glass reveal delay-1">
+          <div class="feature-list">
+            <div class="feature"><b><span>01</span>多 Agent 记忆流转</b><p>支持记忆导入、治理与应用，让不同 Agent 中的记忆流转起来。</p></div>
+            <div class="feature"><b><span>02</span>人格生成与更新</b><p>根据全部记忆和新增记忆生成及更新人格，让 AI 更懂你。</p></div>
+            <div class="feature"><b><span>03</span>记忆权重学习</b><p>根据记忆使用情况自动更新片段权重，让记忆真正活起来。</p></div>
+            <div class="feature"><b><span>04</span>MCP 工具接入</b><p>安装后可由 Agent 注册 MCP，随时同步和调用记忆。</p></div>
+            <div class="feature"><b><span>05</span>项目级会话归类</b><p>让记忆碎片按项目相互串联，不再散落在不同会话中。</p></div>
+            <div class="feature"><b><span>06</span>一句话创建待办</b><p>支持待办管理与提醒，把临时想法变成可跟进事项。</p></div>
+          </div>
+          <div class="note">注意：上述部分能力需要 LLM 介入。若记忆内容较多，会消耗较多 Token，建议使用 DeepSeek v4-flash 或更便宜的模型。</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="value">
+      <div class="page split">
+        <div class="section-title reveal"><div class="mini">VALUE</div><h2>Memo 的价值</h2></div>
+        <div class="value-panel glass reveal delay-1"><p class="copy-large">Memo 的价值在于持续积累。项目越复杂、周期越长、参与的 AI 工具越多，它越适合成为一个可信赖、可管理的本地上下文底座。</p></div>
+      </div>
+    </section>
+
+    <section class="screen" id="privacy">
+      <div class="page split">
+        <div class="section-title reveal"><div class="mini">PRIVACY</div><h2>你的记忆，只属于你</h2></div>
+        <div class="privacy-panel glass reveal delay-1"><p class="copy-large">Memo 不会拿走你的记忆。它们会直接存储在你的电脑本地，由你自己管理。</p></div>
+      </div>
+    </section>
+
+    <section class="screen" id="download">
+      <div class="page">
+        <div class="download-head reveal"><h2>选择适合你的安装包</h2><p>首次使用选 Full，已有用户升级选 Lite。</p></div>
+        <div class="download-grid">
+          <article class="download-card glass reveal delay-1">
+            <span class="badge">首次安装推荐</span>
+            <h3>Memo Full</h3>
+            <p>包含 Memo 主程序、本地 Python Runtime 和必要依赖，适合第一次安装。</p>
+            <ul><li>适合新用户</li><li>安装包较大</li><li>不需要额外准备 Python 环境</li></ul>
+            <a class="btn primary" href="downloads/Memo-Setup-latest.exe" download>下载 Full</a>
+          </article>
+          <article class="download-card glass reveal delay-2">
+            <span class="badge">已有用户升级</span>
+            <h3>Memo Lite</h3>
+            <p>复用已安装的 Runtime，只更新 Memo 程序与启动器，升级更轻量。</p>
+            <ul><li>适合已安装用户</li><li>下载更快</li><li>保留本地数据与配置</li></ul>
+            <a class="btn" href="downloads/Memo-Lite-Setup-latest.exe" download>下载 Lite</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="faq">
+      <div class="page split">
+        <div class="section-title reveal"><div class="mini">FAQ</div><h2>常见问题</h2></div>
+        <div class="faq-grid">
+          <div class="faq-card glass reveal delay-1"><b>我应该选择哪个数据目录？</b><p>建议存放在非 C 盘的目录下，最好创建一个单独的文件夹管理它们。</p></div>
+          <div class="faq-card glass reveal delay-2"><b>是否必须配置 LLM？</b><p>不是必须。但为了提升记忆使用和人格生成质量，建议配置 LLM，并尽量选择便宜的模型。如果安装时没有配置模型和 Key，可以在安装 MCP 后让 Agent 帮你在 .env 文件中配置。</p></div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="footer"><div class="page"><span>Memo 麦默 · 多 Agent 记忆系统</span><span class="mono">glass concept</span></div></footer>
+  <a class="feedback-float" href="feedback.html">反馈问题</a>
+  <script>
+    const observer=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(entry.isIntersecting)entry.target.classList.add('in')})},{threshold:.18});
+    document.querySelectorAll('.reveal').forEach(el=>observer.observe(el));
+  </script>
+</body>
+</html>
