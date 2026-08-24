@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const https = require('https');
 const crypto = require('crypto');
 const { compareVersions } = require('./version-utils.cjs');
+const { normalizeServiceRelease, planServiceUpdate } = require('./update-planner.cjs');
 
 function candidateAncestors(startPath, maxDepth = 6) {
   const result = [];
@@ -89,6 +90,8 @@ const USER_MEMO_ROOT = process.env.MEMO_USER_ROOT || path.join(process.env.LOCAL
 const USER_MEMO_DATA_ROOT = path.join(USER_MEMO_ROOT, 'data');
 const USER_MEMO_CONFIG_ROOT = path.join(USER_MEMO_ROOT, 'config');
 const USER_MEMO_ENV_FILE = path.join(USER_MEMO_CONFIG_ROOT, '.env');
+const SERVICE_CHAIN_STATE = path.join(USER_MEMO_ROOT, 'Programs', 'Memo', 'service-update-chain.json');
+const SERVICE_RUNNER_STATE = path.join(USER_MEMO_ROOT, 'Programs', 'Memo', 'service-update-transaction.json');
 const BOOT_URL = process.env.MEMO_BOOT_URL || 'http://127.0.0.1:9120';
 const DASHBOARD_BASE = process.env.MEMO_DASHBOARD_URL || BOOT_URL;
 const DASHBOARD_FALLBACKS = Array.from(new Set([DASHBOARD_BASE, BOOT_URL, 'http://127.0.0.1:9121']));
@@ -475,15 +478,26 @@ function compactOutput(text, max = 2200) {
   return `${clean.slice(0, 900)}\n...\n${clean.slice(-1200)}`;
 }
 
-function installedServiceVersion() {
+function installedServiceState() {
   for (const candidate of [path.join(ROOT, 'memo-install-manifest.json'), path.join(ROOT, 'memo-build-manifest.json')]) {
     try {
       const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
       const version = parsed.serviceVersion || parsed.version;
-      if (version) return String(version);
+      if (version) {
+        const installedFiles = parsed.installedFiles;
+        return {
+          version: String(version),
+          hasBaseline: Boolean(installedFiles && typeof installedFiles === 'object' && Object.keys(installedFiles).length),
+          sourceCommit: String(parsed.sourceCommit || ''),
+        };
+      }
     } catch (_) {}
   }
-  return appVersion();
+  return { version: appVersion(), hasBaseline: false, sourceCommit: '' };
+}
+
+function installedServiceVersion() {
+  return installedServiceState().version;
 }
 
 function servicePatchRunner() {
@@ -499,6 +513,54 @@ async function runServicePatchRunner(args) {
   try { return { ...JSON.parse(raw), exitCode: result.code }; } catch (_) {
     return { ok: false, error: compactOutput(raw || `Service Patch runner exit ${result.code}`) };
   }
+}
+
+function writeServiceChainState(state) {
+  fs.mkdirSync(path.dirname(SERVICE_CHAIN_STATE), { recursive: true });
+  const temporary = `${SERVICE_CHAIN_STATE}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 1, ...state }, null, 2)}\n`, 'utf8');
+  fs.renameSync(temporary, SERVICE_CHAIN_STATE);
+}
+
+function readServiceChainState() {
+  if (!fs.existsSync(SERVICE_CHAIN_STATE)) return null;
+  try { return JSON.parse(fs.readFileSync(SERVICE_CHAIN_STATE, 'utf8')); } catch (error) {
+    throw new Error(`服务更新状态文件损坏，未自动删除：${SERVICE_CHAIN_STATE}。${error?.message || error}`);
+  }
+}
+
+function clearServiceChainState() {
+  if (fs.existsSync(SERVICE_CHAIN_STATE)) fs.unlinkSync(SERVICE_CHAIN_STATE);
+}
+
+async function recoverInterruptedServiceUpdate() {
+  const chain = readServiceChainState();
+  const interrupted = Boolean(chain || fs.existsSync(SERVICE_RUNNER_STATE));
+  if (!interrupted) return { ok: true, recovered: false, residuals: [] };
+  const stopped = await stopMemoServices();
+  if (!stopped.ok) return { ok: false, message: '检测到中断更新，但停止现有服务失败；为避免带进程切换程序目录，已取消自动恢复。' };
+  const recoveredRunner = await runServicePatchRunner(['--action', 'recover']);
+  if (!recoveredRunner.ok) {
+    return { ok: false, message: `发现未完成的服务更新，但无法安全恢复；未删除任何未知残留。\n${recoveredRunner.error || ''}` };
+  }
+  if (!chain) {
+    return { ok: true, recovered: Boolean(recoveredRunner.recovered), residuals: recoveredRunner.residuals || [] };
+  }
+  if (chain.phase === 'health-ok') {
+    clearServiceChainState();
+    return { ok: true, recovered: Boolean(recoveredRunner.recovered), residuals: recoveredRunner.residuals || [] };
+  }
+  let ok = true;
+  const backups = Array.isArray(chain.appliedBackups) ? chain.appliedBackups : [];
+  for (const item of [...backups].reverse()) {
+    const backup = String(item?.backup || '');
+    if (!backup || !fs.existsSync(backup)) continue;
+    const rolledBack = await runServicePatchRunner(['--action', 'rollback', '--backup', backup]);
+    if (!rolledBack.ok) ok = false;
+  }
+  if (!ok) return { ok: false, message: '补丁链中断恢复未完全成功，状态文件已保留，未自动删除未知残留。' };
+  clearServiceChainState();
+  return { ok: true, recovered: true, residuals: recoveredRunner.residuals || [] };
 }
 
 async function archiveUserStateBeforeServicePatch() {
@@ -537,12 +599,43 @@ async function updateGitServiceRuntime(steps) {
     : { ok: false, message: '代码已拉取，但服务未能恢复启动。' };
 }
 
+async function downloadAndVerifyServiceAsset(asset, tempDir, index) {
+  const fallbackName = `Memo-Service-patch-${index + 1}.zip`;
+  const safeName = path.basename(String(asset?.name || fallbackName));
+  const target = path.join(tempDir, `${String(index + 1).padStart(2, '0')}-${safeName}`);
+  await downloadFileWithRetry(asset.url, target, 3);
+  const size = fs.statSync(target).size;
+  if (Number(asset.size || 0) > 0 && size !== Number(asset.size)) {
+    throw new Error(`${safeName}大小与发布清单不一致。`);
+  }
+  const digest = await sha256File(target);
+  if (!asset.sha256 || digest !== String(asset.sha256).replace(/^sha256:/i, '').toLowerCase()) {
+    throw new Error(`${safeName} SHA-256校验失败。`);
+  }
+  return { target, digest };
+}
+
+async function rollbackAppliedPatchChain(appliedBackups) {
+  let ok = true;
+  for (const applied of [...appliedBackups].reverse()) {
+    if (!applied?.backup) {
+      ok = false;
+      continue;
+    }
+    const rolledBack = await runServicePatchRunner(['--action', 'rollback', '--backup', String(applied.backup)]);
+    if (!rolledBack.ok) ok = false;
+  }
+  return ok;
+}
+
 async function updateMemoService() {
   if (serviceUpdateRunning) return { ok: false, message: 'Memo服务更新已在进行中，请稍候。' };
   serviceUpdateRunning = true;
   serviceAction = 'updating';
   refreshAndSend();
   const steps = [];
+  const appliedBackups = [];
+  let servicesStopped = false;
   const finish = async (result) => {
     serviceUpdateRunning = false;
     serviceAction = 'idle';
@@ -552,70 +645,111 @@ async function updateMemoService() {
 
   try {
     if (fs.existsSync(path.join(ROOT, '.git'))) return await finish(await updateGitServiceRuntime(steps));
+    const recovery = await recoverInterruptedServiceUpdate();
+    if (!recovery.ok) return await finish(recovery);
+    if (recovery.recovered) {
+      steps.push('恢复上次中断的服务更新');
+      await startMemoServices();
+    }
     const latest = await loadUpdateManifest();
-    const service = serviceRelease(latest);
-    if (!service?.url || !service?.version || service.runtimeChanged) {
+    const installed = installedServiceState();
+    const plan = planServiceUpdate(latest, installed);
+    if (plan.kind === 'none') {
+      return await finish({ ok: true, message: `Memo服务已是最新版本 ${installed.version}。` });
+    }
+    if (plan.kind === 'installer') {
       return await finish({ ok: false, message: '本次更新包含启动器或Runtime变化，请使用Lite更新。' });
     }
-    const current = installedServiceVersion();
-    if (compareVersions(service.version, current) <= 0) {
-      return await finish({ ok: true, message: `Memo服务已是最新版本 ${current}。` });
+    if (plan.kind === 'unavailable') {
+      return await finish({ ok: false, message: installed.hasBaseline
+        ? '没有找到从当前版本到目标版本的完整差分链，请使用Lite更新。'
+        : '当前安装缺少installedFiles基线，不能安全使用差分补丁；请先使用Lite或完整服务包更新一次。' });
     }
 
-    // Download and verify while the existing service remains available. Downtime
-    // begins only after the immutable patch is ready on local disk.
-    steps.push('下载并校验小型服务补丁');
+    const patchItems = plan.kind === 'delta-chain'
+      ? plan.chain.map((asset) => ({ kind: 'delta', asset, from: String(asset.from), to: String(asset.to) }))
+      : [{ kind: 'full', asset: plan.asset, from: installed.version, to: plan.target }];
+
+    steps.push(plan.kind === 'delta-chain' ? `下载并校验${patchItems.length}段差分补丁` : '下载并校验完整服务包');
     const tempDir = path.join(app.getPath('temp'), 'memo-service-patch');
     fs.mkdirSync(tempDir, { recursive: true });
-    const target = path.join(tempDir, service.name || `Memo-Service-${service.version}.zip`);
-    if (fs.existsSync(target)) fs.unlinkSync(target);
-    await downloadFile(service.url, target);
-    const size = fs.statSync(target).size;
-    if (Number(service.size || 0) > 0 && size !== Number(service.size)) throw new Error('Service Patch大小与发布清单不一致。');
-    const actualDigest = await sha256File(target);
-    if (!service.sha256 || actualDigest !== String(service.sha256).replace(/^sha256:/i, '').toLowerCase()) {
-      throw new Error('Service Patch SHA-256校验失败。');
+    const downloaded = [];
+    for (let index = 0; index < patchItems.length; index += 1) {
+      const item = patchItems[index];
+      downloaded.push({ ...item, ...(await downloadAndVerifyServiceAsset(item.asset, tempDir, index)) });
     }
 
     steps.push('停止 Memo 服务');
     const stopped = await stopMemoServices();
     if (!stopped.ok) return await finish({ ok: false, message: '停止Memo服务失败，补丁尚未应用。' });
+    servicesStopped = true;
     steps.push('归档数据库和配置');
     const archived = await archiveUserStateBeforeServicePatch();
     if (!archived.ok) {
       await startMemoServices();
+      servicesStopped = false;
       return await finish(archived);
     }
 
-    steps.push('原子切换程序目录');
-    const applied = await runServicePatchRunner([
-      '--action', 'apply', '--archive', target, '--sha256', actualDigest, '--version', String(service.version),
-    ]);
-    if (!applied.ok) {
-      await startMemoServices();
-      return await finish({ ok: false, message: `Service Patch应用失败，旧程序已保留并重新启动。\n${applied.error || ''}` });
+    steps.push(plan.kind === 'delta-chain' ? `依次应用${downloaded.length}段差分并原子切换` : '原子切换完整程序目录');
+    writeServiceChainState({ phase: 'applying', from: installed.version, to: plan.target, appliedBackups: [] });
+    let skippedDeleteCount = 0;
+    for (const item of downloaded) {
+      const runnerArgs = item.kind === 'delta'
+        ? ['--action', 'apply-delta', '--archive', item.target, '--sha256', item.digest, '--from-version', item.from, '--version', item.to]
+        : ['--action', 'apply', '--archive', item.target, '--sha256', item.digest, '--version', item.to];
+      const applied = await runServicePatchRunner(runnerArgs);
+      if (!applied.ok) {
+        const rolledBack = await rollbackAppliedPatchChain(appliedBackups);
+        if (rolledBack) clearServiceChainState();
+        const restored = await startMemoServices();
+        servicesStopped = false;
+        return await finish({
+          ok: false,
+          message: `Service Patch应用失败，已${rolledBack && restored.ok ? '恢复到更新前版本' : '尝试整链回滚但需要人工检查'}。\n${applied.error || ''}`,
+        });
+      }
+      appliedBackups.push(applied);
+      writeServiceChainState({ phase: 'applying', from: installed.version, to: plan.target, appliedBackups });
+      const finalizedHop = await runServicePatchRunner(['--action', 'finalize', '--backup', String(applied.backup || '')]);
+      if (!finalizedHop.ok) throw new Error(`补丁事务落盘失败：${finalizedHop.error || ''}`);
+      skippedDeleteCount += Array.isArray(applied.skippedDeletes) ? applied.skippedDeletes.length : 0;
     }
 
+    writeServiceChainState({ phase: 'health-check', from: installed.version, to: plan.target, appliedBackups });
     steps.push('启动并健康检查');
     const started = await startMemoServices();
+    servicesStopped = false;
     const ready = started.ok ? await waitForMemoServices(60) : { ok: false, message: started.message };
     if (!ready.ok) {
-      steps.push('健康检查失败，回滚程序目录');
+      steps.push('健康检查失败，整链回滚');
       await stopMemoServices();
-      const rolledBack = await runServicePatchRunner(['--action', 'rollback', '--backup', String(applied.backup || '')]);
+      servicesStopped = true;
+      const rolledBack = await rollbackAppliedPatchChain(appliedBackups);
+      if (rolledBack) clearServiceChainState();
       const restored = await startMemoServices();
+      servicesStopped = false;
       return await finish({
         ok: false,
-        message: `新版本未通过健康检查，已${rolledBack.ok && restored.ok ? '自动恢复旧程序' : '尝试回滚但需要人工检查'}。数据库备份保持不动。\n${ready.message || ''}`,
+        message: `新版本未通过健康检查，已${rolledBack && restored.ok ? '自动恢复到更新前版本' : '尝试整链回滚但需要人工检查'}。数据库备份保持不动。\n${ready.message || ''}`,
       });
     }
-    await runServicePatchRunner(['--action', 'finalize', '--backup', String(applied.backup || '')]);
+    writeServiceChainState({ phase: 'health-ok', from: installed.version, to: plan.target, appliedBackups });
+    clearServiceChainState();
+    const mode = plan.kind === 'delta-chain' ? `${downloaded.length}段差分补丁链` : '完整服务包';
     return await finish({
       ok: true,
-      message: `Memo服务已通过小型补丁更新到 ${service.version}。\n执行步骤：${steps.join(' → ')}\n本地数据库、WAL/SHM和.env均未被补丁覆盖。`,
+      message: `Memo服务已通过${mode}更新到 ${plan.target}。\n执行步骤：${steps.join(' → ')}${skippedDeleteCount ? `\n为保护本地修改，${skippedDeleteCount}个待删除文件已保留。` : ''}\n本地数据库、WAL/SHM和.env均未被补丁覆盖。`,
     });
   } catch (error) {
-    try { await startMemoServices(); } catch (_) {}
+    try {
+      if (appliedBackups.length) {
+        if (!servicesStopped) await stopMemoServices();
+        const rolledBack = await rollbackAppliedPatchChain(appliedBackups);
+        if (rolledBack) clearServiceChainState();
+      }
+      await startMemoServices();
+    } catch (_) {}
     return await finish({ ok: false, message: `Memo服务更新失败：${error?.message || error}` });
   }
 }
@@ -746,7 +880,10 @@ function downloadFile(url, destination) {
   return new Promise((resolve, reject) => {
     const request = https.get(url, { headers: { 'User-Agent': 'Memo-Desktop-Companion' } }, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-        response.resume(); downloadFile(response.headers.location, destination).then(resolve, reject); return;
+        response.resume();
+        const redirected = new URL(response.headers.location, url).toString();
+        downloadFile(redirected, destination).then(resolve, reject);
+        return;
       }
       if (response.statusCode !== 200) { response.resume(); reject(new Error(`下载更新失败：HTTP ${response.statusCode}`)); return; }
       const output = fs.createWriteStream(destination);
@@ -757,6 +894,25 @@ function downloadFile(url, destination) {
     request.setTimeout(120000, () => request.destroy(new Error('下载更新超时')));
     request.on('error', reject);
   });
+}
+
+async function downloadFileWithRetry(url, destination, attempts = 3) {
+  const partial = `${destination}.part`;
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      // Only our exact .part path is cleaned. Unknown residual files are left alone.
+      if (fs.existsSync(partial)) fs.unlinkSync(partial);
+      await downloadFile(url, partial);
+      if (fs.existsSync(destination)) fs.unlinkSync(destination);
+      fs.renameSync(partial, destination);
+      return destination;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, attempt * 700));
+    }
+  }
+  throw new Error(`下载重试${attempts}次仍失败：${lastError?.message || lastError}`);
 }
 
 function stableRuntimeReady() {
@@ -794,11 +950,7 @@ function launcherRelease(manifest) {
 }
 
 function serviceRelease(manifest) {
-  const service = manifest?.service;
-  if (!service?.version) return null;
-  if (service.url) return service;
-  const asset = service.full || null;
-  return asset?.url ? { ...asset, version: service.version, runtimeChanged: service.runtimeChanged } : null;
+  return normalizeServiceRelease(manifest);
 }
 
 async function installDesktopUpdate() {
@@ -815,8 +967,7 @@ async function installDesktopUpdate() {
   fs.mkdirSync(tempDir, { recursive: true });
   const target = path.join(tempDir, asset.name || (runtimeReady ? 'Memo-Lite-Setup-latest.exe' : 'Memo-Setup-latest.exe'));
   try {
-    if (fs.existsSync(target)) fs.unlinkSync(target);
-    await downloadFile(asset.url, target);
+    await downloadFileWithRetry(asset.url, target, 3);
     const size = fs.statSync(target).size;
     if (size < 1024 * 1024) throw new Error('下载文件异常小，已取消安装。');
     if (Number(asset.size || 0) > 0 && size !== Number(asset.size)) throw new Error('安装包大小与服务器清单不一致，已取消安装。');
@@ -854,18 +1005,26 @@ async function installDesktopUpdate() {
 
 async function checkForUpdates() {
   const currentLauncher = appVersion();
-  const currentService = installedServiceVersion();
+  const installed = installedServiceState();
+  const currentService = installed.version;
   const latest = await loadUpdateManifest();
   if (!latest) return { ok: false, currentLauncher, currentService, message: '暂时无法连接 Memo 官网更新源。' };
   const launcher = launcherRelease(latest);
   const service = serviceRelease(latest);
+  const servicePlan = planServiceUpdate(latest, installed);
   const launcherUpdate = Boolean(launcher.version && compareVersions(launcher.version, currentLauncher) > 0);
   const serviceUpdate = Boolean(service?.version && compareVersions(service.version, currentService) > 0);
   const runtimeChanged = Boolean(service?.runtimeChanged);
-  const mustUseInstaller = launcherUpdate || (serviceUpdate && runtimeChanged);
-  const channel = mustUseInstaller
-    ? (stableRuntimeReady() && launcher.lite?.url ? 'Lite启动器更新' : 'Full全量更新')
-    : (serviceUpdate ? 'Service Patch小型服务补丁' : '无需更新');
+  const serviceNeedsInstaller = serviceUpdate && ['installer', 'unavailable'].includes(servicePlan.kind);
+  const mustUseInstaller = launcherUpdate || serviceNeedsInstaller;
+  let channel = '无需更新';
+  if (mustUseInstaller) {
+    channel = stableRuntimeReady() && launcher.lite?.url ? 'Lite启动器更新' : 'Full全量更新';
+  } else if (servicePlan.kind === 'delta-chain') {
+    channel = `${servicePlan.chain.length}段Service Patch差分链`;
+  } else if (servicePlan.kind === 'full-service') {
+    channel = '完整Service Patch';
+  }
   const notes = launcher.notes || latest.notes || '';
   return {
     ok: true,
@@ -880,6 +1039,7 @@ async function checkForUpdates() {
     launcherUpdate,
     serviceUpdate,
     runtimeChanged,
+    servicePlan: servicePlan.kind,
     channel,
     action: mustUseInstaller ? 'launcher' : (serviceUpdate ? 'service' : 'none'),
     message: launcherUpdate || serviceUpdate
@@ -916,6 +1076,12 @@ function setLoginItemEnabled(enabled) {
 }
 
 async function ensureServicesOnLaunch() {
+  const recovery = await recoverInterruptedServiceUpdate();
+  if (!recovery.ok) {
+    console.error(recovery.message);
+    try { new Notification({ title: 'Memo 更新恢复需要检查', body: recovery.message }).show(); } catch (_) {}
+    return;
+  }
   if (!AUTO_START_SERVICES) return;
   const health = await fetchDashboardHealth();
   if (!health || !health.ok) {

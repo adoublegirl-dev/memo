@@ -1,6 +1,6 @@
 {
   "name": "memo-dashboard",
-  "version": "0.10.8-alpha",
+  "version": "0.10.8-alpha.2",
   "private": true,
   "type": "module",
   "productName": "Memo Desktop Companion",
