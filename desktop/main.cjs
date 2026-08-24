@@ -534,7 +534,10 @@ function clearServiceChainState() {
 }
 
 async function recoverInterruptedServiceUpdate() {
-  const chain = readServiceChainState();
+  let chain = null;
+  try { chain = readServiceChainState(); } catch (error) {
+    return { ok: false, message: error?.message || String(error) };
+  }
   const interrupted = Boolean(chain || fs.existsSync(SERVICE_RUNNER_STATE));
   if (!interrupted) return { ok: true, recovered: false, residuals: [] };
   const stopped = await stopMemoServices();
