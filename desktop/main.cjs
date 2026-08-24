@@ -941,14 +941,18 @@ function persistInstallerDataRoot() {
 
 async function loadUpdateManifest() {
   const manifest = await fetchJson(UPDATE_MANIFEST_URL, null);
-  if (!manifest || !(manifest.launcher?.version || manifest.version || manifest.service?.version)) {
-    lastUpdateManifestError = '无法连接Memo官网更新源，或更新清单格式无效。';
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    lastUpdateManifestError = '无法连接Memo官网更新源，或更新清单不是JSON对象。';
     return null;
   }
   const verification = verifyReleaseManifest(manifest);
   if (!verification.ok) {
     lastUpdateManifestError = `${verification.error}。为保护本机，已拒绝使用该更新清单。`;
     console.error(lastUpdateManifestError);
+    return null;
+  }
+  if (!(manifest.launcher?.version || manifest.version || manifest.service?.version)) {
+    lastUpdateManifestError = '更新清单已签名，但缺少版本信息。';
     return null;
   }
   lastUpdateManifestError = '';

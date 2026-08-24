@@ -10,6 +10,9 @@ MCowBQYDK2VwAyEAmtf08uuRTatRP8V90m94R7WTArYtFj73AjzWWFTrOZ8=
 });
 
 function sortJson(value) {
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) {
+    throw new Error('Signed update manifests may contain only safe integer numbers');
+  }
   if (Array.isArray(value)) return value.map(sortJson);
   if (value && typeof value === 'object') {
     return Object.keys(value).sort().reduce((result, key) => {
@@ -38,7 +41,7 @@ function strictBase64(value) {
 
 function verifyReleaseManifest(manifest, trustedKeys = TRUSTED_UPDATE_KEYS) {
   try {
-    if (Number(manifest?.formatVersion || 0) < 3 || Number(manifest?.signatureVersion || 0) !== SIGNATURE_VERSION) {
+    if (Number(manifest?.formatVersion || 0) !== 3 || Number(manifest?.signatureVersion || 0) !== SIGNATURE_VERSION) {
       return { ok: false, error: '更新清单不是受支持的签名格式' };
     }
     const signature = manifest?.signature;
