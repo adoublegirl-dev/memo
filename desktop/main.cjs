@@ -6,6 +6,7 @@ const https = require('https');
 const crypto = require('crypto');
 const { compareVersions } = require('./version-utils.cjs');
 const { normalizeServiceRelease, planServiceUpdate } = require('./update-planner.cjs');
+const { verifyReleaseManifest } = require('./update-signature.cjs');
 
 function candidateAncestors(startPath, maxDepth = 6) {
   const result = [];
@@ -111,6 +112,7 @@ let serviceUpdateRunning = false;
 let windowAutoHideSuspended = false;
 let loginItemEnabledCache = false;
 let loginItemUserSelected = false;
+let lastUpdateManifestError = '';
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
@@ -655,6 +657,7 @@ async function updateMemoService() {
       await startMemoServices();
     }
     const latest = await loadUpdateManifest();
+    if (!latest) return await finish({ ok: false, message: lastUpdateManifestError || '无法读取可信的Memo更新清单。' });
     const installed = installedServiceState();
     const plan = planServiceUpdate(latest, installed);
     if (plan.kind === 'none') {
@@ -938,7 +941,17 @@ function persistInstallerDataRoot() {
 
 async function loadUpdateManifest() {
   const manifest = await fetchJson(UPDATE_MANIFEST_URL, null);
-  if (!manifest || !(manifest.launcher?.version || manifest.version || manifest.service?.version)) return null;
+  if (!manifest || !(manifest.launcher?.version || manifest.version || manifest.service?.version)) {
+    lastUpdateManifestError = '无法连接Memo官网更新源，或更新清单格式无效。';
+    return null;
+  }
+  const verification = verifyReleaseManifest(manifest);
+  if (!verification.ok) {
+    lastUpdateManifestError = `${verification.error}。为保护本机，已拒绝使用该更新清单。`;
+    console.error(lastUpdateManifestError);
+    return null;
+  }
+  lastUpdateManifestError = '';
   return manifest;
 }
 
@@ -958,7 +971,7 @@ function serviceRelease(manifest) {
 
 async function installDesktopUpdate() {
   const latest = await loadUpdateManifest();
-  if (!latest) return { ok: false, message: '无法连接 Memo 官网更新源，请稍后重试。' };
+  if (!latest) return { ok: false, message: lastUpdateManifestError || '无法连接 Memo 官网更新源，请稍后重试。' };
   const launcher = launcherRelease(latest);
   const current = appVersion();
   const version = launcher.version || '';
@@ -1011,7 +1024,7 @@ async function checkForUpdates() {
   const installed = installedServiceState();
   const currentService = installed.version;
   const latest = await loadUpdateManifest();
-  if (!latest) return { ok: false, currentLauncher, currentService, message: '暂时无法连接 Memo 官网更新源。' };
+  if (!latest) return { ok: false, currentLauncher, currentService, message: lastUpdateManifestError || '暂时无法连接 Memo 官网更新源。' };
   const launcher = launcherRelease(latest);
   const service = serviceRelease(latest);
   const servicePlan = planServiceUpdate(latest, installed);
