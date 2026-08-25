@@ -13,8 +13,10 @@ from memo.core.config import config
 from memo.utils.logger import logger
 
 # ── 重试配置 ──
-MAX_RETRIES = 3
-RETRY_BASE_DELAY = 1.0  # 秒，指数退避：1s, 2s, 4s
+# OpenAI SDK 内置重试关闭，只在这里做有限重试，避免两层重试把单次故障
+# 放大成数分钟挂起。MAX_ATTEMPTS 表示包含首次调用在内的总尝试次数。
+MAX_ATTEMPTS = 2
+RETRY_BASE_DELAY = 1.0  # 秒，指数退避：1s
 
 
 class LLMClient:
@@ -34,6 +36,8 @@ class LLMClient:
             self._client = OpenAI(
                 api_key=config.llm_api_key,
                 base_url=config.llm_base_url,
+                timeout=config.llm_request_timeout_seconds,
+                max_retries=0,
             )
         return self._client
 
@@ -64,23 +68,23 @@ class LLMClient:
             kwargs["response_format"] = response_format
 
         last_error = None
-        for attempt in range(MAX_RETRIES):
+        for attempt in range(MAX_ATTEMPTS):
             try:
                 response = self.client.chat.completions.create(**kwargs)
                 content = response.choices[0].message.content or ""
-                if not content and attempt < MAX_RETRIES - 1:
+                if not content and attempt < MAX_ATTEMPTS - 1:
                     # 空响应（可能是限流），重试
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
-                    logger.debug(f"LLM 返回空内容，{delay}s 后重试 ({attempt+1}/{MAX_RETRIES})")
+                    logger.debug(f"LLM 返回空内容，{delay}s 后重试 ({attempt+1}/{MAX_ATTEMPTS})")
                     time.sleep(delay)
                     continue
                 return content
             except (RateLimitError, APITimeoutError, APIConnectionError) as e:
                 last_error = e
-                if attempt < MAX_RETRIES - 1:
+                if attempt < MAX_ATTEMPTS - 1:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
                     logger.warning(
-                        f"LLM 调用失败 ({type(e).__name__})，{delay}s 后重试 ({attempt+1}/{MAX_RETRIES})"
+                        f"LLM 调用失败 ({type(e).__name__})，{delay}s 后重试 ({attempt+1}/{MAX_ATTEMPTS})"
                     )
                     time.sleep(delay)
                 else:
@@ -102,7 +106,7 @@ class LLMClient:
         import re
 
         last_raw = ""
-        for attempt in range(MAX_RETRIES):
+        for attempt in range(MAX_ATTEMPTS):
             try:
                 raw = self.chat(
                     messages,
@@ -121,10 +125,10 @@ class LLMClient:
                         return json.loads(match.group())
                     except json.JSONDecodeError:
                         pass
-                if attempt < MAX_RETRIES - 1:
+                if attempt < MAX_ATTEMPTS - 1:
                     delay = RETRY_BASE_DELAY * (2 ** attempt)
                     logger.warning(
-                        f"LLM 返回非 JSON ({e})，{delay}s 后重试 ({attempt+1}/{MAX_RETRIES})"
+                        f"LLM 返回非 JSON ({e})，{delay}s 后重试 ({attempt+1}/{MAX_ATTEMPTS})"
                     )
                     time.sleep(delay)
                     # 重试时去掉 json_object 限制，给模型更多自由度

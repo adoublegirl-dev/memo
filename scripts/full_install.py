@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime
@@ -17,7 +18,6 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV = PROJECT_ROOT / ".venv"
 VENV_PY = VENV / "Scripts" / "python.exe"
-BACKUP_DIR = PROJECT_ROOT / "data" / "backups"
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -74,15 +74,28 @@ def install_python_deps(use_mirror: bool = False, dry_run: bool = False) -> None
 
 
 def backup_database(dry_run: bool = False) -> Path | None:
-    db = PROJECT_ROOT / "data" / "memo.db"
-    if not db.exists():
-        print("数据库不存在，无需备份")
+    """Backup the active user database, never a hard-coded legacy filename."""
+    configured = os.environ.get("MEMO_DB_PATH", "").strip()
+    if configured:
+        database = Path(configured).expanduser().resolve()
+    else:
+        data_root = os.environ.get("MEMO_DATA_ROOT", "").strip()
+        database = ((Path(data_root) if data_root else PROJECT_ROOT / "data") / "memo_source_aware.db").resolve()
+    if not database.exists():
+        print(f"数据库不存在，无需备份：{database}")
         return None
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    backup = BACKUP_DIR / f"memo-before-full-install-{stamp()}.db"
-    print(f"准备备份数据库：{backup}")
+    backup_dir = database.parent / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    backup = backup_dir / f"memo-before-full-install-{stamp()}.db"
+    print(f"准备在线备份数据库：{backup}")
     if not dry_run:
-        shutil.copy2(db, backup)
+        source = sqlite3.connect(str(database))
+        destination = sqlite3.connect(str(backup))
+        try:
+            source.backup(destination)
+        finally:
+            destination.close()
+            source.close()
     return backup
 
 

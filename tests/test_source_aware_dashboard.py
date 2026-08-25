@@ -7,6 +7,11 @@ from memo.core.engine import engine
 from memo.store.database import db
 
 
+def test_history_model_config_normalizes_unimplemented_provider():
+    normalized = engine._history_normalize_model_config({"provider": "ollama"})
+    assert normalized["provider"] == "openai-compatible"
+
+
 def _seed_source_aware_fixture():
     engine.init()
     suffix = uuid4().hex[:8]
@@ -116,7 +121,7 @@ def test_source_session_review_state_can_be_updated_and_listed():
     ids = _seed_source_aware_fixture()
 
     updated = engine.source_session_review_update(ids["source_id"], "in_review", note="处理到一半")
-    overview = engine.source_aware_dashboard(page_size=10)
+    overview = engine.source_aware_dashboard(page_size=10, q=ids["source_id"])
     row = next(s for s in overview["sessions"] if s["id"] == ids["source_id"])
 
     assert updated["updated"] is True
@@ -148,6 +153,19 @@ def test_source_aware_memory_quality_returns_readonly_flags():
     assert "raw_text" not in quality["samples"]["temporary_task_like_hits"][0]
 
 
+def test_readonly_duplicate_title_audit_does_not_merge_unrelated_sessions():
+    first = _seed_source_aware_fixture()
+    second = _seed_source_aware_fixture()
+    title = f"跨会话通用标题-{uuid4().hex[:10]}"
+    db.execute("UPDATE memory_units SET title=? WHERE id IN (?, ?)", (title, first["memory_id"], second["memory_id"]))
+    db.commit()
+
+    quality = engine.source_aware_memory_quality(limit=100)
+    normalized = "".join(ch for ch in title.lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")[:80]
+
+    assert not any(group["normalized_title"] == normalized for group in quality["samples"]["duplicate_title_groups"])
+
+
 def test_source_aware_session_detail_returns_local_content_but_evidence_stays_metadata_only():
     ids = _seed_source_aware_fixture()
 
@@ -167,3 +185,18 @@ def test_source_aware_session_detail_returns_local_content_but_evidence_stays_me
     assert evidence["memory"]["id"] == ids["memory_id"]
     assert evidence["evidence"][0]["turn_id"].startswith("turn_user_")
     assert "content" not in evidence["evidence"][0]
+
+
+def test_source_aware_memory_content_reconstructs_explicit_detail_from_evidence_turns():
+    ids = _seed_source_aware_fixture()
+    db.execute(
+        "UPDATE source_turns SET content='这是原始用户内容' WHERE source_session_id=? AND role='user'",
+        (ids["source_id"],),
+    )
+    db.commit()
+
+    content = engine.source_aware_memory_content(ids["memory_id"])
+
+    assert content["raw_text"] == "用户：这是原始用户内容"
+    assert content["content_turn_count"] == 1
+    assert content["pending_content_turn_count"] == 0

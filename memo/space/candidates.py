@@ -275,7 +275,7 @@ def _merge_suggestions(candidate_id: str, name: str, tags: list[str], limit: int
 class SpaceCandidateManager:
     """候选项目扫描、查看与用户确认操作。"""
 
-    def scan(self, limit: int = 80, min_memories: int = 1, use_llm: bool = False) -> dict:
+    def scan(self, limit: int = 80, min_memories: int = 1, use_llm: bool = False, refresh_suggestions: bool = True) -> dict:
         now = datetime.now().isoformat()
         created = 0
         updated = 0
@@ -319,7 +319,7 @@ class SpaceCandidateManager:
                 source_memory_ids = _uniq(_loads(row["source_memory_ids"]) + memory_ids)
                 source_todo_ids = _uniq(_loads(row["source_todo_ids"]) + [t["id"] for t in todos])
                 suggested_aliases = _uniq(_loads(row["suggested_aliases"]) + aliases)
-                db.execute(
+                cursor = db.execute(
                     """UPDATE space_candidates
                        SET description=?, confidence=max(confidence, ?), reason=?,
                            source_session_ids=?, source_memory_ids=?, source_todo_ids=?,
@@ -331,7 +331,7 @@ class SpaceCandidateManager:
                         _dumps(source_todo_ids), _dumps(suggested_aliases), existing["id"], existing["name"], now, row["id"],
                     ),
                 )
-                updated += db.conn.total_changes > 0
+                updated += max(0, cursor.rowcount)
             else:
                 cid = new_id()
                 db.execute(
@@ -349,7 +349,8 @@ class SpaceCandidateManager:
                 self._audit(cid, "created", "", name, "system", reason)
                 created += 1
         db.commit()
-        self.refresh_merge_suggestions()
+        if refresh_suggestions:
+            self.refresh_merge_suggestions()
         remaining = self.remaining_sessions_count(min_memories=min_memories)
         return {"scanned": scanned, "created": created, "updated": updated, "pending": len(self.list(limit=1000)), "remaining_sessions": remaining}
 
@@ -599,30 +600,93 @@ class SpaceCandidateManager:
         return data
 
     def _source_sessions(self, session_ids: list[str]) -> list[dict]:
+        """Load candidate evidence in bounded batch queries (no per-session N+1)."""
+        selected_ids = _uniq(session_ids)[:12]
+        if not selected_ids:
+            return []
+        placeholders = ",".join("?" for _ in selected_ids)
+        session_by_id = {
+            row["id"]: dict(row)
+            for row in db.fetchall(f"SELECT * FROM sessions WHERE id IN ({placeholders})", tuple(selected_ids))
+        }
+
+        memories_by_session: dict[str, list[dict]] = {sid: [] for sid in selected_ids}
+        memory_rows = db.fetchall(
+            f"""SELECT id, session_id, title, summary, summary_detail, raw_text, memory_type, created_at
+                FROM memory_units
+                WHERE session_id IN ({placeholders})
+                  AND COALESCE(status, 'active') NOT IN ('deleted','wrong','muted')
+                ORDER BY created_at DESC""",
+            tuple(selected_ids),
+        )
+        for row in memory_rows:
+            bucket = memories_by_session.setdefault(row["session_id"], [])
+            if len(bucket) < 8:
+                bucket.append(dict(row))
+
+        todos_by_session: dict[str, list[dict]] = {sid: [] for sid in selected_ids}
+        todo_rows = db.fetchall(
+            f"""SELECT id, session_id, title, description, priority, status, due_date, created_at
+                FROM todos WHERE session_id IN ({placeholders}) ORDER BY created_at DESC""",
+            tuple(selected_ids),
+        )
+        for row in todo_rows:
+            bucket = todos_by_session.setdefault(row["session_id"], [])
+            if len(bucket) < 20:
+                bucket.append(dict(row))
+
+        tags_by_session: dict[str, list[str]] = {sid: [] for sid in selected_ids}
+        tag_rows = db.fetchall(
+            f"""SELECT mu.session_id, ft.name, COUNT(*) AS c, MAX(tm.relevance_score) AS max_relevance
+                FROM memory_units mu
+                JOIN tag_mentions tm ON tm.memory_unit_id=mu.id
+                JOIN feature_tags ft ON ft.id=tm.tag_id
+                WHERE mu.session_id IN ({placeholders})
+                GROUP BY mu.session_id, ft.name
+                ORDER BY mu.session_id, c DESC, max_relevance DESC""",
+            tuple(selected_ids),
+        )
+        for row in tag_rows:
+            bucket = tags_by_session.setdefault(row["session_id"], [])
+            if len(bucket) < 8:
+                bucket.append(row["name"])
+
+        source_by_legacy_id: dict[str, dict] = {}
+        source_rows = db.fetchall(
+            f"SELECT * FROM source_sessions WHERE legacy_session_id IN ({placeholders})",
+            tuple(selected_ids),
+        )
+        for row in source_rows:
+            item = dict(row)
+            try:
+                item["metadata"] = json.loads(item.pop("metadata_json", "{}") or "{}")
+            except Exception:
+                item["metadata"] = {}
+            source_by_legacy_id[item.get("legacy_session_id", "")] = item
+
         out = []
-        for sid in session_ids[:12]:
-            row = db.fetchone("SELECT * FROM sessions WHERE id=?", (sid,))
-            if not row:
+        for sid in selected_ids:
+            session = session_by_id.get(sid)
+            if not session:
                 continue
-            memories = _session_memories(sid, limit=8)
-            session = dict(row)
-            tags = _session_tags([m["id"] for m in memories])
+            memories = memories_by_session.get(sid, [])
+            tags = tags_by_session.get(sid, [])
             out.append({
                 **session,
                 "display_title": _session_display_title(session, memories, tags),
                 "original_title": session.get("title", ""),
                 "memories": [
                     {
-                        "id": m["id"],
-                        "title": m.get("title", ""),
-                        "summary": m.get("summary", ""),
-                        "raw_text": _compact(m.get("raw_text", ""), 1200),
-                        "created_at": m.get("created_at", ""),
+                        "id": memory["id"],
+                        "title": memory.get("title", ""),
+                        "summary": memory.get("summary", ""),
+                        "raw_text": _compact(memory.get("raw_text", ""), 1200),
+                        "created_at": memory.get("created_at", ""),
                     }
-                    for m in memories
+                    for memory in memories
                 ],
-                "todos": _session_todos(sid),
-                "source_session": source_session_manager.get(sid),
+                "todos": todos_by_session.get(sid, []),
+                "source_session": source_by_legacy_id.get(sid),
             })
         return out
 

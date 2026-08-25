@@ -1,6 +1,6 @@
 <script>
   import { createEventDispatcher } from 'svelte';
-  import { CheckCheck, RotateCcw, Pencil, Eye } from '@lucide/svelte';
+  import { CheckCheck, RotateCcw, Pencil, Eye, Trash2 } from '@lucide/svelte';
   export let todo;
   export let riskLevel = '';
   export let busy = false;
@@ -32,10 +32,11 @@
     <div class="todo-actions">
       <button class="icon-btn" disabled={busy} on:click={() => dispatch('open', { id: todo.id })} title="查看详情"><Eye size={16}/></button>
       <button class="icon-btn" disabled={busy} on:click={() => dispatch('edit', { todo })} title="编辑"><Pencil size={16}/></button>
-      {#if todo.status !== 'done'}
+      {#if todo.status === 'todo' || todo.status === 'doing'}
         <button class="icon-btn" disabled={busy} on:click={() => dispatch('close', { id: todo.id })} title="完成"><CheckCheck size={17}/></button>
+        <button class="icon-btn" disabled={busy} on:click={() => dispatch('cancel', { id: todo.id })} title="移入已取消（可恢复）"><Trash2 size={16}/></button>
       {:else}
-        <button class="btn" disabled={busy} on:click={() => dispatch('reopen', { id: todo.id })} title="重开"><RotateCcw size={15}/>重开</button>
+        <button class="btn" disabled={busy} on:click={() => dispatch('reopen', { id: todo.id })} title="恢复为待处理"><RotateCcw size={15}/>恢复</button>
       {/if}
     </div>
   </div>

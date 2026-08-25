@@ -15,7 +15,7 @@
   const typeLabels = { FACT:'事实', DECISION:'决策', PREFERENCE:'偏好', EVENT:'事件', REASONING:'推理' };
   const statusLabels = { active:'可引用', expired:'已过期', wrong:'已标错', muted:'已合并/静默', deleted:'已删除' };
   const tabs = [
-    { id:'source_groups', label:'同源输入分组' },
+    { id:'source_groups', label:'同原文记忆分组（旧口径）' },
     { id:'dedupe_records', label:'去重记录' },
     { id:'memory_links', label:'合并链' },
     { id:'ingestion_events', label:'输入事件' },
@@ -72,12 +72,13 @@
   <div class="page-head-row">
     <div>
       <h1 class="page-title">治理审计</h1>
-      <p class="page-subtitle">查看同源输入分组、去重记录、合并链和输入事件。这里是治理账本；具体记忆的搜索、标错、过期、静默和软删除请到“记忆管理”。</p>
+      <p class="page-subtitle">记录记忆进入系统后发生过的去重、合并和人工治理，是“发生过什么”的账本；具体记忆操作请到“记忆管理”，原始会话与证据链请到“来源溯源”。</p>
     </div>
     <button class="btn primary" class:loading={loading} disabled={loading} on:click={load}><RefreshCcw size={16}/> 刷新</button>
   </div>
 
   {#if error}<div class="card card-pad" style="color:var(--color-danger);margin-top:16px">{error}</div>{/if}
+  <div class="hint-card" style="margin-top:14px">边界说明：这里的“同原文记忆分组”按旧版 memory_units.raw_text 归组，不等同于“来源溯源”中的真实来源会话，也不用于统计对话数量。</div>
 
   <div class="grid cols-4" style="margin-top:22px">
     <div class="card stat-card"><Layers3 size={20}/><div><strong>{loading && !overview ? '—' : countOf('source_groups')}</strong><span>同源组总数</span></div></div>
@@ -109,7 +110,7 @@
   {#if loading}
     <div class="list stagger" style="margin-top:14px">{#each Array(4) as _}<div class="card card-pad"><div class="skeleton" style="height:112px"></div></div>{/each}</div>
   {:else if activeTab === 'source_groups'}
-    <div class="section-title" style="margin-top:28px">同源输入分组</div>
+    <div class="section-title" style="margin-top:28px">同原文记忆分组（旧口径）</div>
     <div class="list stagger" style="margin-top:14px">
       {#each overview?.source_groups || [] as group}
         <div class="card card-pad source-group-card">

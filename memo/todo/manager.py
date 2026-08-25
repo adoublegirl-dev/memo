@@ -199,7 +199,7 @@ def search_todos(
     rows = db.fetchall(
         f"SELECT * FROM todos WHERE {where} ORDER BY "
         "CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, "
-        "due_date ASC, created_at DESC LIMIT ?",
+        "CASE WHEN COALESCE(due_date,'')='' THEN 1 ELSE 0 END, due_date ASC, created_at DESC LIMIT ?",
         params + [limit],
     )
     return [dict(r) for r in rows]
@@ -233,7 +233,7 @@ def list_todos(
     rows = db.fetchall(
         f"SELECT * FROM todos WHERE {where} ORDER BY "
         "CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, "
-        "due_date ASC LIMIT ? OFFSET ?",
+        "CASE WHEN COALESCE(due_date,'')='' THEN 1 ELSE 0 END, due_date ASC, created_at DESC LIMIT ? OFFSET ?",
         params + [limit, offset],
     )
     return [dict(r) for r in rows]
@@ -286,7 +286,7 @@ def close_todos(ids: list[str], note: str = "", agent: str = "") -> list[dict]:
 
 
 def reopen_todos(ids: list[str], agent: str = "") -> list[dict]:
-    """批量重新开启待办。"""
+    """批量重新开启已完成或已取消待办。"""
     results = []
     now = datetime.now().isoformat()
 
@@ -295,16 +295,17 @@ def reopen_todos(ids: list[str], agent: str = "") -> list[dict]:
         if not todo:
             results.append({"id": tid, "error": "not found"})
             continue
-        if todo["status"] != "done":
+        if todo["status"] not in {"done", "cancelled"}:
             results.append({"id": tid, "title": todo["title"], "skipped": True,
-                           "reason": f"状态是 {todo['status']}，不是 done"})
+                           "reason": f"状态是 {todo['status']}，不能重开"})
             continue
 
+        old_status = todo["status"]
         db.execute(
             "UPDATE todos SET status='todo', reopened_at=?, completed_at=NULL, updated_at=? WHERE id=?",
             (now, now, tid),
         )
-        _log_history(tid, "done", "todo", "重新开启", agent)
+        _log_history(tid, old_status, "todo", "重新开启", agent)
         db.commit()
 
         results.append({"id": tid, "title": todo["title"], "reopened": True})
@@ -366,12 +367,14 @@ def check_risk() -> dict:
     today = now.strftime("%Y-%m-%d")
     rows = db.fetchall(
         "SELECT * FROM todos WHERE status IN ('todo', 'doing') ORDER BY "
-        "CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, due_date ASC"
+        "CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, "
+        "CASE WHEN COALESCE(due_date,'')='' THEN 1 ELSE 0 END, due_date ASC"
     )
 
     urgent = []
     overdue = []
     warning = []
+    today_items = []
 
     for r in rows:
         todo = dict(r)
@@ -381,14 +384,23 @@ def check_risk() -> dict:
             try:
                 due_dt = datetime.fromisoformat(due)
                 days_left = (due_dt - now).total_seconds() / 86400
+                if due_dt.date() <= now.date():
+                    today_items.append({
+                        "id": todo["id"], "title": todo["title"],
+                        "priority": todo["priority"], "due": due,
+                        "is_overdue": due_dt < now,
+                    })
             except:
                 days_left = 999
 
             if days_left < 0:
+                seconds_overdue = max(0.0, (now - due_dt).total_seconds())
                 overdue.append({
                     "id": todo["id"], "title": todo["title"],
                     "priority": todo["priority"],
-                    "due": due, "days_overdue": int(abs(days_left)),
+                    "due": due,
+                    "days_overdue": max(0, (now.date() - due_dt.date()).days),
+                    "hours_overdue": max(1, int(seconds_overdue / 3600)),
                     "level": "critical",
                 })
             elif days_left <= 1 and todo["priority"] == "high":
@@ -447,6 +459,7 @@ def check_risk() -> dict:
     summary = "，".join(parts) if parts else "无风险"
 
     return {
+        "today": today_items,
         "urgent": urgent,
         "overdue": overdue,
         "warning": warning[:5],  # 最多 5 条

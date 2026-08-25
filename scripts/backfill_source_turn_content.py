@@ -19,16 +19,20 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sqlite3
+import sys
 from datetime import datetime
 from pathlib import Path
 
-from source_aware_import import HanaAgentAdapter, WorkBuddyAdapter, CodexAdapter
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = PROJECT_ROOT / "data" / "memo_source_aware.db"
-BACKUP_DIR = PROJECT_ROOT / "data" / "backups"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from memo.core.config import config
+from scripts.source_aware_import import HanaAgentAdapter, WorkBuddyAdapter, CodexAdapter
+
+DB_PATH = Path(config.db_path).resolve()
+BACKUP_DIR = DB_PATH.parent / "backups"
 CONFIRM_TOKEN = "BACKFILL_CONTENT"
 
 
@@ -110,9 +114,15 @@ def inspect_session(conn: sqlite3.Connection, session: sqlite3.Row) -> dict:
 
 def backup_database() -> Path:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     target = BACKUP_DIR / f"memo-before-content-backfill-{stamp}.db"
-    shutil.copy2(DB_PATH, target)
+    source = sqlite3.connect(str(DB_PATH))
+    destination = sqlite3.connect(str(target))
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
     return target
 
 

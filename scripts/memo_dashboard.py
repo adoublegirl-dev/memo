@@ -1002,6 +1002,7 @@ class MemoHandler(BaseHTTPRequestHandler):
             q = self._get_query_param("q", "")
             agent = self._get_query_param("agent", "")
             source_session_id = self._get_query_param("source_session_id", "")
+            sort = self._get_query_param("sort", "pinned")
             limit = int(self._get_query_param("limit", "500"))
             offset = int(self._get_query_param("offset", "0"))
             include_total = self._get_query_param("include_total", "false").lower() == "true"
@@ -1035,7 +1036,10 @@ class MemoHandler(BaseHTTPRequestHandler):
             if include_total:
                 total_row = db.fetchone(count_sql, tuple(params))
                 total = int(total_row["c"] if total_row else 0)
-            sql += " ORDER BY COALESCE(mu.pinned,0) DESC, mu.created_at DESC LIMIT ? OFFSET ?"
+            if sort == "recent":
+                sql += " ORDER BY mu.created_at DESC, mu.id DESC LIMIT ? OFFSET ?"
+            else:
+                sql += " ORDER BY COALESCE(mu.pinned,0) DESC, mu.created_at DESC, mu.id DESC LIMIT ? OFFSET ?"
             rows = db.fetchall(sql, tuple(params + [limit, offset]))
             from memo.store.graph_store import graph_store as gs
             mems = []
@@ -1095,15 +1099,21 @@ class MemoHandler(BaseHTTPRequestHandler):
                 self._json({"error": "not found"}, 404); return
             tags = gs.get_memory_tags(mem_id)
             source_session = None
+            source_content = {"raw_text": "", "turn_count": 0, "content_turn_count": 0, "pending_content_turn_count": 0}
             try:
                 row = db.fetchone("SELECT id, source_agent, display_title, original_title, title_source, display_title_source, source_path FROM source_sessions WHERE id=(SELECT source_session_id FROM memory_units WHERE id=?)", (mem_id,))
                 source_session = dict(row) if row else None
+                if source_session and not str(mem.raw_text or "").strip():
+                    source_content = engine.source_aware_memory_content(mem_id)
             except Exception:
                 source_session = None
+            raw_text = mem.raw_text or source_content.get("raw_text", "")
             self._json({
                 "id": mem.id, "session_id": mem.session_id,
                 "title": mem.title, "summary": mem.summary,
-                "summary_detail": mem.summary_detail, "raw_text": mem.raw_text,
+                "summary_detail": mem.summary_detail, "raw_text": raw_text,
+                "raw_text_source": "memory_unit" if str(mem.raw_text or "").strip() else ("source_turns" if str(raw_text or "").strip() else "missing"),
+                "raw_text_pending_count": source_content.get("pending_content_turn_count", 0),
                 "memory_type": str(mem.memory_type), "confidence": mem.confidence,
                 "valid_from": mem.valid_from, "is_superseded": mem.is_superseded,
                 "status": getattr(mem, "status", "active"),
@@ -1122,9 +1132,13 @@ class MemoHandler(BaseHTTPRequestHandler):
             space_id = self._get_query_param("space_id", "")
             stats = get_todo_stats()
             risk = check_risk()
-            todos = list_todos(status="todo+doing", limit=50, space_id=space_id)
-            done = list_todos(status="done", limit=10, space_id=space_id)
-            self._json({"todos": todos, "done": done, "stats": stats, "risk": risk})
+            todos = list_todos(status="todo+doing", limit=200, space_id=space_id)
+            today_ids = {item["id"] for item in risk.get("today", [])}
+            today = [todo for todo in todos if todo["id"] in today_ids]
+            upcoming = [todo for todo in todos if todo["id"] not in today_ids]
+            done = list_todos(status="done", limit=20, space_id=space_id)
+            cancelled = list_todos(status="cancelled", limit=20, space_id=space_id)
+            self._json({"todos": todos, "today": today, "upcoming": upcoming, "done": done, "cancelled": cancelled, "stats": stats, "risk": risk})
         elif path == "/api/spaces":
             include_archived = self._get_query_param("include_archived", "false").lower() == "true"
             space_type = self._get_query_param("type", "")
@@ -1204,6 +1218,8 @@ class MemoHandler(BaseHTTPRequestHandler):
             self._handle_source_session_review_action()
         elif path == "/api/source-aware/turn-review/action":
             self._handle_source_turn_review_action()
+        elif path == "/api/source-aware/content-backfill/action":
+            self._handle_source_content_backfill_action()
         elif path.startswith("/api/source-aware/session/"):
             source_id = path.split("/")[-1]
             result = engine.source_aware_session_detail(
@@ -1211,6 +1227,8 @@ class MemoHandler(BaseHTTPRequestHandler):
                 turn_filter=self._get_query_param("turn_filter", "all"),
                 turn_page=int(self._get_query_param("turn_page", "1")),
                 turn_page_size=int(self._get_query_param("turn_page_size", "80")),
+                turn_role=self._get_query_param("turn_role", "all"),
+                turn_order=self._get_query_param("turn_order", "asc"),
             )
             if not result:
                 self._json({"error": "source-aware session not found"}, 404); return
@@ -1269,6 +1287,19 @@ class MemoHandler(BaseHTTPRequestHandler):
         body = _j.loads(self.rfile.read(length)) if length > 0 else {}
         result = engine.source_turn_review_batch_update(
             body.get("source_turn_ids") or [], body.get("review_status", ""), note=body.get("note", "")
+        )
+        if result.get("error"):
+            self._json(result, 400); return
+        self._json(result)
+
+    def _handle_source_content_backfill_action(self):
+        import json as _j
+        length = int(self.headers.get("Content-Length", 0))
+        body = _j.loads(self.rfile.read(length)) if length > 0 else {}
+        result = engine.source_session_content_backfill(
+            body.get("source_session_id", ""),
+            apply=bool(body.get("apply")),
+            confirm=body.get("confirm", ""),
         )
         if result.get("error"):
             self._json(result, 400); return
@@ -1350,7 +1381,12 @@ class MemoHandler(BaseHTTPRequestHandler):
             if bool(body.get("full_scan", False)):
                 total = {"scanned": 0, "created": 0, "updated": 0, "pending": 0, "remaining_sessions": 0, "batches": 0}
                 for _ in range(200):
-                    r = engine.space_candidate_scan(limit=100, min_memories=min_memories, use_llm=use_llm)
+                    r = engine.space_candidate_scan(
+                        limit=100,
+                        min_memories=min_memories,
+                        use_llm=use_llm,
+                        refresh_suggestions=False,
+                    )
                     total["batches"] += 1
                     for k in ["scanned", "created", "updated"]:
                         total[k] += int(r.get(k) or 0)
@@ -1358,6 +1394,16 @@ class MemoHandler(BaseHTTPRequestHandler):
                     total["remaining_sessions"] = int(r.get("remaining_sessions") or 0)
                     if int(r.get("remaining_sessions") or 0) <= 0 or int(r.get("scanned") or 0) <= 0:
                         break
+                # Merge suggestions are global. Refresh once after all batches,
+                # rather than repeating the full pass after every 100 sessions.
+                summary = engine.space_candidate_scan(
+                    limit=0,
+                    min_memories=min_memories,
+                    use_llm=False,
+                    refresh_suggestions=True,
+                )
+                total["pending"] = int(summary.get("pending") or total["pending"])
+                total["remaining_sessions"] = int(summary.get("remaining_sessions") or 0)
                 self._json(total); return
             limit = min(int(body.get("limit", 30)), 100)
             self._json(engine.space_candidate_scan(limit=limit, min_memories=min_memories, use_llm=use_llm)); return

@@ -1,11 +1,22 @@
 async function request(path, options = {}) {
-  const res = await fetch(path, {
-    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
-    ...options,
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-  return data;
+  const { timeout = 30000, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  try {
+    const res = await fetch(path, {
+      headers: fetchOptions.body ? { 'Content-Type': 'application/json' } : undefined,
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  } catch (error) {
+    if (error?.name === 'AbortError') throw new Error(`请求超过 ${Math.round(timeout / 1000)} 秒，已停止等待；后台数据不会因此被删除。`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export const api = {
@@ -26,16 +37,17 @@ export const api = {
   spaceCandidate: (id) => request(`/api/space/candidate/${encodeURIComponent(id)}`),
   sourceSessions: (params = {}) => request(`/api/source-sessions?${new URLSearchParams(params)}`),
   sourceSession: (id) => request(`/api/source-session/${encodeURIComponent(id)}`),
-  spaceCandidateAction: (body) => request('/api/space/candidate/action', { method: 'POST', body: JSON.stringify(body) }),
+  spaceCandidateAction: (body) => request('/api/space/candidate/action', { method: 'POST', body: JSON.stringify(body), timeout: 120000 }),
   spaceAction: (body) => request('/api/space/action', { method: 'POST', body: JSON.stringify(body) }),
   personaAction: (body) => request('/api/persona/action', { method: 'POST', body: JSON.stringify(body) }),
   governance: (params = {}) => request(`/api/governance?${new URLSearchParams(params)}`),
   sourceAware: (params = {}) => request(`/api/source-aware?${new URLSearchParams(params)}`),
   sourceAwareMemoryQuality: (params = {}) => request(`/api/source-aware/memory-quality?${new URLSearchParams(params)}`),
   historyProcessing: () => request('/api/history-processing'),
-  historyProcessingAction: (body) => request('/api/history-processing/action', { method: 'POST', body: JSON.stringify(body) }),
+  historyProcessingAction: (body) => request('/api/history-processing/action', { method: 'POST', body: JSON.stringify(body), timeout: 120000 }),
   sourceSessionReviewAction: (body) => request('/api/source-aware/session-review/action', { method: 'POST', body: JSON.stringify(body) }),
   sourceTurnReviewAction: (body) => request('/api/source-aware/turn-review/action', { method: 'POST', body: JSON.stringify(body) }),
+  sourceContentBackfillAction: (body) => request('/api/source-aware/content-backfill/action', { method: 'POST', body: JSON.stringify(body), timeout: 120000 }),
   sourceAwareSession: (id, params = {}) => request(`/api/source-aware/session/${encodeURIComponent(id)}?${new URLSearchParams(params)}`),
   sourceAwareEvidence: (memoryId) => request(`/api/source-aware/memory/${encodeURIComponent(memoryId)}/evidence`),
   memoryLink: (body) => request('/api/memory/link', { method: 'POST', body: JSON.stringify(body) }),

@@ -8,6 +8,8 @@ from scripts.source_aware_import import (
     apply_all_migrations,
     apply_to_test_db,
     extract_memory_units_from_source_sessions,
+    expected_production_db_path,
+    require_production_db,
     insert_episodes_only,
     insert_source_session,
     insert_turns,
@@ -15,7 +17,34 @@ from scripts.source_aware_import import (
     parse_generic_jsonl,
     run_dry_run,
     is_memory_subject_text,
+    stable_hash,
 )
+
+
+def test_installed_production_db_uses_memo_data_root(tmp_path: Path):
+    data_root = tmp_path / "Memo" / "data"
+    expected = (data_root / "memo_source_aware.db").resolve()
+    env = {"MEMO_DATA_ROOT": str(data_root)}
+
+    assert expected_production_db_path(env) == expected
+    assert require_production_db(expected, env) == expected
+
+
+def test_production_db_path_honors_explicit_memo_db_path(tmp_path: Path):
+    expected = (tmp_path / "custom-data" / "memo.db").resolve()
+    assert expected_production_db_path({"MEMO_DB_PATH": str(expected)}) == expected
+
+
+def test_production_db_guard_rejects_stale_program_local_path(tmp_path: Path):
+    data_root = tmp_path / "Memo" / "data"
+    stale = tmp_path / "Programs" / "Memo" / "app" / "data" / "memo_source_aware.db"
+    try:
+        require_production_db(stale, {"MEMO_DATA_ROOT": str(data_root)})
+        assert False, "stale program-local database path must be rejected"
+    except ValueError as exc:
+        message = str(exc)
+        assert "当前用户数据主库" in message
+        assert str((data_root / "memo_source_aware.db").resolve()) in message
 
 
 def test_parse_generic_jsonl_counts_roles_and_tools(tmp_path: Path):
@@ -113,6 +142,70 @@ def test_source_only_insert_does_not_create_memory_units(tmp_path: Path):
     assert conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == episodes
     assert conn.execute("SELECT COUNT(*) FROM memory_units").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM memory_turn_sources").fetchone()[0] == 0
+    conn.close()
+
+
+def test_changed_session_turn_reuses_stable_id_and_updates_content(tmp_path: Path):
+    import sqlite3
+
+    transcript = tmp_path / "changed-session.txt"
+    transcript.write_text("User: 第一版原始内容足够长，用于验证增量更新", encoding="utf-8")
+    db_path = tmp_path / "changed_session_source_aware_test.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    apply_all_migrations(conn)
+    session = GenericTranscriptAdapter(transcript).load_session(transcript)
+    source_id, _ = insert_source_session(conn, session)
+    first_ids = insert_turns(conn, source_id, session)
+    conn.commit()
+
+    session.turns[0].text = "第二版原始内容已经更新，并且不会创建重复 turn"
+    session.turns[0].content_hash = stable_hash(session.turns[0].text)
+    second_ids = insert_turns(conn, source_id, session)
+    conn.commit()
+
+    assert second_ids == first_ids
+    assert conn.execute("SELECT COUNT(*) FROM source_turns WHERE source_session_id=?", (source_id,)).fetchone()[0] == 1
+    assert conn.execute("SELECT content FROM source_turns WHERE id=?", (first_ids[0],)).fetchone()[0] == session.turns[0].text
+    conn.close()
+
+
+def test_appended_turn_is_imported_without_duplicating_existing_turn(tmp_path: Path):
+    import sqlite3
+
+    transcript = tmp_path / "appended-session.txt"
+    transcript.write_text("User: 第一轮内容足够长，需要先建立来源会话并持续保留完整证据关系，后续增量同步也不能生成重复记录", encoding="utf-8")
+    db_path = tmp_path / "appended_session_source_aware_test.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys=ON")
+    apply_all_migrations(conn)
+    first = GenericTranscriptAdapter(transcript).load_session(transcript)
+    source_id, memo_session_id = insert_source_session(conn, first)
+    first_ids = insert_turns(conn, source_id, first)
+    insert_episodes_only(conn, source_id, memo_session_id, first, first_ids)
+    first_episode_id = conn.execute(
+        "SELECT id FROM episodes WHERE source_session_id=? AND start_turn_index=0",
+        (source_id,),
+    ).fetchone()[0]
+    conn.commit()
+
+    transcript.write_text(
+        "User: 第一轮内容后来更新，但仍应复用原有证据身份并持续保留完整关系，后续增量同步也不能生成重复记录\nAssistant: 第二轮是后来追加的真实对话内容",
+        encoding="utf-8",
+    )
+    changed = GenericTranscriptAdapter(transcript).load_session(transcript)
+    second_ids = insert_turns(conn, source_id, changed)
+    insert_episodes_only(conn, source_id, memo_session_id, changed, second_ids)
+    conn.commit()
+
+    assert second_ids[0] == first_ids[0]
+    assert len(second_ids) == 2
+    assert conn.execute("SELECT COUNT(*) FROM source_turns WHERE source_session_id=?", (source_id,)).fetchone()[0] == 2
+    episodes = conn.execute(
+        "SELECT id FROM episodes WHERE source_session_id=? AND start_turn_index=0",
+        (source_id,),
+    ).fetchall()
+    assert episodes == [(first_episode_id,)]
     conn.close()
 
 

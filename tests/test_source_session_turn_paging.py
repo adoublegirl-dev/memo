@@ -30,11 +30,34 @@ def test_source_session_detail_filters_and_pages_on_server():
     reviewable = engine.source_aware_session_detail(source_id, turn_filter='reviewable', turn_page=1, turn_page_size=20)
     internal = engine.source_aware_session_detail(source_id, turn_filter='internal', turn_page=1, turn_page_size=20)
     all_turns = engine.source_aware_session_detail(source_id, turn_filter='all', turn_page=1, turn_page_size=2)
+    users_only = engine.source_aware_session_detail(
+        source_id, turn_filter='reviewable', turn_role='user', turn_order='desc', turn_page=1, turn_page_size=20
+    )
 
     assert reviewable['turn_counts'] == {'all': 5, 'reviewable': 3, 'internal': 2}
+    assert reviewable['turn_role_counts'] == {'user': 2, 'assistant': 2}
     assert reviewable['turn_total'] == 3
     assert len(reviewable['turns']) == 3
     assert internal['turn_total'] == 2
     assert len(internal['turns']) == 2
     assert all_turns['turn_total'] == 5
     assert len(all_turns['turns']) == 2
+    assert users_only['turn_total'] == 2
+    assert [turn['turn_index'] for turn in users_only['turns']] == [4, 0]
+    assert all(turn['role'] == 'user' for turn in users_only['turns'])
+    assert users_only['turn_order'] == 'desc'
+
+
+def test_reviewable_dialogue_keeps_visible_assistant_text_from_mixed_tool_event():
+    engine.init()
+    source_id = 'ss_turn_mixed_tool_text_test'
+    seed(source_id)
+    db.execute(
+        "UPDATE source_turns SET is_tool_call=1, tool_name='read' WHERE source_session_id=? AND turn_index=1",
+        (source_id,),
+    )
+    db.commit()
+
+    detail = engine.source_aware_session_detail(source_id, turn_filter='reviewable', turn_page_size=20)
+
+    assert any(turn['turn_index'] == 1 and turn['content'] == '可审内容 2' for turn in detail['turns'])

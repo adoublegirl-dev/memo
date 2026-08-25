@@ -33,14 +33,28 @@ def test_batch_source_session_review_only_updates_selected_rows():
 
 
 def test_batch_turn_soft_delete_is_reversible_state_not_content_delete():
-    _, turn_ids = seed_session_with_turns()
+    source_id, turn_ids = seed_session_with_turns()
     result = engine.source_turn_review_batch_update(turn_ids, "soft_deleted", note="无有效内容")
 
     assert result["updated"] == 2
+    assert result["auto_completed_session_ids"] == [source_id]
     still_there = db.fetchone("SELECT COUNT(*) AS c FROM source_turns WHERE id IN (?, ?)", tuple(turn_ids))
     assert still_there["c"] == 2
     marked = db.fetchone("SELECT COUNT(*) AS c FROM source_turn_review_states WHERE review_status='soft_deleted' AND review_note='无有效内容'")
     assert marked["c"] >= 2
+    session_state = db.fetchone("SELECT review_status FROM source_session_review_states WHERE source_session_id=?", (source_id,))
+    assert session_state["review_status"] == "done"
 
     restored = engine.source_turn_review_batch_update(turn_ids, "active", note="恢复")
     assert restored["updated"] == 2
+    assert restored["auto_completed_session_ids"] == []
+
+
+def test_session_auto_completes_only_after_every_reviewable_turn_is_terminal():
+    source_id, turn_ids = seed_session_with_turns()
+
+    first = engine.source_turn_review_batch_update([turn_ids[0]], "done")
+    assert first["auto_completed_session_ids"] == []
+
+    second = engine.source_turn_review_batch_update([turn_ids[1]], "done")
+    assert second["auto_completed_session_ids"] == [source_id]

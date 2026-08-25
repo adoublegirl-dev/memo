@@ -85,6 +85,22 @@ class Database:
         )
         self.conn.commit()
 
+    def create_online_backup(self, label: str = "manual") -> Path:
+        """Create a consistent SQLite backup without touching WAL/SHM files."""
+        db_path = Path(config.db_path)
+        backup_dir = db_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        safe_label = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in (label or "manual"))[:60]
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        backup_path = backup_dir / f"memo-{safe_label}-{timestamp}.db"
+        destination = sqlite3.connect(backup_path)
+        try:
+            self.conn.backup(destination)
+        finally:
+            destination.close()
+        logger.info(f"数据库在线备份已创建: {backup_path}")
+        return backup_path
+
     def _backup_before_migration(self) -> None:
         """迁移前自动备份生产数据库。
 

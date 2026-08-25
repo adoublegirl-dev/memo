@@ -1,6 +1,7 @@
 """Context Space 基础闭环测试。"""
 
 from memo.core.engine import engine
+from memo.space.manager import space_manager
 from memo.store.database import db
 
 
@@ -39,6 +40,30 @@ def test_space_create_bind_recall_and_todo():
     profile = engine.space_profile(space["id"])
     assert profile["status"]["total_memories"] >= 1
     assert any(t["id"] == todo["id"] for t in profile["active_todos"])
+
+
+def test_space_semantic_edit_invalidates_centroid_and_schedules_rebuild(monkeypatch):
+    engine.init()
+    scheduled = []
+
+    class CapturedThread:
+        def __init__(self, target, args, **kwargs):
+            scheduled.append((target, args, kwargs))
+
+        def start(self):
+            return None
+
+    monkeypatch.setattr("memo.space.manager.threading.Thread", CapturedThread)
+    space = engine.space_create(name="向量更新测试空间", type="project", description="旧描述", goal="旧目标")
+    db.execute("UPDATE spaces SET centroid_embedding=? WHERE id=?", (bytes(2048), space["id"]))
+    db.commit()
+
+    result = space_manager.update(space["id"], description="新描述", goal="新目标")
+
+    assert result["centroid_status"] == "building"
+    assert db.fetchone("SELECT centroid_embedding FROM spaces WHERE id=?", (space["id"],))["centroid_embedding"] is None
+    assert len(scheduled) == 2
+    assert scheduled[-1][1][2] == ("向量更新测试空间", "project", "新描述", "新目标")
 
 
 def test_space_detect_by_name():

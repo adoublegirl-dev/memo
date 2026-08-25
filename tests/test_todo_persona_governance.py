@@ -1,10 +1,12 @@
 """Todo 本体去重与 Persona 审计治理测试。"""
 
 import sqlite3
+from datetime import datetime, timedelta
+from uuid import uuid4
 
 from memo.core.engine import engine
 from memo.store.database import db, new_id
-from memo.todo.manager import add_todo, get_todo_history
+from memo.todo.manager import add_todo, check_risk, get_todo_history, list_todos, reopen_todos, update_todo
 from memo.persona.extractor import persona_assertion_action, get_persona_audit, update_persona_incremental
 
 
@@ -43,6 +45,44 @@ def test_todo_due_date_requires_minute_precision():
     )
     assert "error" in invalid
     assert "精确到分钟" in invalid["error"]
+
+
+def test_today_todos_include_overdue_and_cancel_is_reversible():
+    engine.init()
+    suffix = uuid4().hex[:8]
+    now = datetime.now()
+    overdue = add_todo(
+        title=f"逾期待办-{suffix}", due_date=(now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"), source_agent="test"
+    )
+    today = add_todo(
+        title=f"今日待办-{suffix}", due_date=now.replace(hour=23, minute=30).strftime("%Y-%m-%dT%H:%M"), source_agent="test"
+    )
+    no_due = add_todo(title=f"无时间待办-{suffix}", source_agent="test")
+
+    risk = check_risk()
+    today_ids = {item["id"] for item in risk["today"]}
+    assert overdue["id"] in today_ids
+    assert today["id"] in today_ids
+    assert no_due["id"] not in today_ids
+    overdue_item = next(item for item in risk["overdue"] if item["id"] == overdue["id"])
+    expected_days = (now.date() - (now - timedelta(days=1)).date()).days
+    assert overdue_item["days_overdue"] == expected_days
+    assert overdue_item["hours_overdue"] >= 1
+
+    update_todo(today["id"], status="cancelled", agent="test")
+    reopened = reopen_todos([today["id"]], agent="test")
+    assert reopened[0]["reopened"] is True
+    assert db.fetchone("SELECT status FROM todos WHERE id=?", (today["id"],))["status"] == "todo"
+
+
+def test_todos_without_due_date_sort_after_scheduled_items():
+    engine.init()
+    suffix = uuid4().hex[:8]
+    scheduled = add_todo(title=f"有时间-{suffix}", priority="low", due_date="2099-01-01T09:00", source_agent="test")
+    unscheduled = add_todo(title=f"无时间-{suffix}", priority="low", source_agent="test")
+    ordered = list_todos(status="todo+doing", priority="low", limit=500)
+    positions = {todo["id"]: index for index, todo in enumerate(ordered)}
+    assert positions[scheduled["id"]] < positions[unscheduled["id"]]
 
 
 def test_persona_edit_lock_delete_restore_are_audited_and_locked_is_protected():

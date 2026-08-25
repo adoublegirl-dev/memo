@@ -275,7 +275,7 @@ function asArray(value) {
 function isRiskTodo(todo) {
   const risk = String(todo.risk_level || todo.riskLevel || todo.risk || '').toLowerCase();
   if (['overdue', 'urgent', 'warning', 'high'].includes(risk)) return true;
-  if (!todo.due_date || todo.status === 'done' || todo.status === 'completed') return false;
+  if (!todo.due_date || ['done', 'completed', 'cancelled'].includes(todo.status)) return false;
   const due = new Date(todo.due_date);
   if (Number.isNaN(due.getTime())) return false;
   const now = new Date();
@@ -284,14 +284,14 @@ function isRiskTodo(todo) {
 }
 
 function isTodayTodo(todo) {
-  if (todo.status === 'done' || todo.status === 'completed') return false;
+  if (['done', 'completed', 'cancelled'].includes(todo.status)) return false;
   if (!todo.due_date) return false;
   const due = new Date(todo.due_date);
   if (Number.isNaN(due.getTime())) return false;
-  const now = new Date();
-  return due.getFullYear() === now.getFullYear()
-    && due.getMonth() === now.getMonth()
-    && due.getDate() === now.getDate();
+  const endOfToday = new Date();
+  endOfToday.setHours(23, 59, 59, 999);
+  // “今日待办”统一包含今天到期和此前逾期但仍未完成的事项。
+  return due.getTime() <= endOfToday.getTime();
 }
 
 async function collectSnapshot() {

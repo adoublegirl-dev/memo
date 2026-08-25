@@ -8,7 +8,7 @@
     ['/graph', Share2, '图谱'],
     ['/memories', Brain, '记忆管理'],
     ['/governance', ShieldCheck, '治理审计'],
-    ['/source-aware', GitBranch, 'Source-aware'],
+    ['/source-aware', GitBranch, '来源溯源'],
     ['/history-processing', History, '历史处理'],
     ['/spaces', Layers, '空间'],
     ['/persona', Fingerprint, '人格'],

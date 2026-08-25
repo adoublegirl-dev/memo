@@ -845,7 +845,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = engine.todo_check_risk()
             output = f"⚠️ 风险: {result['summary']}\n"
             for item in result.get("overdue", []):
-                output += f"  🔴 逾期{item['days_overdue']}天: {item['title']}\n"
+                if int(item.get("days_overdue") or 0) > 0:
+                    overdue_label = f"逾期{item['days_overdue']}天"
+                else:
+                    overdue_label = f"逾期{item.get('hours_overdue', 1)}小时"
+                output += f"  🔴 {overdue_label}: {item['title']}\n"
             for item in result.get("urgent", []):
                 output += f"  🔴 {item['hours_left']}h后到期: {item['title']}\n"
             for item in result.get("warning", []):

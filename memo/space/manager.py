@@ -6,8 +6,11 @@ Space 是软边界：它组织和加权记忆，但不切断全局图谱与跨�
 from __future__ import annotations
 
 from datetime import datetime
+import sqlite3
+import threading
 from typing import Any
 
+from memo.core.config import config
 from memo.dedupe.normalizer import normalize_conversation
 from memo.store.database import blob_decode, blob_encode, db, json_encode, new_id
 from memo.utils.embedding import embedding_model
@@ -27,15 +30,14 @@ class SpaceManager:
         profile: dict[str, Any] | None = None,
         created_by: str = "manual",
     ) -> dict:
-        """创建 Space。已存在同名/别名/高相似 Space 时返回已有记录。"""
-        existing = self.find_duplicate(name=name, type=type, description=description, goal=goal)
+        """创建 Space。同步路径只做名称/别名查重，语义向量在后台补齐。"""
+        existing = self.find_duplicate(name=name, type=type, description=description, goal=goal, semantic=False)
         if existing:
             return {**existing, "created": False, "duplicate_reason": existing.get("duplicate_reason", "matched")}
 
         sid = new_id()
         now = datetime.now().isoformat()
         text_for_embedding = " ".join([name, type, description, goal]).strip() or name
-        emb = embedding_model.encode(text_for_embedding)
         db.execute(
             """INSERT INTO spaces (
                 id, name, type, description, goal, profile_json, centroid_embedding,
@@ -48,7 +50,7 @@ class SpaceManager:
                 description,
                 goal,
                 json_encode(profile or {}),
-                blob_encode(emb),
+                None,
                 created_by,
                 now,
                 now,
@@ -58,7 +60,14 @@ class SpaceManager:
             self.add_alias(sid, alias)
         db.commit()
         logger.info(f"Space 已创建: {name} ({sid[:8]})")
-        return {**self.get(sid), "created": True}
+        created = {**self.get(sid), "created": True, "centroid_status": "building"}
+        threading.Thread(
+            target=self._build_centroid,
+            args=(sid, text_for_embedding, (name, type or "general", description, goal)),
+            name=f"memo-space-centroid-{sid[:8]}",
+            daemon=True,
+        ).start()
+        return created
 
     def update(self, space_id: str, **fields) -> dict:
         """更新 Space 基础字段。"""
@@ -74,11 +83,31 @@ class SpaceManager:
         if not updates:
             return {**space, "updated": False}
 
+        rebuild_centroid = bool({"name", "type", "description", "goal"}.intersection(updates))
+        if rebuild_centroid:
+            # Do not keep an embedding that describes the previous Space semantics.
+            updates["centroid_embedding"] = None
         updates["updated_at"] = datetime.now().isoformat()
         set_sql = ", ".join(f"{k} = ?" for k in updates)
         db.execute(f"UPDATE spaces SET {set_sql} WHERE id = ?", tuple(updates.values()) + (sid,))
         db.commit()
-        return {**self.get(sid), "updated": True}
+        updated = self.get(sid)
+        if rebuild_centroid and updated:
+            signature = (
+                updated.get("name") or "",
+                updated.get("type") or "general",
+                updated.get("description") or "",
+                updated.get("goal") or "",
+            )
+            text_for_embedding = " ".join(signature).strip() or signature[0]
+            threading.Thread(
+                target=self._build_centroid,
+                args=(sid, text_for_embedding, signature),
+                name=f"memo-space-centroid-{sid[:8]}",
+                daemon=True,
+            ).start()
+        centroid_status = "building" if rebuild_centroid else ("ready" if updated and updated.get("has_centroid") else "missing")
+        return {**(updated or space), "updated": True, "centroid_status": centroid_status}
 
     def list(self, include_archived: bool = False, type: str = "") -> list[dict]:
         """列出 Space 摘要。"""
@@ -105,8 +134,30 @@ class SpaceManager:
         row = db.fetchone("SELECT * FROM spaces WHERE name = ?", (name,))
         return self._row_to_dict(row) if row else None
 
-    def find_duplicate(self, name: str, type: str = "", description: str = "", goal: str = "") -> dict | None:
-        """创建前查重：name/alias/canonical + embedding 高相似。"""
+    def _build_centroid(self, space_id: str, text: str, signature: tuple[str, str, str, str]) -> None:
+        """Best-effort background centroid generation; never blocks Space writes.
+
+        The semantic field signature prevents an older background thread from
+        overwriting a newer edit with a stale vector.
+        """
+        try:
+            emb = embedding_model.encode(text)
+            conn = sqlite3.connect(config.db_path, timeout=30)
+            try:
+                conn.execute(
+                    """UPDATE spaces SET centroid_embedding=?
+                       WHERE id=? AND name=? AND type=?
+                         AND COALESCE(description,'')=? AND COALESCE(goal,'')=?""",
+                    (blob_encode(emb), space_id, *signature),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as exc:
+            logger.warning(f"Space 向量后台生成失败，不影响写入: {space_id[:8]}: {exc}")
+
+    def find_duplicate(self, name: str, type: str = "", description: str = "", goal: str = "", semantic: bool = True) -> dict | None:
+        """创建前查重：总是检查名称/别名；可选执行较慢的语义查重。"""
         if not name.strip():
             return None
         direct = self.get_by_name(name)
@@ -123,6 +174,8 @@ class SpaceManager:
         if row:
             return {**self._row_to_dict(row), "duplicate_reason": "alias_match"}
 
+        if not semantic:
+            return None
         text = " ".join([name, type or "", description or "", goal or ""]).strip()
         if not text:
             return None

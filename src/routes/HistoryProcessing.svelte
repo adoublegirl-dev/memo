@@ -16,10 +16,7 @@
   };
   const statusLabels = { draft:'草稿', ready:'待继续', running:'运行中', paused:'已暂停', failed:'失败', done:'完成' };
   const providerOptions = [
-    { id: 'openai-compatible', label: 'OpenAI 兼容', hint: 'DeepSeek / OpenRouter / 硅基流动 / 智谱等' },
-    { id: 'anthropic-compatible', label: 'Anthropic 兼容', hint: 'Claude 官方 API' },
-    { id: 'gemini-compatible', label: 'Gemini 兼容', hint: 'Google Gemini API' },
-    { id: 'ollama', label: 'Ollama / 本地模型', hint: '本机或局域网 Ollama' },
+    { id: 'openai-compatible', label: 'OpenAI 兼容', hint: '当前支持 DeepSeek / OpenRouter / 硅基流动 / 智谱等 OpenAI 兼容接口' },
   ];
 
   $: job = state?.job || {};
@@ -31,6 +28,7 @@
   $: llmBlocked = job.current_step === 'llm_enhance' && progress.blocking_reason;
   $: llmProgress = job.progress?.llm_enhance || {};
   $: scanProgress = job.progress?.scan || {};
+  $: sourceImportProgress = job.progress?.source_import || {};
   $: noNewHistory = scanProgress.status === 'up_to_date';
   $: canContinue = state?.schema_ready && !loading && !isRunning && job.status !== 'done' && !noNewHistory;
 
@@ -124,7 +122,20 @@
     {/if}
     {#if scanProgress.status === 'has_pending'}
       <div class="hint-card" style="margin-top:12px">
-        检测到 {scanProgress.total_pending || 0} 个新的或已变化的历史会话，可以继续导入。
+        检测到 {scanProgress.total_pending || 0} 个待导入会话。增量规则：只写入新增和已变化会话，未变化会话直接跳过。
+        <div class="toolbar" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+          {#each Object.entries(scanProgress.sources || {}) as [source, item]}
+            <span class="badge">{sourceLabel(source)}：新增 {item.new || 0} · 更新 {item.changed || 0} · 跳过 {item.unchanged || 0}</span>
+          {/each}
+        </div>
+      </div>
+    {/if}
+    {#if Object.keys(sourceImportProgress).length}
+      <div class="hint-card" style="margin-top:12px">
+        {#each Object.entries(sourceImportProgress) as [source, result]}
+          <div>{sourceLabel(source)}：实际导入 {result.incremental?.pending ?? result.imported?.source_sessions ?? 0} 个（新增 {result.incremental?.new || 0} / 更新 {result.incremental?.changed || 0} / 跳过 {result.incremental?.unchanged || 0}）。</div>
+          {#if result.incremental?.potentially_stale_memories}<div style="color:var(--color-warning)">内容变化可能影响 {result.incremental.potentially_stale_memories} 条旧记忆；系统仅报告并等待复核，不会静默删除。</div>{/if}
+        {/each}
       </div>
     {/if}
     {#if job.current_step === 'llm_enhance' && llmProgress.total}
@@ -158,8 +169,8 @@
       {#each detectAgents as a}
         <div class="source-card">
           <strong>{a.agent}</strong>
-          <div class="item-meta">detected: {a.detected ? 'yes' : 'no'} · sessions: {a.session_count || 0}</div>
-          <div class="item-meta">titles: {a.title_count || 0} / missing {a.missing_title_count || 0}</div>
+          <div class="item-meta">{a.detected ? '已检测到' : '未检测到'} · 会话 {a.session_count || 0}</div>
+          <div class="item-meta">有标题 {a.title_count || 0} / 缺标题 {a.missing_title_count || 0}</div>
         </div>
       {:else}
         <div class="empty">尚未检测。点击“检测历史”。</div>

@@ -4,7 +4,7 @@
   import SpaceCard from '../components/SpaceCard.svelte';
   import MemoryCard from '../components/MemoryCard.svelte';
   let spaces = [], selected = null, profile = null, includeArchived = false, queue = [];
-  let projectCandidates = [], candidateDetail = null, candidateLoading = false;
+  let projectCandidates = [], candidateDetail = null, candidateLoading = false, candidateError = '';
   let projectCandidateVisibleLimit = 30;
   let sourceSessionStats = null;
   let selectedCandidateIds = [], useLlmCandidateNaming = false;
@@ -38,7 +38,18 @@
       edit = { name: profile.space.name || '', type: profile.space.type || 'general', description: profile.space.description || '', goal: profile.space.goal || '', current_state: profile.space.current_state || '', next_action: profile.space.next_action || '', priority: profile.space.priority || 'medium' };
     } finally { if (setBusy) op = ''; }
   }
-  async function create() { if (!form.name.trim()) return; await withOp('create', async()=>{ await api.spaceAction({ action:'create', ...form }); form = { name:'', type:'management', description:'' }; selected=null; await load(); notice='已创建 Space。'; }); }
+  async function create() {
+    if (!form.name.trim()) return;
+    await withOp('create', async()=>{
+      const result = await api.spaceAction({ action:'create', ...form });
+      form = { name:'', type:'management', description:'' };
+      selected = null;
+      await load();
+      const found = spaces.find(space => space.id === result.id);
+      if (found) await select(found, false);
+      notice = result.created === false ? `已存在同名或别名空间「${result.name || '未命名'}」，已为你打开，没有重复创建。` : '已创建 Space；语义索引正在后台补齐，不影响现在使用。';
+    });
+  }
   async function save() { if(!selected) return; await withOp('save', async()=>{ await api.spaceAction({ action:'update', id:selected.id, fields:edit }); await select(selected, false); await load(); notice='已保存。'; }); }
   async function archive() {
     if(!selected) return;
@@ -73,8 +84,9 @@
     });
   }
   async function openCandidate(c) {
-    candidateLoading = true; candidateDetail = null;
+    candidateLoading = true; candidateDetail = null; candidateError = '';
     try { candidateDetail = await api.spaceCandidate(c.id); }
+    catch (e) { candidateError = e.message || '候选来源加载失败'; }
     finally { candidateLoading = false; }
   }
   async function acceptProjectCandidate(c) {
@@ -228,7 +240,13 @@
 </section>
 
 {#if candidateLoading}
-  <div class="modal-backdrop"><div class="detail-modal"><div class="skeleton" style="height:240px"></div></div></div>
+  <div class="modal-backdrop"><div class="detail-modal"><div class="skeleton" style="height:240px"></div><div class="item-meta" style="margin-top:12px">正在批量读取来源会话、记忆和待办…</div></div></div>
+{/if}
+
+{#if candidateError}
+  <div class="modal-backdrop" role="button" tabindex="0" aria-label="关闭来源详情错误弹窗" on:click={(e)=>{ if(e.target===e.currentTarget) candidateError=''; }} on:keydown={(e)=>{ if((e.key==='Enter' || e.key===' ' || e.key==='Escape') && e.target===e.currentTarget) candidateError=''; }}>
+    <div class="detail-modal"><div class="modal-head"><h2>来源详情加载失败</h2><button class="icon-btn" on:click={()=>candidateError=''}>×</button></div><div class="raw-box">{candidateError}</div><div class="toolbar" style="justify-content:flex-end;margin-top:14px"><button class="btn" on:click={()=>candidateError=''}>关闭</button></div></div>
+  </div>
 {/if}
 
 {#if candidateDetail}
@@ -247,6 +265,9 @@
       {#if candidateDetail.suggested_aliases?.length}<div class="modal-section"><h3>建议别名 / 关键词</h3><div style="display:flex;gap:6px;flex-wrap:wrap">{#each candidateDetail.suggested_aliases as a}<span class="badge green">{a}</span>{/each}</div></div>{/if}
       {#if candidateDetail.merge_suggestions?.length}<div class="modal-section"><h3>可能合并对象</h3>{#each candidateDetail.merge_suggestions as s}<div class="hint-card" style="margin-top:8px">{s.name} · {pct(s.similarity)}% · {s.reason}</div>{/each}</div>{/if}
       <div class="modal-section"><h3>来源会话原始证据</h3>
+        {#if candidateDetail.source_session_ids.length > (candidateDetail.source_sessions?.length || 0)}
+          <div class="hint-card" style="margin-bottom:10px">该候选关联 {candidateDetail.source_session_ids.length} 个会话。为保证详情快速打开，本页展示其中最多 12 个可读取会话；完整关联数量仍保留在候选记录中。</div>
+        {/if}
         <div class="list">
           {#each candidateDetail.source_sessions || [] as s}
             <div class="item">
@@ -268,6 +289,7 @@
       {#if candidateDetail.source_todos?.length}<div class="modal-section"><h3>关联待办</h3>{#each candidateDetail.source_todos as t}<div class="item"><div class="item-title">{t.title}</div><div class="item-meta">{t.priority} · {t.status} · {t.due_date || '无截止时间'}</div><p class="muted">{t.description}</p></div>{/each}</div>{/if}
       <div class="toolbar" style="justify-content:flex-end;margin-top:18px;flex-wrap:wrap">
         <button class="btn" disabled={!!op} on:click={() => candidateDetail = null}>先不处理</button>
+        {#if selected}<button class="btn" class:loading={busy(`merge-project:${candidateDetail.id}`)} disabled={!!op} on:click={() => mergeProjectCandidateToSelected(candidateDetail)}>合并到「{selected.name}」</button>{/if}
         <button class="btn primary" class:loading={busy(`accept-project:${candidateDetail.id}`)} disabled={!!op} on:click={() => acceptProjectCandidate(candidateDetail)}>确认为新项目</button>
         <button class="btn danger" class:loading={busy(`ignore-project:${candidateDetail.id}`)} disabled={!!op} on:click={() => ignoreProjectCandidate(candidateDetail)}>忽略</button>
       </div>

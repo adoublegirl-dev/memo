@@ -1,10 +1,31 @@
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_full_install_backup_uses_active_source_aware_database(monkeypatch, tmp_path: Path):
+    from scripts.full_install import backup_database
+
+    database = tmp_path / "Memo" / "data" / "memo_source_aware.db"
+    database.parent.mkdir(parents=True)
+    conn = sqlite3.connect(database)
+    conn.execute("CREATE TABLE sentinel(value TEXT)")
+    conn.execute("INSERT INTO sentinel(value) VALUES ('todo-data-kept')")
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("MEMO_DB_PATH", str(database))
+
+    backup = backup_database()
+
+    assert backup is not None and backup.is_file()
+    verify = sqlite3.connect(backup)
+    assert verify.execute("SELECT value FROM sentinel").fetchone()[0] == "todo-data-kept"
+    verify.close()
 
 
 def test_runtime_uses_external_user_env_and_data_root(tmp_path: Path):

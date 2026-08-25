@@ -84,6 +84,12 @@ class MemoConfig:
     extraction_model: str = field(
         default_factory=lambda: os.getenv("MEMO_EXTRACTION_MODEL", "deepseek-v4-flash")
     )
+    llm_request_timeout_seconds: float = field(
+        default_factory=lambda: max(
+            5.0,
+            min(120.0, float(os.getenv("MEMO_LLM_TIMEOUT_SECONDS", "45"))),
+        )
+    )
 
     # ── 嵌入模型（本地 BGE-small） ──
     embedding_model_name: str = field(

@@ -1079,11 +1079,16 @@ class Engine:
         self._ensure_init()
         return self.recall(query=query, top_k=top_k, space_id=space_id, space_mode=mode)
 
-    def space_candidate_scan(self, limit: int = 80, min_memories: int = 1, use_llm: bool = False) -> dict:
+    def space_candidate_scan(self, limit: int = 80, min_memories: int = 1, use_llm: bool = False, refresh_suggestions: bool = True) -> dict:
         """从历史会话扫描候选 Space。只生成候选，不自动创建正式 Space。"""
         self._ensure_init()
         from memo.space.candidates import space_candidate_manager
-        return space_candidate_manager.scan(limit=limit, min_memories=min_memories, use_llm=use_llm)
+        return space_candidate_manager.scan(
+            limit=limit,
+            min_memories=min_memories,
+            use_llm=use_llm,
+            refresh_suggestions=refresh_suggestions,
+        )
 
     def space_candidate_list(self, status: str = "pending", limit: int = 50) -> list[dict]:
         """列出候选 Space。"""
@@ -1229,7 +1234,7 @@ class Engine:
                 percent = 80
         blocking_reason = ""
         if step == "llm_enhance" and llm_progress.get("status") == "blocked":
-            blocking_reason = "LLM 增强执行器尚未接入；基础处理已可用，当前不会真实调用模型。"
+            blocking_reason = "当前仅支持 OpenAI 兼容接口；请检查 API Key、Base URL 与模型名称后继续。"
         return {
             "steps": steps,
             "labels": labels,
@@ -1283,9 +1288,10 @@ class Engine:
 
     def _history_normalize_model_config(self, model_config: dict[str, Any] | None, current_row=None) -> dict[str, Any]:
         model_config = dict(model_config or {})
-        allowed_providers = {"openai-compatible", "anthropic-compatible", "gemini-compatible", "ollama"}
         provider = model_config.get("provider") or "openai-compatible"
-        if provider not in allowed_providers:
+        # 当前执行器只实现 OpenAI 兼容协议。旧配置若保存过尚未实现的
+        # provider，在配置阶段即安全归一，避免拖到后台任务执行时才失败。
+        if provider != "openai-compatible":
             provider = "openai-compatible"
         old_model: dict[str, Any] = {}
         if current_row:
@@ -2080,7 +2086,10 @@ class Engine:
         pollution_hits: list[dict[str, Any]] = []
         temporary_hits: list[dict[str, Any]] = []
         low_evidence: list[dict[str, Any]] = []
-        duplicate_map: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        # A generic title repeated across unrelated conversations is not sufficient
+        # evidence of duplication. Keep the read-only audit conservative by grouping
+        # within the same source session.
+        duplicate_map: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
         for row in rows:
             text = f"{row.get('title') or ''}\n{row.get('summary') or ''}".lower()
             p_hits = [token for token in pollution_tokens if token in text]
@@ -2091,12 +2100,18 @@ class Engine:
                 temporary_hits.append(compact(row, t_hits))
             if int(row.get("evidence_count") or 0) <= 0:
                 low_evidence.append(compact(row))
-            key = normalize_title(row.get("title") or "")
-            if key:
-                duplicate_map[key].append(row)
+            normalized_title = normalize_title(row.get("title") or "")
+            source_session_id = str(row.get("source_session_id") or "")
+            if normalized_title and source_session_id:
+                duplicate_map[(source_session_id, normalized_title)].append(row)
 
         duplicate_groups = [
-            {"normalized_title": key, "count": len(items), "items": [compact(item) for item in items[:limit]]}
+            {
+                "source_session_id": key[0],
+                "normalized_title": key[1],
+                "count": len(items),
+                "items": [compact(item) for item in items[:limit]],
+            }
             for key, items in duplicate_map.items()
             if len(items) > 1
         ]
@@ -2142,10 +2157,19 @@ class Engine:
             },
         }
 
-    def source_aware_session_detail(self, source_session_id: str, turn_filter: str = "all", turn_page: int = 1, turn_page_size: int = 80) -> dict[str, Any] | None:
-        """Local source-session review detail with server-side turn filtering/pagination.
+    def source_aware_session_detail(
+        self,
+        source_session_id: str,
+        turn_filter: str = "all",
+        turn_page: int = 1,
+        turn_page_size: int = 80,
+        turn_role: str = "all",
+        turn_order: str = "asc",
+    ) -> dict[str, Any] | None:
+        """Local source-session review detail with server-side filtering, ordering and pagination.
 
-        Raw content is returned only for this explicitly opened local session.
+        Raw content is returned only for this explicitly opened local session. ``turn_role``
+        is deliberately allow-listed so request values can never become arbitrary SQL.
         """
         self._ensure_init()
         if not self._source_aware_schema_status()["ready"]:
@@ -2156,8 +2180,11 @@ class Engine:
         turn_page = max(1, int(turn_page or 1))
         turn_page_size = max(1, min(int(turn_page_size or 80), 300))
         turn_offset = (turn_page - 1) * turn_page_size
-        reviewable_where = "st.role IN ('user','assistant') AND length(trim(COALESCE(st.content, ''))) > 0 AND st.is_tool_call=0 AND st.is_tool_result=0"
-        filter_sql = {"reviewable": reviewable_where, "internal": f"NOT ({reviewable_where})", "all": "1=1"}.get(turn_filter, reviewable_where)
+        reviewable_where = "st.role IN ('user','assistant') AND length(trim(COALESCE(st.content, ''))) > 0"
+        category_sql = {"reviewable": reviewable_where, "internal": f"NOT ({reviewable_where})", "all": "1=1"}.get(turn_filter, reviewable_where)
+        role_sql = {"user": "st.role='user'", "assistant": "st.role='assistant'", "all": "1=1"}.get(turn_role, "1=1")
+        filter_sql = f"({category_sql}) AND ({role_sql})"
+        order_sql = "st.turn_index DESC, st.id DESC" if turn_order == "desc" else "st.turn_index ASC, st.id ASC"
         turn_counts = db.fetchone(
             f"""SELECT COUNT(*) AS total,
                        SUM(CASE WHEN {reviewable_where} THEN 1 ELSE 0 END) AS reviewable,
@@ -2165,7 +2192,24 @@ class Engine:
                 FROM source_turns st WHERE st.source_session_id=?""",
             (source_session_id,),
         )
-        turn_total = int(turn_counts[turn_filter] or 0) if turn_filter in {"reviewable", "internal"} else int(turn_counts["total"] or 0)
+        role_counts = db.fetchone(
+            """SELECT SUM(CASE WHEN st.role='user' THEN 1 ELSE 0 END) AS user,
+                      SUM(CASE WHEN st.role='assistant' THEN 1 ELSE 0 END) AS assistant
+               FROM source_turns st WHERE st.source_session_id=?""",
+            (source_session_id,),
+        )
+        pending_content = db.fetchone(
+            """SELECT COUNT(*) AS total FROM source_turns st
+               WHERE st.source_session_id=? AND st.role IN ('user','assistant')
+                 AND length(trim(COALESCE(st.content, '')))=0
+                 AND COALESCE(CAST(json_extract(st.metadata_json, '$.content_length') AS INTEGER), 0) > 0""",
+            (source_session_id,),
+        )
+        filtered_count = db.fetchone(
+            f"SELECT COUNT(*) AS total FROM source_turns st WHERE st.source_session_id=? AND {filter_sql}",
+            (source_session_id,),
+        )
+        turn_total = int(filtered_count["total"] or 0)
         turns = [dict(r) for r in db.fetchall(
             f"""SELECT st.id, st.agent_turn_id, st.parent_turn_id, st.role, st.content_hash,
                       st.content AS content,
@@ -2176,7 +2220,7 @@ class Engine:
                FROM source_turns st
                LEFT JOIN source_turn_review_states trs ON trs.source_turn_id=st.id
                WHERE st.source_session_id=? AND {filter_sql}
-               ORDER BY st.turn_index LIMIT ? OFFSET ?""",
+               ORDER BY {order_sql} LIMIT ? OFFSET ?""",
             (source_session_id, turn_page_size, turn_offset),
         )]
         episodes = [dict(r) for r in db.fetchall(
@@ -2203,7 +2247,161 @@ class Engine:
                LIMIT 100""",
             (source_session_id,),
         )]
-        return {"session": self._source_aware_session_row(row), "turns": turns, "turn_filter": turn_filter, "turn_page": turn_page, "turn_page_size": turn_page_size, "turn_total": turn_total, "turn_counts": {"all": int(turn_counts["total"] or 0), "reviewable": int(turn_counts["reviewable"] or 0), "internal": int(turn_counts["internal"] or 0)}, "episodes": episodes, "memory_units": memories}
+        return {
+            "session": self._source_aware_session_row(row),
+            "turns": turns,
+            "turn_filter": turn_filter,
+            "turn_role": turn_role if turn_role in {"all", "user", "assistant"} else "all",
+            "turn_order": "desc" if turn_order == "desc" else "asc",
+            "turn_page": turn_page,
+            "turn_page_size": turn_page_size,
+            "turn_total": turn_total,
+            "turn_counts": {
+                "all": int(turn_counts["total"] or 0),
+                "reviewable": int(turn_counts["reviewable"] or 0),
+                "internal": int(turn_counts["internal"] or 0),
+            },
+            "turn_role_counts": {
+                "user": int(role_counts["user"] or 0),
+                "assistant": int(role_counts["assistant"] or 0),
+            },
+            "pending_content_turn_count": int(pending_content["total"] or 0),
+            "episodes": episodes,
+            "memory_units": memories,
+        }
+
+    def source_session_content_backfill(self, source_session_id: str, apply: bool = False, confirm: str = "") -> dict[str, Any]:
+        """Safely inspect or backfill empty legacy turn bodies from the local source file.
+
+        The operation never overwrites non-empty content. Applying requires an explicit
+        confirmation token and creates a consistent SQLite online backup first.
+        """
+        self._ensure_init()
+        session_row = db.fetchone(
+            "SELECT id, display_title, source_agent, source_path FROM source_sessions WHERE id=?",
+            (source_session_id,),
+        )
+        if not session_row:
+            return {"error": "source session not found"}
+        source_path = Path(str(session_row["source_path"] or "")).expanduser()
+        report: dict[str, Any] = {
+            "source_session_id": source_session_id,
+            "title": session_row["display_title"] or source_session_id,
+            "source_agent": session_row["source_agent"] or "",
+            "source_path": str(source_path),
+            "path_exists": source_path.is_file(),
+            "scanned": 0,
+            "fillable": 0,
+            "already_has_content": 0,
+            "mismatched": 0,
+            "missing_source_text": 0,
+            "issues": [],
+            "dry_run": not apply,
+        }
+        if not source_path.is_file():
+            report["issues"].append("本地原始会话文件不存在，无法回填")
+            return report
+        agent_key = {"hanaagent": "hanaagent", "workbuddy": "workbuddy", "codex": "codex"}.get(
+            str(session_row["source_agent"] or "").strip().lower()
+        )
+        if not agent_key:
+            report["issues"].append(f"暂不支持该来源类型：{session_row['source_agent'] or 'unknown'}")
+            return report
+        try:
+            from scripts.source_aware_import import adapter_for
+
+            draft = adapter_for(agent_key).load_session(source_path)
+        except Exception as exc:
+            report["issues"].append(f"原始会话解析失败：{type(exc).__name__}: {exc}")
+            return report
+
+        source_turns = {turn.turn_index: turn for turn in draft.turns}
+        planned: list[dict[str, Any]] = []
+        rows = db.fetchall(
+            """SELECT id, turn_index, role, content, content_hash
+               FROM source_turns WHERE source_session_id=? ORDER BY turn_index""",
+            (source_session_id,),
+        )
+        report["scanned"] = len(rows)
+        for row in rows:
+            source = source_turns.get(row["turn_index"])
+            if source is None or source.role != row["role"]:
+                report["mismatched"] += 1
+                continue
+            if row["content_hash"] and source.content_hash and row["content_hash"] != source.content_hash:
+                report["mismatched"] += 1
+                continue
+            if str(row["content"] or "").strip():
+                report["already_has_content"] += 1
+                continue
+            if not str(source.text or "").strip():
+                report["missing_source_text"] += 1
+                continue
+            planned.append({"turn_id": row["id"], "content": source.text, "content_hash": source.content_hash})
+        report["fillable"] = len(planned)
+
+        if not apply:
+            return report
+        if confirm != "BACKFILL_CONTENT":
+            return {**report, "error": "apply requires confirm BACKFILL_CONTENT"}
+        if not planned:
+            return {**report, "dry_run": False, "updated": 0}
+
+        backup_path = db.create_online_backup("before-content-backfill")
+        updated = 0
+        try:
+            for item in planned:
+                cursor = db.execute(
+                    """UPDATE source_turns SET content=?, content_hash=?
+                       WHERE id=? AND length(trim(COALESCE(content, '')))=0""",
+                    (item["content"], item["content_hash"], item["turn_id"]),
+                )
+                updated += cursor.rowcount
+            db.commit()
+        except Exception:
+            db.conn.rollback()
+            raise
+        result = {**report, "dry_run": False, "updated": updated, "backup": str(backup_path)}
+        audit_path = backup_path.parent / f"content-backfill-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.json"
+        audit_payload = {key: value for key, value in result.items() if key != "source_path"}
+        audit_path.write_text(json.dumps(audit_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        result["audit"] = str(audit_path)
+        return result
+
+    def source_aware_memory_content(self, memory_id: str) -> dict[str, Any]:
+        """Return local evidence text for an explicitly opened memory detail.
+
+        Source-aware extraction intentionally leaves ``memory_units.raw_text`` empty. The
+        original text lives in ``source_turns`` and is linked through
+        ``memory_turn_sources``; this method reconstructs that view without duplicating
+        transcript content into the memory table.
+        """
+        self._ensure_init()
+        rows = [dict(row) for row in db.fetchall(
+            """SELECT st.id, st.role, st.content, st.turn_index, st.timestamp,
+                      COALESCE(CAST(json_extract(st.metadata_json, '$.content_length') AS INTEGER), length(st.content), 0) AS content_length
+               FROM memory_turn_sources mts
+               JOIN source_turns st ON st.id=mts.turn_id
+               WHERE mts.memory_id=?
+               GROUP BY st.id
+               ORDER BY st.turn_index, st.id""",
+            (memory_id,),
+        )]
+        labels = {"user": "用户", "assistant": "AI", "tool": "工具", "system": "系统"}
+        parts = [
+            f"{labels.get(row.get('role'), '其他')}：{str(row.get('content') or '').strip()}"
+            for row in rows
+            if str(row.get("content") or "").strip()
+        ]
+        return {
+            "raw_text": "\n\n".join(parts),
+            "turn_count": len(rows),
+            "content_turn_count": len(parts),
+            "pending_content_turn_count": sum(
+                1 for row in rows
+                if not str(row.get("content") or "").strip() and int(row.get("content_length") or 0) > 0
+            ),
+        }
 
     def source_aware_memory_evidence(self, memory_id: str) -> dict[str, Any] | None:
         """Memory → evidence chain：memory_turn_sources → source_turns → source_session。只返回 turn 元信息。"""
@@ -2370,7 +2568,46 @@ class Engine:
                 (turn_id, review_status, note or "", now, now),
             )
         db.commit()
-        return {"updated": len(existing), "selected": len(unique_ids), "updated_ids": sorted(existing), "missing_ids": [item for item in unique_ids if item not in existing], "review_status": review_status, "note": note or ""}
+
+        # A session is complete when every reviewable user/assistant turn has reached
+        # a terminal state. Internal/tool events do not block human conversation review.
+        source_session_ids = {
+            row["source_session_id"]
+            for row in db.fetchall(
+                f"SELECT DISTINCT source_session_id FROM source_turns WHERE id IN ({placeholders})",
+                tuple(existing),
+            )
+        } if existing else set()
+        auto_completed_session_ids: list[str] = []
+        if review_status in {"done", "soft_deleted"}:
+            reviewable_where = "st.role IN ('user','assistant') AND length(trim(COALESCE(st.content, ''))) > 0"
+            for source_session_id in source_session_ids:
+                progress = db.fetchone(
+                    f"""SELECT COUNT(*) AS total,
+                               SUM(CASE WHEN COALESCE(trs.review_status, 'active') IN ('done','soft_deleted') THEN 1 ELSE 0 END) AS terminal
+                        FROM source_turns st
+                        LEFT JOIN source_turn_review_states trs ON trs.source_turn_id=st.id
+                        WHERE st.source_session_id=? AND {reviewable_where}""",
+                    (source_session_id,),
+                )
+                if int(progress["total"] or 0) > 0 and int(progress["terminal"] or 0) == int(progress["total"] or 0):
+                    completed = self.source_session_review_update(
+                        source_session_id,
+                        "done",
+                        note="全部可审阅对话已处理，系统自动完成",
+                    )
+                    if completed.get("updated"):
+                        auto_completed_session_ids.append(source_session_id)
+
+        return {
+            "updated": len(existing),
+            "selected": len(unique_ids),
+            "updated_ids": sorted(existing),
+            "missing_ids": [item for item in unique_ids if item not in existing],
+            "review_status": review_status,
+            "note": note or "",
+            "auto_completed_session_ids": sorted(auto_completed_session_ids),
+        }
 
     def _infer_source_session_review_status(self, data: dict[str, Any]) -> str:
         if data.get("session_review_status"):

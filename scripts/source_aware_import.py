@@ -13,7 +13,6 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import sqlite3
 import sys
 from dataclasses import dataclass, field, asdict
@@ -911,7 +910,15 @@ def insert_source_session(conn: sqlite3.Connection, session: SourceSessionDraft)
 def insert_turns(conn: sqlite3.Connection, source_id: str, session: SourceSessionDraft) -> list[str]:
     turn_ids: list[str] = []
     for turn in session.turns:
-        turn_id = "turn_" + stable_hash(f"{source_id}|{turn.turn_index}|{turn.content_hash}|{turn.source_event_type}")[:24]
+        # turn_index is the schema's stable identity within one source session.
+        # Reuse an existing id when a session was edited/extended; otherwise a
+        # content-derived id would collide with the unique(session,index) index and
+        # downstream episode links would point at an id that was never inserted.
+        existing = conn.execute(
+            "SELECT id FROM source_turns WHERE source_session_id=? AND turn_index=?",
+            (source_id, turn.turn_index),
+        ).fetchone()
+        turn_id = existing[0] if existing else "turn_" + stable_hash(f"{source_id}|{turn.turn_index}")[:24]
         turn_ids.append(turn_id)
         conn.execute(
             """INSERT INTO source_turns
@@ -956,6 +963,19 @@ def insert_turns(conn: sqlite3.Connection, source_id: str, session: SourceSessio
     return turn_ids
 
 
+def stable_episode_id(conn: sqlite3.Connection, source_id: str, start_turn_index: int) -> str:
+    """Reuse an existing episode identity so changed content cannot orphan evidence links."""
+    row = conn.execute(
+        """SELECT id FROM episodes
+           WHERE source_session_id=? AND start_turn_index=?
+           ORDER BY created_at, id LIMIT 1""",
+        (source_id, start_turn_index),
+    ).fetchone()
+    if row:
+        return str(row[0])
+    return "ep_" + stable_hash(f"{source_id}|{start_turn_index}")[:24]
+
+
 def insert_episodes_only(conn: sqlite3.Connection, source_id: str, memo_session_id: str, session: SourceSessionDraft, turn_ids: list[str]) -> int:
     """Insert source-aware episode boundaries only; do not create memory_units."""
     episode_count = 0
@@ -964,7 +984,7 @@ def insert_episodes_only(conn: sqlite3.Connection, source_id: str, memo_session_
         turn_id = turn_ids[idx]
         if turn.role == "user" and is_memory_subject_text(turn.text):
             episode_count += 1
-            current_episode_id = "ep_" + stable_hash(f"{source_id}|{idx}|{turn.content_hash}")[:24]
+            current_episode_id = stable_episode_id(conn, source_id, idx)
             conn.execute(
                 """INSERT INTO episodes
                    (id, source_session_id, title, user_intent, start_turn_id, end_turn_id,
@@ -1021,12 +1041,22 @@ def insert_episode_and_memories(conn: sqlite3.Connection, source_id: str, memo_s
         turn_id = turn_ids[idx]
         if turn.role == "user" and turn.content_length >= MIN_MEMORY_TEXT_LENGTH:
             episode_count += 1
-            current_episode_id = "ep_" + stable_hash(f"{source_id}|{idx}|{turn.content_hash}")[:24]
+            current_episode_id = stable_episode_id(conn, source_id, idx)
             conn.execute(
-                """INSERT OR REPLACE INTO episodes
+                """INSERT INTO episodes
                    (id, source_session_id, title, user_intent, start_turn_id, end_turn_id,
                     start_turn_index, end_turn_index, status, confidence, metadata_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 0.5, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ready', 0.5, ?)
+                   ON CONFLICT(id) DO UPDATE SET
+                     title=excluded.title,
+                     user_intent=excluded.user_intent,
+                     start_turn_id=excluded.start_turn_id,
+                     end_turn_id=excluded.end_turn_id,
+                     start_turn_index=excluded.start_turn_index,
+                     end_turn_index=excluded.end_turn_index,
+                     status=excluded.status,
+                     confidence=excluded.confidence,
+                     metadata_json=excluded.metadata_json""",
                 (
                     current_episode_id,
                     source_id,
@@ -1090,24 +1120,58 @@ def insert_episode_and_memories(conn: sqlite3.Connection, source_id: str, memo_s
 
 
 def backup_db_file(db_path: Path, label: str) -> dict[str, Any]:
-    backup_dir = PROJECT_ROOT / "data" / "backups"
+    """Create a consistent SQLite online backup beside the active user database.
+
+    Do not copy only the main file while WAL may contain committed data, and never
+    delete/truncate WAL or SHM as part of a backup.
+    """
+    backup_dir = db_path.parent / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     stamp = now_stamp()
     result: dict[str, Any] = {"source": str(db_path), "timestamp": stamp}
     if db_path.exists():
-        try:
-            conn = sqlite3.connect(str(db_path))
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            conn.close()
-            result["checkpoint"] = "ok"
-        except Exception as exc:
-            result["checkpoint"] = f"failed: {type(exc).__name__}: {exc}"
         target = backup_dir / f"{label}-{stamp}.db"
-        shutil.copy2(db_path, target)
+        source_conn = sqlite3.connect(str(db_path))
+        destination_conn = sqlite3.connect(str(target))
+        try:
+            source_conn.backup(destination_conn)
+        finally:
+            destination_conn.close()
+            source_conn.close()
+        result["backup_method"] = "sqlite_online_backup"
         result["backup_path"] = str(target)
         result["size"] = target.stat().st_size
         result["sha256"] = file_hash(target, max_bytes=target.stat().st_size)
     return result
+
+
+def expected_production_db_path(env: dict[str, str] | None = None) -> Path:
+    """Return the single installed/development source-aware database location.
+
+    Installed Memo keeps program files under Programs/Memo/app and user data in
+    MEMO_DATA_ROOT. Development keeps the historical project-local data folder.
+    """
+    source = os.environ if env is None else env
+    data_root = source.get("MEMO_DATA_ROOT", "").strip()
+    if data_root:
+        return (Path(data_root) / "memo_source_aware.db").resolve()
+    configured_db = source.get("MEMO_DB_PATH", "").strip()
+    if configured_db:
+        path = Path(configured_db)
+        return (path if path.is_absolute() else PROJECT_ROOT / path).resolve()
+    return (PROJECT_ROOT / "data" / "memo_source_aware.db").resolve()
+
+
+def require_production_db(configured_path: str | Path, env: dict[str, str] | None = None) -> Path:
+    current = Path(configured_path).resolve()
+    expected = expected_production_db_path(env)
+    if current != expected:
+        raise ValueError(
+            "历史会话导入只允许写入 Memo 当前用户数据主库。"
+            f"期望路径：{expected}；当前路径：{current}。"
+            "请从 Memo 启动器启动服务；如果迁移过安装位置，请先确认当前用户数据目录。"
+        )
+    return current
 
 
 def apply_to_production_source_only(source: str, path: str = "", limit: int = 5) -> dict[str, Any]:
@@ -1119,18 +1183,46 @@ def apply_to_production_source_only(source: str, path: str = "", limit: int = 5)
     """
     from memo.core.config import config
 
-    db_path = Path(config.db_path).resolve()
-    expected = (PROJECT_ROOT / "data" / "memo_source_aware.db").resolve()
-    if db_path != expected:
-        raise ValueError(f"生产 source-only 导入只允许写入干净新主库 {expected}，当前为 {db_path}")
+    db_path = require_production_db(config.db_path)
     adapter = adapter_for(source, path=path)
     sessions = [adapter.load_session(source_path) for source_path in adapter.list_sessions(limit=limit)]
-    backup = backup_db_file(db_path, f"memo-source-only-before-{source}")
+
+    # Only new/changed sessions are written. Unchanged history is skipped so a
+    # second import is fast and truly idempotent.
+    inspection_conn = sqlite3.connect(str(db_path))
+    inspection_conn.row_factory = sqlite3.Row
+    pending_sessions: list[SourceSessionDraft] = []
+    incremental = {"scanned": len(sessions), "new": 0, "changed": 0, "unchanged": 0, "potentially_stale_memories": 0}
+    try:
+        for session in sessions:
+            source_id = "ss_" + stable_hash(f"{session.source_agent}|{session.agent_session_id}|{session.source_path}")[:24]
+            try:
+                existing = inspection_conn.execute("SELECT content_hash FROM source_sessions WHERE id=?", (source_id,)).fetchone()
+            except sqlite3.OperationalError:
+                existing = None
+            if not existing:
+                incremental["new"] += 1
+                pending_sessions.append(session)
+            elif (existing["content_hash"] or "") != (session.content_hash or ""):
+                incremental["changed"] += 1
+                pending_sessions.append(session)
+                try:
+                    count = inspection_conn.execute("SELECT COUNT(*) AS c FROM memory_units WHERE source_session_id=?", (source_id,)).fetchone()
+                    incremental["potentially_stale_memories"] += int(count["c"] or 0)
+                except sqlite3.OperationalError:
+                    pass
+            else:
+                incremental["unchanged"] += 1
+    finally:
+        inspection_conn.close()
+    incremental["pending"] = len(pending_sessions)
+
+    backup = backup_db_file(db_path, f"memo-source-only-before-{source}") if pending_sessions else {}
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA foreign_keys=ON")
     latest = apply_all_migrations(conn)
     totals = {"source_sessions": 0, "source_turns": 0, "episodes": 0, "memory_units": 0}
-    for session in sessions:
+    for session in pending_sessions:
         source_id, memo_session_id = insert_source_session(conn, session)
         turn_ids = insert_turns(conn, source_id, session)
         episode_count = insert_episodes_only(conn, source_id, memo_session_id, session, turn_ids)
@@ -1154,9 +1246,10 @@ def apply_to_production_source_only(source: str, path: str = "", limit: int = 5)
         "db_path": str(db_path),
         "latest_migration": latest,
         "backup": backup,
+        "incremental": incremental,
         "imported": totals,
         "validation": validation,
-        "safety": "Production source import writes source_sessions/source_turns/episodes/episode_turns with raw turn content stored only in the local Memo database; memory_units are not created until the extraction stage.",
+        "safety": "Production source import writes only new or changed source sessions. Unchanged sessions are skipped; potentially stale memories are reported for review rather than silently deleted.",
     }
 
 
@@ -1357,7 +1450,7 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=MAX_SAMPLE_SESSIONS)
     parser.add_argument("--dry-run", action="store_true", help="只读预览。默认 dry-run。")
     parser.add_argument("--apply", action="store_true", help="仅允许写入显式测试库。必须传 --db-path 和 --confirm TEST_APPLY。")
-    parser.add_argument("--apply-source-only", action="store_true", help="写入当前干净新主库的 source/turn/episode 证据层，不生成 memory_units。必须传 --confirm SOURCE_ONLY_PROD_APPLY。")
+    parser.add_argument("--apply-source-only", action="store_true", help="增量写入 Memo 当前用户数据主库的 source/turn/episode 证据层，不生成 memory_units；未变化会话自动跳过。必须传 --confirm SOURCE_ONLY_PROD_APPLY。")
     parser.add_argument("--extract-memories", action="store_true", help="从已导入 source_sessions/episodes 保守抽取 memory_units。必须传 --confirm EXTRACT_MEMORY_UNITS。")
     parser.add_argument("--db-path", default="", help="测试库路径。--apply 时必填，且路径必须包含 test/dev/sandbox/dryrun/source_aware。")
     parser.add_argument("--confirm", default="", help="确认词：TEST_APPLY 或 SOURCE_ONLY_PROD_APPLY")
@@ -1378,10 +1471,7 @@ def main() -> int:
             return 2
         try:
             from memo.core.config import config
-            db_path = Path(config.db_path).resolve()
-            expected = (PROJECT_ROOT / "data" / "memo_source_aware.db").resolve()
-            if db_path != expected:
-                raise ValueError(f"memory extraction 只允许写入干净新主库 {expected}，当前为 {db_path}")
+            db_path = require_production_db(config.db_path)
             result = extract_memory_units_from_source_sessions(db_path, source_agent={"workbuddy": "WorkBuddy", "hanaagent": "HanaAgent", "codex": "Codex", "generic": "GenericTranscript"}.get(args.source, ""), limit=args.limit)
         except Exception as exc:
             print(f"memory extraction 失败：{exc}", file=sys.stderr)

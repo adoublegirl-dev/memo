@@ -1,9 +1,10 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
+  import { navigate } from '../lib/stores.js';
   import MemoryCard from '../components/MemoryCard.svelte';
   let q = '', status = 'active', memories = [], loading = false, error = '';
-  let sourceSessionId = '', sourceSessions = [], sourceSessionQuery = '', sessionReviewTab = 'needs_review', sessionReviewTabsWithCounts = [];
+  let sourceSessionId = '', sourceSessions = [], sourceSessionQuery = '', sessionReviewTab = 'needs_review', sessionReviewTabsWithCounts = [], sourceSessionsTruncated = false;
   let page = 1, pageSize = '50', total = 0, breakdown = null;
   let selected = null, detailLoading = false, actionBusy = false, sessionReviewBusy = false, toast = null;
   const statusLabels = { active:'可引用', expired:'已过期', wrong:'已标错', muted:'不引用', deleted:'已删除' };
@@ -134,14 +135,21 @@
         pageNo += 1;
       } while (totalSeen < totalAvailable && pageNo <= 10);
       sourceSessions = all;
+      sourceSessionsTruncated = totalSeen < totalAvailable;
       refreshSessionReviewCounts(all);
     } catch (e) {
       sourceSessions = [];
+      sourceSessionsTruncated = false;
       refreshSessionReviewCounts([]);
     }
   }
 
   async function selectSourceSession(id) { sourceSessionId = id; page = 1; q = ''; status = 'active'; await load(); }
+  function openSourceConversation() {
+    if (!sourceSessionId) return;
+    sessionStorage.setItem('memo-open-source-session', sourceSessionId);
+    navigate('/source-aware');
+  }
   async function clearSourceSession() { sourceSessionId = ''; page = 1; q = ''; status = 'active'; await load(); }
   async function setSessionReviewStatus(review_status) {
     if (!selectedSourceSession) return;
@@ -179,6 +187,7 @@
         <button class="btn" class:primary={sessionReviewTab === tab.id} on:click={() => sessionReviewTab = tab.id}>{tab.label} {tab.count}</button>
       {/each}
     </div>
+    {#if sourceSessionsTruncated}<div class="hint-card" style="margin-top:12px">会话数量超过 1000 条，当前队列与状态计数仅展示前 1000 条；可在“来源溯源”中分页查看全部会话。</div>{/if}
     <div class="session-grid" style="margin-top:12px">
       {#each filteredSourceSessions as s}
         <button class="session-card" class:selected={sourceSessionId === s.id} on:click={() => selectSourceSession(s.id)}>
@@ -209,6 +218,7 @@
         <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('done')}>标记已完成</button>
         <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('postponed')}>暂缓</button>
         <button class="btn" disabled={sessionReviewBusy} on:click={() => setSessionReviewStatus('needs_llm')}>需 LLM</button>
+        <button class="btn primary" on:click={openSourceConversation}>查看用户 / AI 原始对话</button>
         <button class="btn" on:click={clearSourceSession}>清除会话筛选</button>
       </div>
       <div class="toolbar" style="justify-content:space-between;gap:12px;flex-wrap:wrap;margin-top:16px;border-top:1px solid var(--border-subtle, rgba(148,163,184,.22));padding-top:14px">
@@ -298,8 +308,15 @@
           <p>{selected.summary_detail || selected.summary || '暂无摘要'}</p>
         </div>
         <div class="modal-section">
-          <h3>原文</h3>
-          <div class="raw-box">{selected.raw_text || '暂无原文'}</div>
+          <h3>{selected.raw_text_source === 'source_turns' ? '原始对话证据' : '原文'}</h3>
+          {#if selected.raw_text}
+            <div class="raw-box">{selected.raw_text}</div>
+            {#if selected.raw_text_source === 'source_turns'}<div class="item-meta" style="margin-top:8px">内容来自该记忆关联的本地原始对话，不重复写入记忆摘要字段。</div>{/if}
+          {:else if Number(selected.raw_text_pending_count || 0) > 0}
+            <div class="raw-box">旧版导入仅保存了原文长度，关联的 {selected.raw_text_pending_count} 条对话正文尚未从本地会话文件回填。</div>
+          {:else}
+            <div class="raw-box">暂无可显示的原文；该来源记录本身未包含正文。</div>
+          {/if}
         </div>
         {#if selected.feature_tags?.length}
           <div class="modal-section"><h3>标签</h3><div class="toolbar" style="flex-wrap:wrap">{#each selected.feature_tags as tag}<span class="badge green">{tag}</span>{/each}</div></div>
