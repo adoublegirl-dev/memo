@@ -21,7 +21,7 @@ Memo 是一个本地私有的 AI Context Space：让不同 Agent 在正确的项
 ## 二、当前关键路径
 
 ```text
-D:\个人\Hanako项目文件\Memo_V0.1.0
+<Memo 用户数据根目录>
 ├── memo/                    # Python 核心包
 │   ├── core/engine.py        # 统一门面
 │   ├── store/                # SQLite、记忆、图谱、向量、迁移

@@ -12,32 +12,45 @@ from urllib.parse import unquote, urlparse
 
 import paramiko
 from cryptography.hazmat.primitives import serialization
+from pathlib import Path
 
-HOST = '156.226.176.68'
-PORT = 22000
-USER = 'root'
-REMOTE_ROOT = '/root/MEMO/guanwang'
+# ---- 服务器连接配置：通过环境变量提供，切勿硬编码 ----
+#   MEMO_SERVER_HOST   服务器地址
+#   MEMO_SERVER_PORT   SSH 端口（默认 22）
+#   MEMO_SERVER_USER   登录用户
+#   MEMO_REMOTE_ROOT   服务器上的官网根目录
+HOST = os.getenv('MEMO_SERVER_HOST', '').strip()
+PORT = int(os.getenv('MEMO_SERVER_PORT', '22') or '22')
+USER = os.getenv('MEMO_SERVER_USER', '').strip()
+REMOTE_ROOT = os.getenv('MEMO_REMOTE_ROOT', '/root/MEMO/guanwang').strip()
+
 SIGNING_KEY_ID = 'memo-ed25519-21a636a075e5bc03'
 SIGNING_PUBLIC_KEY = b'''-----BEGIN PUBLIC KEY-----
 MCowBQYDK2VwAyEAmtf08uuRTatRP8V90m94R7WTArYtFj73AjzWWFTrOZ8=
 -----END PUBLIC KEY-----
 '''
 
+# ---- 本地路径：默认基于仓库根推算，可用环境变量覆盖 ----
+REPO_ROOT = Path(__file__).resolve().parent.parent
+WEBSITE_DIR = REPO_ROOT / 'website'
+# 打包产物目录（安装包 / 服务包），默认取仓库同级目录，可用 MEMO_BUILD_ROOT 覆盖
+BUILD_ROOT = Path(os.getenv('MEMO_BUILD_ROOT', str(REPO_ROOT.parent / 'Memo_Installer')))
+
 LOCAL_FILES = [
-    (r'D:\个人\Hanako项目文件\Memo_V0.1.0\website\index-glass.html', 'index.html'),
-    (r'D:\个人\Hanako项目文件\Memo_V0.1.0\website\mobile.html', 'mobile.html'),
-    (r'D:\个人\Hanako项目文件\Memo_V0.1.0\website\boot-visual.html', 'boot-visual.html'),
-    (r'D:\个人\Hanako项目文件\Memo_V0.1.0\website\assets\memo-bg.png', 'assets/memo-bg.png'),
+    (str(WEBSITE_DIR / 'index-glass.html'), 'index.html'),
+    (str(WEBSITE_DIR / 'mobile.html'), 'mobile.html'),
+    (str(WEBSITE_DIR / 'boot-visual.html'), 'boot-visual.html'),
+    (str(WEBSITE_DIR / 'assets' / 'memo-bg.png'), 'assets/memo-bg.png'),
     # Signed/versioned assets first. The signed manifest is activated only after
     # every referenced file exists; website convenience aliases are refreshed last.
-    (r'D:\个人\Hanako项目文件\Memo_Installer\build\Memo Setup 0.10.8-alpha.4.exe', 'downloads/Memo Setup 0.10.8-alpha.4.exe'),
-    (r'D:\个人\Hanako项目文件\Memo_Installer\build-lite\Memo Lite Setup 0.10.8-alpha.4.exe', 'downloads/Memo Lite Setup 0.10.8-alpha.4.exe'),
-    (r'D:\个人\Hanako项目文件\Memo_Installer\artifacts\Memo-Service-0.10.8-alpha.4.zip', 'downloads/service/Memo-Service-0.10.8-alpha.4.zip'),
-    (r'D:\个人\Hanako项目文件\Memo_Installer\artifacts\service-v2\Memo-Service-0.10.8-alpha_to_0.10.8-alpha.2.zip', 'downloads/service/Memo-Service-0.10.8-alpha_to_0.10.8-alpha.2.zip'),
-    (r'D:\个人\Hanako项目文件\Memo_Installer\artifacts\service\Memo-Service-0.10.8-alpha.2_to_0.10.8-alpha.4.zip', 'downloads/service/Memo-Service-0.10.8-alpha.2_to_0.10.8-alpha.4.zip'),
-    (r'D:\个人\Hanako项目文件\Memo_V0.1.0\website\downloads\latest.json', 'downloads/latest.json'),
-    (r'D:\个人\Hanako项目文件\Memo_Installer\build\Memo-Setup-latest.exe', 'downloads/Memo-Setup-latest.exe'),
-    (r'D:\个人\Hanako项目文件\Memo_Installer\build-lite\Memo-Lite-Setup-latest.exe', 'downloads/Memo-Lite-Setup-latest.exe'),
+    (str(BUILD_ROOT / 'build' / 'Memo Setup 0.10.8-alpha.4.exe'), 'downloads/Memo Setup 0.10.8-alpha.4.exe'),
+    (str(BUILD_ROOT / 'build-lite' / 'Memo Lite Setup 0.10.8-alpha.4.exe'), 'downloads/Memo Lite Setup 0.10.8-alpha.4.exe'),
+    (str(BUILD_ROOT / 'artifacts' / 'Memo-Service-0.10.8-alpha.4.zip'), 'downloads/service/Memo-Service-0.10.8-alpha.4.zip'),
+    (str(BUILD_ROOT / 'artifacts' / 'service-v2' / 'Memo-Service-0.10.8-alpha_to_0.10.8-alpha.2.zip'), 'downloads/service/Memo-Service-0.10.8-alpha_to_0.10.8-alpha.2.zip'),
+    (str(BUILD_ROOT / 'artifacts' / 'service' / 'Memo-Service-0.10.8-alpha.2_to_0.10.8-alpha.4.zip'), 'downloads/service/Memo-Service-0.10.8-alpha.2_to_0.10.8-alpha.4.zip'),
+    (str(WEBSITE_DIR / 'downloads' / 'latest.json'), 'downloads/latest.json'),
+    (str(BUILD_ROOT / 'build' / 'Memo-Setup-latest.exe'), 'downloads/Memo-Setup-latest.exe'),
+    (str(BUILD_ROOT / 'build-lite' / 'Memo-Lite-Setup-latest.exe'), 'downloads/Memo-Lite-Setup-latest.exe'),
 ]
 
 def run(ssh, cmd):
@@ -365,6 +378,15 @@ def main():
     if args.validate_only:
         print('VALIDATION_ONLY_OK: no server connection was opened')
         return
+
+    if not HOST or not USER:
+        raise SystemExit(
+            '未配置服务器连接信息。请先设置环境变量：\n'
+            '  MEMO_SERVER_HOST  服务器地址（必填）\n'
+            '  MEMO_SERVER_PORT  SSH 端口（默认 22）\n'
+            '  MEMO_SERVER_USER  登录用户（必填）\n'
+            '  MEMO_SERVER_PASSWORD  登录密码（不设则交互输入）'
+        )
 
     password = os.getenv('MEMO_SERVER_PASSWORD') or getpass.getpass(f'SSH password for {USER}@{HOST}:{PORT}: ')
     ssh = connect_ssh(password)
