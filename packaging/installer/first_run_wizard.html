@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Memo 安装向导</title>
+    <link rel="stylesheet" href="./first_run_wizard.css" />
+  </head>
+  <body>
+    <section class="wizard">
+      <aside class="side">
+        <div class="mark">M</div>
+        <p class="eyebrow">MEMO SETUP</p>
+        <h1 id="title">欢迎使用 Memo</h1>
+        <p id="description">本向导会帮助你完成本地数据目录和模型配置。</p>
+        <ol class="steps">
+          <li data-nav="0" class="active">用户须知</li>
+          <li data-nav="1">数据目录</li>
+          <li data-nav="2">模型配置</li>
+          <li data-nav="3">确认安装</li>
+        </ol>
+      </aside>
+      <main class="content">
+        <div class="state" id="state">正在检测安装状态…</div>
+        <section class="page active" data-page="0">
+          <h2>用户须知</h2>
+          <p>Memo 是本地优先的记忆系统。继续安装即表示你了解以下内容：</p>
+          <div class="notice-grid">
+            <div><strong>本地数据</strong><span>数据库、配置和日志保存在你选择的数据根目录。</span></div>
+            <div><strong>密钥安全</strong><span>API Key 只写入本机 config\.env，不会上传到 Memo 官网。</span></div>
+            <div><strong>模型调用</strong><span>使用提取/总结能力时，相关文本会发送给你配置的模型服务商。</span></div>
+            <div><strong>安装体积</strong><span>Full 版包含本地 Python Runtime；后续更新会优先使用 Lite 轻量包。</span></div>
+          </div>
+        </section>
+        <section class="page data-page" data-page="1">
+          <h2>确认你的 Memo 数据</h2>
+          <p>安装程序已将“旧数据来源”和“以后使用的位置”分开。请选择一种处理方式，旧数据不会被自动删除。</p>
+
+          <div class="detected-panel">
+            <div class="panel-title"><span>检测到的数据</span><button id="chooseSource" class="text-button" type="button">选择其他旧数据</button></div>
+            <div id="sourceList" class="source-list">正在检查已有数据…</div>
+          </div>
+
+          <div id="actionList" class="choice-list">
+            <label id="optionMigrateDefault" class="choice-card">
+              <input type="radio" name="dataAction" value="migrate-default" />
+              <span class="choice-copy"><strong>复制到推荐位置并继续使用</strong><small>保留旧数据，复制并校验后切换到正式目录。以后更新自动沿用。</small><code id="defaultTargetPath"></code></span>
+              <span class="recommended">推荐</span>
+            </label>
+
+            <label id="optionMigrateCustom" class="choice-card">
+              <input type="radio" name="dataAction" value="migrate-custom" />
+              <span class="choice-copy"><strong>复制到其他位置</strong><small>适合希望把 Memo 数据放到 D 盘或其他自定义目录的用户。</small><span class="target-row"><code id="customTargetPath">尚未选择新位置</code><button id="chooseTarget" class="secondary compact" type="button">选择新位置</button></span></span>
+            </label>
+
+            <label id="optionUseLegacy" class="choice-card">
+              <input type="radio" name="dataAction" value="use-legacy" />
+              <span class="choice-copy"><strong>继续使用旧位置</strong><small>不复制数据，Memo 以后继续连接检测到的旧目录。</small><code id="legacyTargetPath"></code></span>
+            </label>
+
+            <label id="optionUseStandard" class="choice-card">
+              <input type="radio" name="dataAction" value="use-standard" />
+              <span class="choice-copy"><strong>继续使用正式版数据</strong><small>正式目录已经有数据库，不覆盖、不合并，后续更新自动沿用。</small><code id="standardTargetPath"></code></span>
+              <span class="recommended">推荐</span>
+            </label>
+
+            <label id="optionFreshDefault" class="choice-card">
+              <input type="radio" name="dataAction" value="fresh-default" />
+              <span class="choice-copy"><strong>创建新的 Memo</strong><small>不复制旧数据，在推荐位置创建全新数据库；旧记忆仍保留在原位置。</small><code id="freshDefaultPath"></code></span>
+              <span class="recommended">推荐</span>
+            </label>
+
+            <label id="optionFreshCustom" class="choice-card">
+              <input type="radio" name="dataAction" value="fresh-custom" />
+              <span class="choice-copy"><strong>在其他位置创建全新数据</strong><small>不复制任何旧数据；旧记忆仍保留在原位置。</small><span class="target-row"><code id="freshCustomPath">尚未选择新位置</code><button id="chooseFreshTarget" class="secondary compact" type="button">选择新位置</button></span></span>
+            </label>
+          </div>
+
+          <div id="dataPlan" class="plan-box">正在生成数据处理方案…</div>
+          <input id="userRoot" type="hidden" />
+        </section>
+        <section class="page" data-page="2">
+          <h2>模型配置</h2>
+          <p>可以先留空 API Key，稍后再在配置文件中填写。</p>
+          <label>LLM API Key <span>可稍后配置</span><input id="apiKey" type="password" placeholder="例如 sk-…" autocomplete="off"></label>
+          <div class="two-cols">
+            <label>Base URL<input id="baseUrl" value="https://api.deepseek.com/v1" placeholder="https://api.example.com/v1"></label>
+            <label>提取模型<input id="model" value="deepseek-v4-flash" placeholder="模型名称"></label>
+          </div>
+        </section>
+        <section class="page" data-page="3">
+          <h2>确认安装</h2>
+          <p id="summary">确认后将写入程序文件、初始化数据库。服务启动会交给安装后的 Memo 右下角启动器处理。</p>
+          <div class="progress" id="progress" hidden>
+            <div class="step" data-step="copy">写入程序</div>
+            <div class="step" data-step="db">初始化数据库</div>
+            <div class="step" data-step="done">完成</div>
+          </div>
+        </section>
+        <footer class="actions">
+          <button id="back" class="secondary">上一步</button>
+          <button id="next">下一步</button>
+          <button id="install" hidden>开始安装</button>
+          <button id="openCompanion" class="secondary" hidden>打开 Memo 启动器</button>
+          <button id="openFolder" class="secondary">打开数据目录</button>
+        </footer>
+      </main>
+    </section>
+    <script src="./first_run_wizard.js"></script>
+  </body>
+</html>

@@ -1,0 +1,59 @@
+{
+  "appId": "com.memo.full-installer",
+  "productName": "Memo",
+  "electronVersion": "31.7.7",
+  "electronLanguages": ["zh-CN", "en-US"],
+  "compression": "normal",
+  "asar": false,
+  "directories": { "output": "build-lite" },
+  "files": [
+    "installer/**/*",
+    "desktop/**/*",
+    "payload/**/*",
+    "package.json",
+    "README.md",
+    "!runtime/**/*",
+    "!runtime-staging/**/*",
+    "!runtime-package/**/*",
+    "!bootstrap-runtime/**/*",
+    "!models/**/*",
+    "!payload/app/.env",
+    "!payload/app/.env.*",
+    "!payload/app/data/**/*",
+    "!payload/app/logs/**/*",
+    "!payload/app/backups/**/*",
+    "!payload/app/**/*.db",
+    "!payload/app/**/*.db-*",
+    "!payload/app/**/*.sqlite",
+    "!payload/app/**/*.sqlite3",
+    "!payload/app/**/*.log",
+    "!installer/**/*.log",
+    "!**/__pycache__/**/*",
+    "!**/*.pyc"
+  ],
+  "extraMetadata": {
+    "name": "memo-lite-installer",
+    "version": "0.10.8-alpha.4",
+    "main": "installer/main.cjs"
+  },
+  "win": {
+    "target": ["nsis"],
+    "icon": "build/icons/memo.ico",
+    "signAndEditExecutable": false,
+    "verifyUpdateCodeSignature": false
+  },
+  "nsis": {
+    "artifactName": "Memo Lite Setup ${version}.${ext}",
+    "include": "installer/installer.nsh",
+    "installerIcon": "build/icons/memo.ico",
+    "uninstallerIcon": "build/icons/memo.ico",
+    "installerHeaderIcon": "build/icons/memo.ico",
+    "oneClick": false,
+    "perMachine": false,
+    "allowElevation": true,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Memo"
+  }
+}

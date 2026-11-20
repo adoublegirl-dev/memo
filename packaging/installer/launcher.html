@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Memo 启动器</title>
+    <link rel="stylesheet" href="./launcher.css" />
+  </head>
+  <body>
+    <main class="launcher">
+      <section class="hero">
+        <div class="logo">M</div>
+        <div>
+          <p class="eyebrow">MEMO DESKTOP</p>
+          <h1>Memo 已就绪</h1>
+          <p class="sub">本地服务、数据目录与配置均已准备完成。</p>
+        </div>
+      </section>
+      <section class="status" id="status">正在读取安装状态…</section>
+      <section class="grid">
+        <button id="start" class="primary">启动 Memo</button>
+        <button id="open" class="secondary">打开 Memo</button>
+        <button id="folder" class="secondary">打开数据目录</button>
+        <button id="setup" class="ghost">安装/修复设置</button>
+      </section>
+      <p class="note">如果服务已在后台运行，直接点击“打开 Memo”即可进入工作台。</p>
+    </main>
+    <script src="./launcher.js"></script>
+  </body>
+</html>

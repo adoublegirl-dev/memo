@@ -1,0 +1,58 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  color: #172033;
+  background: #eef3fb;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 14% 12%, rgba(49, 88, 255, .20), transparent 34%),
+    radial-gradient(circle at 88% 18%, rgba(55, 185, 169, .18), transparent 32%),
+    linear-gradient(145deg, #f8fbff 0%, #edf3fb 100%);
+}
+.launcher {
+  width: 440px;
+  padding: 28px;
+  border-radius: 30px;
+  background: rgba(255, 255, 255, .86);
+  border: 1px solid rgba(78, 96, 130, .14);
+  box-shadow: 0 26px 70px rgba(39, 55, 92, .16);
+  backdrop-filter: blur(22px);
+}
+.hero { display: flex; gap: 16px; align-items: center; }
+.logo {
+  width: 62px; height: 62px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  border-radius: 22px;
+  color: white; font-weight: 900; font-size: 28px;
+  background: linear-gradient(135deg, #3158ff, #37b9a9);
+  box-shadow: 0 16px 32px rgba(49, 88, 255, .25);
+}
+.eyebrow { margin: 0 0 5px; font-size: 12px; letter-spacing: .16em; color: #65708a; font-weight: 800; }
+h1 { margin: 0; font-size: 30px; letter-spacing: -.04em; }
+.sub { margin: 7px 0 0; color: #647089; line-height: 1.6; }
+.status {
+  margin: 22px 0 18px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: #f1f5fb;
+  color: #263550;
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: break-all;
+}
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+button { border: 0; border-radius: 16px; padding: 13px 14px; font-weight: 900; cursor: pointer; }
+button:disabled { opacity: .64; cursor: wait; }
+.primary { color: white; background: linear-gradient(135deg, #3158ff, #37b9a9); grid-column: span 2; }
+.secondary { color: #33405a; background: #e9eef7; }
+.ghost { color: #65708a; background: transparent; border: 1px solid #dce4f0; grid-column: span 2; }
+.note { margin: 16px 2px 0; color: #768196; font-size: 12px; line-height: 1.7; }
+.success { color: #08765e; }
+.error { color: #b42318; }

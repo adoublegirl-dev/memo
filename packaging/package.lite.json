@@ -1,0 +1,61 @@
+{
+  "name": "memo-lite-installer",
+  "version": "0.10.8-alpha.4",
+  "private": true,
+  "description": "Memo lite updater for users who already installed the full runtime.",
+  "main": "installer/main.cjs",
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.memo.full-installer",
+    "productName": "Memo",
+    "electronVersion": "31.7.7",
+    "electronLanguages": ["zh-CN", "en-US"],
+    "asar": false,
+    "directories": { "output": "build-lite" },
+    "files": [
+      "installer/**/*",
+      "desktop/**/*",
+      "payload/**/*",
+      "package.lite.json",
+      "README.md",
+      "!runtime/**/*",
+      "!runtime-staging/**/*",
+      "!runtime-package/**/*",
+      "!bootstrap-runtime/**/*",
+      "!models/**/*",
+      "!payload/app/.env",
+      "!payload/app/.env.*",
+      "!payload/app/data/**/*",
+      "!payload/app/logs/**/*",
+      "!payload/app/backups/**/*",
+      "!payload/app/**/*.db",
+      "!payload/app/**/*.db-*",
+      "!payload/app/**/*.sqlite",
+      "!payload/app/**/*.sqlite3",
+      "!payload/app/**/*.log",
+      "!installer/**/*.log",
+      "!**/__pycache__/**/*",
+      "!**/*.pyc"
+    ],
+    "extraMetadata": {
+      "name": "memo-lite-installer",
+      "version": "0.10.8-alpha.4",
+      "main": "installer/main.cjs"
+    },
+    "win": {
+      "target": ["nsis"],
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Memo"
+    }
+  }
+}

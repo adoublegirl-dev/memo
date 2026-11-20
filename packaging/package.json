@@ -1,0 +1,81 @@
+{
+  "name": "memo-full-installer",
+  "version": "0.10.8-alpha.4",
+  "private": true,
+  "description": "Memo full offline installer and first-run wizard.",
+  "main": "installer/main.cjs",
+  "scripts": {
+    "check": "node --check installer/main.cjs && node --check installer/preload.cjs && node --check installer/first_run_wizard.js",
+    "test": "python -m pytest tests -q",
+    "build:payload": "python scripts/build_payload.py && python scripts/audit_payload.py",
+    "build:model": "python scripts/build_model.py --offline",
+    "build:runtime": "python scripts/build_runtime.py --output runtime-staging",
+    "build:bootstrap": "python scripts/build_bootstrap_runtime.py",
+    "build:offline-assets": "python scripts/build_offline_assets.py",
+    "build:service-patch": "python scripts/build_service_patch.py",
+    "prepare:full": "npm run build:payload && npm run build:model && npm run build:runtime && npm run build:bootstrap && npm run build:offline-assets",
+    "dist": "electron-builder --win nsis",
+    "dist:lite": "electron-builder --config electron-builder.lite.json --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.memo.full-installer",
+    "productName": "Memo",
+    "electronVersion": "31.7.7",
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ],
+    "compression": "normal",
+    "asar": false,
+    "directories": {
+      "output": "build"
+    },
+    "files": [
+      "installer/**/*",
+      "desktop/**/*",
+      "payload/**/*",
+      "bootstrap-runtime/**/*",
+      "runtime-package/**/*",
+      "package.json",
+      "README.md",
+      "!payload/app/.env",
+      "!payload/app/.env.*",
+      "!payload/app/data/**/*",
+      "!payload/app/logs/**/*",
+      "!payload/app/backups/**/*",
+      "!payload/app/**/*.db",
+      "!payload/app/**/*.db-*",
+      "!payload/app/**/*.sqlite",
+      "!payload/app/**/*.sqlite3",
+      "!payload/app/**/*.log",
+      "!installer/**/*.log",
+      "!**/__pycache__/**/*",
+      "!**/*.pyc"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icons/memo.ico",
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "include": "installer/installer.nsh",
+      "installerIcon": "build/icons/memo.ico",
+      "uninstallerIcon": "build/icons/memo.ico",
+      "installerHeaderIcon": "build/icons/memo.ico",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Memo"
+    }
+  }
+}
