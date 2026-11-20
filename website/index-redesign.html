@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Memo 麦默 · 新版官网设计稿</title>
+  <meta name="description" content="Memo 是一个本地优先的跨 Agent 共享记忆系统，把项目、知识、任务、偏好和来源线索整理到同一个地方。" />
+  <style>
+    :root{
+      --bg:#06080c;--bg-soft:#0a0f14;--paper:#0e151b;--paper-2:#101922;--paper-3:#121d26;
+      --line:rgba(207,225,218,.12);--line-strong:rgba(207,225,218,.2);
+      --text:#f2f7f2;--text-soft:#c9d5cf;--muted:#92a09a;--faint:#65736e;
+      --green:#9bc8a4;--blue:#88b7ca;--gold:#d6bf84;--danger:#d98c86;
+      --serif:'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;
+      --sans:system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+      --mono:'JetBrains Mono',ui-monospace,monospace;
+      --container:min(1180px,calc(100vw - 48px));--wide:min(1360px,calc(100vw - 48px));
+    }
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.75;overflow-x:hidden}a{color:inherit;text-decoration:none}button,input{font:inherit}.site-bg{position:fixed;inset:0;z-index:-2;background:radial-gradient(circle at 74% 8%,rgba(136,183,202,.15),transparent 28%),radial-gradient(circle at 22% 16%,rgba(155,200,164,.12),transparent 32%),linear-gradient(180deg,#06080c 0%,#0a0f14 46%,#07090d 100%)}.site-bg:after{content:"";position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);background-size:64px 64px;mask-image:linear-gradient(to bottom,rgba(0,0,0,.65),transparent 72%)}.container{width:var(--container);margin:0 auto}.wide{width:var(--wide);margin:0 auto}.hairline{border-top:1px solid var(--line)}
+    .nav-shell{position:sticky;top:0;z-index:50;border-bottom:1px solid var(--line);background:rgba(6,8,12,.72);backdrop-filter:blur(18px)}.nav{height:60px;display:flex;align-items:center;justify-content:space-between;gap:20px}.brand{display:flex;align-items:center;gap:12px;font-weight:500;letter-spacing:.01em}.logo{width:32px;height:32px;border:1px solid rgba(155,200,164,.32);border-radius:11px;display:grid;place-items:center;background:radial-gradient(circle at 34% 30%,rgba(214,191,132,.42),transparent 31%),linear-gradient(145deg,rgba(155,200,164,.18),rgba(136,183,202,.08))}.logo span{font-family:var(--serif);font-size:17px;color:#f7fbf2}.nav-links{display:flex;align-items:center;gap:22px;color:var(--muted);font-size:14px}.nav-links a{transition:color .18s ease}.nav-links a:hover{color:var(--text)}.nav-cta{height:34px;padding:0 14px;border:1px solid rgba(155,200,164,.28);border-radius:999px;display:inline-flex;align-items:center;color:var(--green);background:rgba(155,200,164,.055)}
+    .hero{padding:clamp(56px,7vw,96px) 0 clamp(48px,7vw,88px)}.hero-grid{display:grid;grid-template-columns:minmax(0,.86fr) minmax(420px,1.14fr);gap:clamp(36px,6vw,84px);align-items:center}.eyebrow{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035);color:var(--muted);font-size:13px;margin-bottom:24px}.dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 18px rgba(155,200,164,.7)}h1{font-family:var(--serif);font-weight:500;letter-spacing:-.045em;line-height:1.08;font-size:clamp(42px,6vw,78px);margin:0 0 24px;color:#f8fbf7}.lead{font-family:var(--serif);font-size:clamp(18px,2vw,23px);line-height:1.86;color:#cad6cf;max-width:650px;margin:0 0 18px}.sub{font-size:15.5px;line-height:1.88;color:var(--muted);max-width:620px;margin:0 0 34px}.actions{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:24px}.btn{min-height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--line-strong);display:inline-flex;align-items:center;justify-content:center;font-size:14px;color:var(--text-soft);background:rgba(255,255,255,.035);transition:transform .18s ease,border-color .18s ease,background .18s ease}.btn:hover{transform:translateY(-2px);border-color:rgba(155,200,164,.36);background:rgba(255,255,255,.06)}.btn.primary{border:0;color:#07100d;background:linear-gradient(135deg,#abd7b2,#94c8db);box-shadow:0 18px 48px rgba(155,200,164,.12)}.hero-note{font-size:13px;color:var(--faint)}.visual-card{position:relative;min-height:clamp(390px,46vw,600px);border:1px solid var(--line-strong);border-radius:30px;background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.025));overflow:hidden;box-shadow:0 28px 90px rgba(0,0,0,.34)}.visual-card:before{content:"";position:absolute;inset:0;z-index:2;pointer-events:none;background:radial-gradient(circle at 50% 42%,transparent 0,transparent 34%,rgba(6,8,12,.32) 76%)}.visual-frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#04060a}.visual-caption{position:absolute;left:18px;right:18px;bottom:18px;z-index:3;display:flex;justify-content:space-between;gap:14px;align-items:center;padding:12px 14px;border:1px solid rgba(207,225,218,.12);border-radius:18px;background:rgba(6,8,12,.68);backdrop-filter:blur(12px);color:var(--muted);font-size:12.5px}.visual-caption strong{font-weight:500;color:#edf5ef}.status-strip{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:rgba(255,255,255,.018)}.status-inner{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0}.status-item{padding:18px 20px;border-right:1px solid var(--line)}.status-item:first-child{border-left:1px solid var(--line)}.status-item b{display:block;font-weight:500;color:#eef6f0;font-size:14px;margin-bottom:2px}.status-item span{display:block;color:var(--faint);font-size:12.5px;line-height:1.5}.section{padding:clamp(56px,7vw,96px) 0;border-bottom:1px solid var(--line)}.section-head{display:grid;grid-template-columns:minmax(0,.72fr) minmax(320px,.58fr);gap:48px;align-items:end;margin-bottom:34px}.kicker{font-family:var(--mono);font-size:12px;color:var(--gold);letter-spacing:.08em;margin-bottom:12px}.section h2{font-family:var(--serif);font-weight:500;letter-spacing:-.035em;font-size:clamp(30px,4vw,50px);line-height:1.16;margin:0}.section-head p{margin:0;color:var(--muted);font-size:15px;line-height:1.9}.problem-grid{display:grid;grid-template-columns:.9fr 1.1fr;gap:24px}.quote-panel{border:1px solid var(--line);border-radius:28px;background:rgba(255,255,255,.035);padding:32px}.quote-panel p{font-family:var(--serif);font-size:28px;line-height:1.55;margin:0;color:#eef5ef}.list-panel{display:grid;gap:14px}.line-card{border:1px solid var(--line);border-radius:22px;background:rgba(255,255,255,.026);padding:22px;display:grid;grid-template-columns:34px 1fr;gap:14px;align-items:start}.line-card .num{width:30px;height:30px;border-radius:12px;display:grid;place-items:center;background:rgba(155,200,164,.08);color:var(--green);font-family:var(--mono);font-size:12px}.line-card b{display:block;font-weight:500;margin-bottom:4px}.line-card span{color:var(--muted);font-size:14px;line-height:1.75}.flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.flow-step{position:relative;border:1px solid var(--line);border-radius:24px;background:rgba(255,255,255,.03);padding:24px;min-height:190px}.flow-step:not(:last-child):after{content:"";position:absolute;right:-12px;top:50%;width:22px;height:1px;background:rgba(155,200,164,.35)}.flow-step .label{font-family:var(--mono);font-size:12px;color:var(--gold);margin-bottom:28px}.flow-step b{display:block;font-weight:500;color:#f4faf5;margin-bottom:10px}.flow-step p{margin:0;color:var(--muted);font-size:14px;line-height:1.75}.card-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}.feature-card{border:1px solid var(--line);border-radius:24px;background:rgba(255,255,255,.03);padding:24px;min-height:210px}.feature-card b{display:block;font-weight:500;margin-bottom:12px}.feature-card p{margin:0;color:var(--muted);font-size:14px;line-height:1.8}.privacy-band{display:grid;grid-template-columns:.85fr 1.15fr;gap:24px;align-items:stretch;border:1px solid rgba(214,191,132,.22);border-radius:30px;background:linear-gradient(135deg,rgba(214,191,132,.07),rgba(155,200,164,.035));padding:28px}.privacy-band h2{font-size:clamp(28px,3.6vw,42px)}.privacy-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.privacy-item{border:1px solid rgba(207,225,218,.12);border-radius:20px;background:rgba(6,8,12,.28);padding:18px}.privacy-item b{display:block;font-weight:500;margin-bottom:5px}.privacy-item span{color:var(--muted);font-size:13.5px;line-height:1.7}.download-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:stretch}.download-card{border:1px solid var(--line-strong);border-radius:28px;background:rgba(255,255,255,.04);padding:28px;display:flex;flex-direction:column;min-height:300px}.download-card.recommended{border-color:rgba(155,200,164,.34);background:linear-gradient(180deg,rgba(155,200,164,.08),rgba(255,255,255,.035))}.badge{display:inline-flex;align-items:center;width:max-content;height:26px;padding:0 10px;border-radius:999px;background:rgba(155,200,164,.08);color:var(--green);font-size:12.5px;margin-bottom:20px}.download-card h3{font-family:var(--serif);font-size:28px;font-weight:500;line-height:1.25;margin:0 0 10px}.download-card p{color:var(--muted);margin:0 0 20px}.download-meta{display:grid;gap:8px;margin:0 0 26px;padding:0;list-style:none;color:var(--text-soft);font-size:14px}.download-meta li{display:flex;gap:8px}.download-meta li:before{content:"";width:5px;height:5px;border-radius:50%;background:var(--green);margin-top:10px;flex:0 0 auto}.download-card .btn{margin-top:auto;width:max-content}.faq{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.faq-item{border-top:1px solid var(--line);padding:18px 0}.faq-item b{display:block;font-weight:500;margin-bottom:6px}.faq-item p{margin:0;color:var(--muted);font-size:14px;line-height:1.8}footer{padding:36px 0 56px;color:var(--faint);font-size:13px}.footer-inner{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}.mono{font-family:var(--mono)}
+    @media(max-width:1180px){:root{--container:min(1040px,calc(100vw - 40px));--wide:min(1120px,calc(100vw - 40px))}.hero-grid{grid-template-columns:minmax(0,.95fr) minmax(360px,1.05fr);gap:36px}h1{font-size:clamp(40px,5.4vw,62px)}.lead{font-size:19px}.visual-card{min-height:420px}.status-item{padding:16px 14px}.section{padding:64px 0}.card-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.flow{grid-template-columns:repeat(2,minmax(0,1fr))}.flow-step:not(:last-child):after{display:none}}
+    @media(max-width:880px){:root{--container:min(100% - 28px,760px);--wide:min(100% - 28px,760px)}.nav{height:56px}.nav-links a:not(.nav-cta){display:none}.hero{padding:42px 0 56px}.hero-grid,.section-head,.problem-grid,.privacy-band{grid-template-columns:1fr}.visual-card{min-height:360px;border-radius:24px}.visual-caption{position:relative;left:auto;right:auto;bottom:auto;margin:14px;z-index:4}.status-inner{grid-template-columns:repeat(2,minmax(0,1fr))}.status-item{border-left:0!important}.status-item:nth-child(odd){border-left:1px solid var(--line)!important}.section{padding:56px 0}.quote-panel p{font-size:23px}.privacy-list,.download-grid,.faq{grid-template-columns:1fr}.download-card{min-height:0}.flow{grid-template-columns:1fr}.card-grid{grid-template-columns:1fr}}
+    @media(max-width:560px){:root{--container:calc(100vw - 24px);--wide:calc(100vw - 24px)}.brand span:last-child{display:none}.nav-cta{height:32px;padding:0 12px}.eyebrow{font-size:12px}.actions .btn{width:100%}h1{font-size:38px}.lead{font-size:17px}.visual-card{min-height:300px}.status-inner{grid-template-columns:1fr}.status-item,.status-item:nth-child(odd){border-left:1px solid var(--line)!important}.section-head{gap:18px}.quote-panel,.privacy-band,.download-card{padding:22px}.line-card{grid-template-columns:1fr}.footer-inner{display:grid}}
+  </style>
+</head>
+<body>
+  <div class="site-bg" aria-hidden="true"></div>
+  <header class="nav-shell">
+    <div class="container nav">
+      <a class="brand" href="#top" aria-label="Memo 首页"><span class="logo"><span>M</span></span><span>Memo 麦默</span></a>
+      <nav class="nav-links" aria-label="主导航">
+        <a href="#why">为什么</a>
+        <a href="#work">怎么工作</a>
+        <a href="#privacy">本地优先</a>
+        <a href="#download" class="nav-cta">下载</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="wide hero-grid">
+        <div>
+          <div class="eyebrow"><span class="dot"></span>Windows 可用 · 本地优先 · 早期共测</div>
+          <h1>给多个 AI 工具共用的本地项目档案室。</h1>
+          <p class="lead">Memo 把散落在不同 AI 工具里的项目、知识、任务、偏好和来源线索，整理到同一个本地记忆系统。</p>
+          <p class="sub">它不替你做决定，也不把记忆交给某个云端黑箱。它更像一个安静的协作账本，让 AI 在进入工作之前，先知道哪些东西已经聊过、想过、决定过。</p>
+          <div class="actions">
+            <a class="btn primary" href="#download">下载 Windows 版</a>
+            <a class="btn" href="#work">看看它怎么工作</a>
+          </div>
+          <div class="hero-note">首次安装建议下载 Full；已有 Memo 用户后续更新优先使用 Lite。</div>
+        </div>
+        <div class="visual-card" aria-label="Memo 启动图谱视觉">
+          <iframe class="visual-frame" src="boot-visual.html" title="Memo 启动图谱交互视觉" loading="eager"></iframe>
+          <div class="visual-caption"><strong>Source-aware memory graph</strong><span>点击视觉区域可查看记忆节点涟漪效果</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="status-strip" aria-label="产品状态">
+      <div class="container status-inner">
+        <div class="status-item"><b>Windows 版</b><span>当前主要支持平台</span></div>
+        <div class="status-item"><b>本地 SQLite</b><span>数据库保存在本机</span></div>
+        <div class="status-item"><b>MCP 接入</b><span>供多个 Agent 读取</span></div>
+        <div class="status-item"><b>Full / Lite</b><span>首次安装与轻量更新</span></div>
+        <div class="status-item"><b>早期共测</b><span>持续快速迭代中</span></div>
+      </div>
+    </section>
+
+    <section class="section" id="why">
+      <div class="container">
+        <div class="section-head">
+          <div><div class="kicker">WHY MEMO</div><h2>AI 不缺回答，缺的是连续性。</h2></div>
+          <p>当项目跨越几周、几个月，问题不再是“问一次能不能答对”，而是 AI 能不能理解你的历史、上下文、判断依据和偏好。</p>
+        </div>
+        <div class="problem-grid">
+          <div class="quote-panel"><p>每次重新解释背景，都是一次上下文损耗。</p></div>
+          <div class="list-panel">
+            <div class="line-card"><span class="num">01</span><div><b>项目背景总是丢</b><span>换一个工具、换一次会话，前面聊过的约束和决定就需要重新铺垫。</span></div></div>
+            <div class="line-card"><span class="num">02</span><div><b>判断依据无法追溯</b><span>AI 给出结论后，你很难知道它依赖的是哪段材料、哪次讨论、哪个版本。</span></div></div>
+            <div class="line-card"><span class="num">03</span><div><b>多个 AI 工具记忆割裂</b><span>不同 Agent 各自有上下文，但它们没有一个共同的本地项目档案室。</span></div></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="work">
+      <div class="container">
+        <div class="section-head">
+          <div><div class="kicker">HOW IT WORKS</div><h2>从对话，到可追溯的本地记忆。</h2></div>
+          <p>Memo 不只是保存几句话摘要，而是尝试保留来源、上下文和结构化线索，让后续 Agent 可以读到更完整的工作现场。</p>
+        </div>
+        <div class="flow">
+          <div class="flow-step"><div class="label">STEP 1</div><b>汇入对话与材料</b><p>从 Agent 对话、项目资料或手动记录中提取可用信息。</p></div>
+          <div class="flow-step"><div class="label">STEP 2</div><b>本地结构化整理</b><p>把事实、偏好、决策、任务和来源线索写入本地记忆库。</p></div>
+          <div class="flow-step"><div class="label">STEP 3</div><b>保留来源上下文</b><p>需要细读时，可回到完整原文，而不只是一句压缩摘要。</p></div>
+          <div class="flow-step"><div class="label">STEP 4</div><b>供多个 Agent 使用</b><p>通过 MCP 等方式，让不同 AI 工具访问同一套记忆。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-head">
+          <div><div class="kicker">USE CASES</div><h2>更适合长期项目，而不是一次性问答。</h2></div>
+          <p>Memo 的价值在于持续积累：项目越复杂、周期越长、参与的 AI 工具越多，它越像一个稳定的上下文底座。</p>
+        </div>
+        <div class="card-grid">
+          <div class="feature-card"><b>项目交接</b><p>把项目背景、关键路径、坑点和最新状态整理成可复用记忆。</p></div>
+          <div class="feature-card"><b>需求沉淀</b><p>保存产品判断、客户反馈、版本取舍和后续待确认事项。</p></div>
+          <div class="feature-card"><b>排查记录</b><p>记录部署、依赖、脚本、服务和历史故障原因，避免反复踩坑。</p></div>
+          <div class="feature-card"><b>个人偏好</b><p>让不同 Agent 逐渐理解你的表达风格、审美倾向和工作习惯。</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="privacy">
+      <div class="container">
+        <div class="privacy-band">
+          <div><div class="kicker">LOCAL FIRST</div><h2>你的记忆，优先留在你的电脑里。</h2></div>
+          <div class="privacy-list">
+            <div class="privacy-item"><b>数据库在本机</b><span>Memo 默认使用本地 SQLite 保存数据，不把记忆上传到官网。</span></div>
+            <div class="privacy-item"><b>密钥在本机</b><span>API Key 写入本地配置文件，由用户自己管理。</span></div>
+            <div class="privacy-item"><b>调用可解释</b><span>当使用模型增强能力时，文本会发送给你配置的模型服务商。</span></div>
+            <div class="privacy-item"><b>更新不覆盖数据</b><span>安装器会尽量保留本地数据库、配置、日志和用户数据目录。</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="download">
+      <div class="container">
+        <div class="section-head">
+          <div><div class="kicker">DOWNLOAD</div><h2>选择适合你的安装包。</h2></div>
+          <p>如果你不知道该选哪个，首次使用选 Full。已经安装过 Memo 并保留运行时的用户，后续升级选 Lite。</p>
+        </div>
+        <div class="download-grid">
+          <article class="download-card recommended">
+            <span class="badge">首次安装推荐</span>
+            <h3>Memo Full</h3>
+            <p>包含 Memo 主程序、本地 Python Runtime 和必要依赖，适合第一次安装。</p>
+            <ul class="download-meta"><li>适合新用户</li><li>安装包较大</li><li>不需要额外准备 Python 环境</li></ul>
+            <a class="btn primary" href="downloads/Memo-Setup-latest.exe" download>下载 Full 安装包</a>
+          </article>
+          <article class="download-card">
+            <span class="badge">已有用户升级</span>
+            <h3>Memo Lite</h3>
+            <p>复用已安装的 Runtime，只更新 Memo 程序与启动器，升级更轻量。</p>
+            <ul class="download-meta"><li>适合已安装用户</li><li>下载更快</li><li>保留本地数据与配置</li></ul>
+            <a class="btn" href="downloads/Memo-Lite-Setup-latest.exe" download>下载 Lite 更新包</a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <div class="section-head">
+          <div><div class="kicker">FAQ</div><h2>安装前常见问题。</h2></div>
+          <p>这里先放最关键的几个说明，后续可以根据共测反馈继续补充。</p>
+        </div>
+        <div class="faq">
+          <div class="faq-item"><b>我应该选择哪个数据目录？</b><p>选择 Memo 数据根目录即可，也就是包含 data、config、logs 的上一级目录。</p></div>
+          <div class="faq-item"><b>更新会不会删除旧记忆？</b><p>不会主动打包或覆盖数据库、API Key、日志和备份。更新前仍建议保留自己的重要备份。</p></div>
+          <div class="faq-item"><b>为什么 Full 安装包比较大？</b><p>Full 包内置本地运行时和依赖，目的是让新用户尽量一键安装，不被 Python 环境卡住。</p></div>
+          <div class="faq-item"><b>Memo 会把我的数据传到官网吗？</b><p>官网只提供介绍和下载。你的记忆数据库默认保存在本机。</p></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <div>Memo 麦默 · 本地优先的跨 Agent 共享记忆系统</div>
+      <div class="mono">index-redesign.html · concept draft</div>
+    </div>
+  </footer>
+</body>
+</html>
